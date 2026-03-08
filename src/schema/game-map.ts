@@ -20,7 +20,9 @@ export interface MapNode {
   onEnter?: FrameworkStateActions;
   /** 该地点的物品（可拾取/可交互） */
   items?: string[];
-  /** 该地点的 NPC id 列表 */
+  /** 该地点的人物 id 列表（非玩家控制时按脚本行动） */
+  characterIds?: string[];
+  /** @deprecated 使用 characterIds */
   npcs?: string[];
 }
 

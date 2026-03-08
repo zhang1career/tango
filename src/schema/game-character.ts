@@ -1,16 +1,19 @@
 /**
- * 游戏人物 Schema - 玩家与 NPC
- * 人物带规则，通过规则引擎对玩家施加作用
+ * 游戏人物 Schema - 统一人物
+ * 人物不再区分玩家/NPC，玩家由时间线的 playerCharacterId 指定
+ * 非用户操作的人物按脚本（时间线偶发行为、人物详情规律行为）行动
  */
 
 import type { FrameworkStateActions } from './state-actions';
 
+/** @deprecated 人物不再区分类型，保留仅为兼容旧数据 */
 export type CharacterType = 'player' | 'npc';
 
 /** 人物定义 */
 export interface GameCharacter {
   id: string;
-  type: CharacterType;
+  /** @deprecated 保留兼容，玩家由 StoryFramework.playerCharacterId 指定 */
+  type?: CharacterType;
   name: string;
   /** 人物描述 */
   description?: string;
@@ -22,6 +25,6 @@ export interface GameCharacter {
   rules?: string[];
   /** 首次遇见时的状态变更（属性+物品） */
   onMeet?: FrameworkStateActions;
-  /** 该人物可能出现的场景/地点 id 列表 */
+  /** @deprecated 人物-地点关系在时间线场景中设定（scene.characterIds），保留仅为兼容旧数据 */
   inLocations?: string[];
 }

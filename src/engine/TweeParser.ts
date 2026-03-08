@@ -111,7 +111,7 @@ export function parseTwee(source: string): Story {
     const cleanText = rawContent
       .replace(fullLinkRe, (match) => {
         const parsed = parseLinks(match)[0];
-        return parsed ? parsed.displayText : match;
+        return parsed ? '' : match;
       })
       .replace(/\n{3,}/g, '\n\n')
       .trim();

@@ -15,3 +15,9 @@ export function getAIGCApiKey(): string {
 export function getAIGCApiUrl(): string {
   return env.AIGC_API_URL ?? env.VITE_AIGC_API_URL ?? '';
 }
+
+/** dev: 显示编辑菜单；prod: 仅提供游戏，不提供时间线/地图/人物/事件/物品/元信息。配置 VITE_APP_MODE 或 APP_MODE */
+export function getAppMode(): 'dev' | 'prod' {
+  const v = (env.VITE_APP_MODE ?? env.APP_MODE ?? 'dev') as string;
+  return v === 'prod' ? 'prod' : 'dev';
+}

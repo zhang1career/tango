@@ -1,25 +1,89 @@
 /**
- * 剧情时间线编辑界面
+ * 时间线界面
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type {
   StoryFramework,
   FrameworkChapter,
   FrameworkScene,
   FrameworkLink,
 } from '../schema/story-framework';
+import type { GameCharacter } from '../schema/game-character';
+import type { GameMap } from '../schema/game-map';
+import type { GameEvent } from '../schema/game-event';
+import type { GameItem } from '../schema/game-item';
+import type { GameMetadata } from '../schema/metadata';
 import { validateFramework, flattenScenes } from '../schema/story-framework';
 import { AttributesEditorCard } from './cards/AttributesEditorCard';
 import { ItemsEditorCard } from './cards/ItemsEditorCard';
 import { getAIGCApiKey, getAIGCApiUrl } from '../config';
-import { parseTwee, serializeStory } from '../engine';
+import { parseTwee, serializeStory, frameworkToStory } from '../engine';
 
-import exampleFramework from '../../assets/story-framework.example.json';
-import storyMaps from '../../assets/story-maps.json';
+import { formatJsonCompact } from '../utils/json-format';
+
+function truncatePathForDisplay(name: string, maxLen = 28): string {
+  if (!name) return '';
+  if (name.length <= maxLen) return name;
+  return '…' + name.slice(-maxLen + 1);
+}
+
+function FileHandleButton({
+  label,
+  fileHandle,
+  onClick,
+  baseStyle = styles.btn,
+}: {
+  label: string;
+  fileHandle: FileSystemFileHandle | null;
+  onClick: () => void;
+  baseStyle?: React.CSSProperties;
+}) {
+  return (
+    <button type="button" style={{ ...baseStyle, ...styles.fileHandleBtn }} onClick={onClick}>
+      <span>{label}</span>
+      {fileHandle && (
+        <span style={styles.fileHandleBtnPath}>{truncatePathForDisplay(fileHandle.name)}</span>
+      )}
+    </button>
+  );
+}
+
+async function preloadListData(
+  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
+): Promise<void> {
+  const updates: Array<(d: StoryFramework) => StoryFramework> = [];
+  const apis = [
+    { url: '/api/story-characters', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[] },
+    { url: '/api/save-story-maps', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameMap[] },
+    { url: '/api/story-events', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameEvent[] },
+    { url: '/api/story-items', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameItem[] },
+    { url: '/api/story-metadata', parse: (d: unknown) => { const m = d as { characterAttributes?: unknown }; return m?.characterAttributes ? ({ characterAttributes: m.characterAttributes } as GameMetadata) : undefined; } },
+  ];
+  const keys: (keyof StoryFramework)[] = ['characters', 'maps', 'events', 'items', 'metadata'];
+  for (let i = 0; i < apis.length; i++) {
+    const { url, parse } = apis[i];
+    const key = keys[i];
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = parse(data);
+        if (parsed !== undefined && parsed !== null) {
+          updates.push((d) => ({ ...d, [key]: parsed }));
+        }
+      }
+    } catch {
+      // 忽略加载失败
+    }
+  }
+  if (updates.length > 0) {
+    updateFw((d) => updates.reduce((acc, fn) => fn(acc), d));
+  }
+}
 
 function downloadJson(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const blob = new Blob([formatJsonCompact(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -28,25 +92,77 @@ function downloadJson(data: unknown, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function buildChapterContext(
+  fw: StoryFramework,
+  ch: FrameworkChapter,
+  sceneIndex: number
+): string {
+  const parts: string[] = [];
+  parts.push(`章节标题：${ch.title}`);
+  if (ch.theme) parts.push(`章节主题：${ch.theme}`);
+  const prev = ch.scenes.slice(0, sceneIndex);
+  if (prev.length > 0) {
+    parts.push(
+      '前序场景概要：',
+      ...prev.map((s) => `  - ${s.id}：${s.summary}`)
+    );
+  }
+  const charIds = new Set<string>();
+  for (const s of ch.scenes) {
+    for (const id of s.characterIds ?? []) charIds.add(id);
+  }
+  const chars = (fw.characters ?? []).filter((c) => charIds.has(c.id));
+  if (chars.length > 0) {
+    parts.push(
+      '人物介绍：',
+      ...chars.map((c) => `  - ${c.id}（${c.name}）：${c.description ?? '无描述'}`)
+    );
+  }
+  const eventIds = new Set<string>();
+  for (const s of ch.scenes) {
+    for (const id of s.eventIds ?? []) eventIds.add(id);
+  }
+  const events = (fw.events ?? []).filter((e) => eventIds.has(e.id));
+  if (events.length > 0) {
+    parts.push(
+      '当前事件：',
+      ...events.map((e) => `  - ${e.id}：${e.name}`)
+    );
+  }
+  return parts.join('\n');
+}
+
 async function generateScenePassageText(
   fw: StoryFramework,
   scene: FrameworkScene,
+  ch: FrameworkChapter,
+  sceneIndex: number,
   apiKey: string,
   apiUrl: string
 ): Promise<string> {
   const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
-  const system = `你是一名文字冒险游戏编剧。根据「剧情概要」生成一段可读的剧情正文（旁白+对话），直接输出正文，不要解释。
+  const system = `你是一名文字冒险游戏编剧。根据「剧情概要」与上下文生成一段可读的剧情正文。
+
+输出必须包含三类内容：
+1. 人物对话：角色之间的对白，用引号标出
+2. 旁白：叙述者视角的交代与说明
+3. 描写性文字：场景、动作、心理等细节描写
 
 规则：${rules || '- 简洁有力，适合文字冒险'}
 
 输出要求：纯正文，不要包含 [[链接]]，链接由系统自动添加。`;
 
-  const ctx = fw.background ? `背景：${fw.background}\n\n` : '';
-  const user = `${ctx}场景：${scene.id}
+  const ctx = fw.background ? `故事背景：${fw.background}\n\n` : '';
+  const chapterCtx = buildChapterContext(fw, ch, sceneIndex);
+  const user = `${ctx}${chapterCtx}
+
+---
+
+场景：${scene.id}
 概要：${scene.summary}
 ${scene.hints ? `写作提示：${scene.hints}` : ''}
 
-请生成该场景的剧情正文：`;
+请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字）：`;
 
   const res = await fetch(`${apiUrl}/chat/completions`, {
     method: 'POST',
@@ -84,13 +200,18 @@ export function FrameworkEditor({
 }) {
   const [jsonInput, setJsonInput] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
-  const [expandedCh, setExpandedCh] = useState<Set<string>>(new Set(['ch0']));
+  const [expandedCh, setExpandedCh] = useState<Set<string>>(new Set());
   const [expandedScene, setExpandedScene] = useState<Set<string>>(new Set());
   const apiKey = getAIGCApiKey();
   const [generatingCh, setGeneratingCh] = useState<string | null>(null);
+  const [generatingAll, setGeneratingAll] = useState(false);
   const apiUrl = getAIGCApiUrl();
   const [twFileHandle, setTwFileHandle] = useState<FileSystemFileHandle | null>(null);
-  const [showImportModal, setShowImportModal] = useState(false);
+  const [frameworkFileHandle, setFrameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
+
+  useEffect(() => {
+    preloadListData(updateFw);
+  }, [updateFw]);
 
   const updateFwWithErrorReset = useCallback(
     (fn: (d: StoryFramework) => StoryFramework) => {
@@ -109,11 +230,11 @@ export function FrameworkEditor({
     });
   };
 
-  const toggleScene = (id: string) => {
+  const toggleScene = (key: string) => {
     setExpandedScene((s) => {
       const next = new Set(s);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -123,48 +244,123 @@ export function FrameworkEditor({
   for (const map of fw.maps ?? []) {
     for (const n of map.nodes) mapNodeIds.push({ id: n.id, name: n.name, mapName: map.name });
   }
-  const npcIds = (fw.characters ?? []).filter((c) => c.type === 'npc').map((c) => ({ id: c.id, name: c.name }));
+  const characterIds = (fw.characters ?? []).map((c) => ({ id: c.id, name: c.name }));
   const eventIds = (fw.events ?? []).map((e) => ({ id: e.id, name: e.name }));
   const attributeDefs = fw.metadata?.characterAttributes ?? [];
   const items = fw.items ?? [];
   const { valid, errors } = validateFramework(fw);
 
-  const handleImport = (): boolean => {
+  const getFilePicker = () =>
+    (window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]>; showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> });
+
+  const handleNew = useCallback(() => {
+    updateFw(() => ({
+      title: '未命名故事',
+      chapters: [{ id: 'ch0', title: '第一章', scenes: [] }],
+    }));
+    setFrameworkFileHandle(null);
+    setJsonError(null);
+  }, [updateFw]);
+
+  const handleOpen = useCallback(async () => {
     try {
-      const parsed = JSON.parse(jsonInput || '{}') as StoryFramework;
+      const [handle] = (await getFilePicker().showOpenFilePicker?.({
+        types: [{ accept: { 'application/json': ['.json'] }, description: 'JSON 文件' }],
+        multiple: false,
+      }) ?? []) as FileSystemFileHandle[];
+      if (!handle) return;
+      const file = await handle.getFile();
+      const text = await file.text();
+      const parsed = JSON.parse(text) as StoryFramework;
       if (!parsed.title) parsed.title = '未命名故事';
       if (!parsed.chapters?.length) parsed.chapters = [{ id: 'ch0', title: '第一章', scenes: [] }];
       updateFw(() => parsed);
+      setFrameworkFileHandle(handle);
       setJsonError(null);
-      setJsonInput('');
-      return true;
+      await preloadListData(updateFw);
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+    }
+  }, [updateFw]);
+
+  const handleSave = useCallback(async () => {
+    try {
+      let handle = frameworkFileHandle;
+      if (!handle) {
+        const h = await getFilePicker().showSaveFilePicker?.({
+          suggestedName: 'story-framework.json',
+          types: [{ accept: { 'application/json': ['.json'] }, description: 'JSON 文件' }],
+        });
+        if (!h) return;
+        handle = h as FileSystemFileHandle;
+        setFrameworkFileHandle(handle);
+      }
+      const w = await handle.createWritable();
+      await w.write(formatJsonCompact(fw));
+      await w.close();
+      setJsonError(null);
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+    }
+  }, [fw, frameworkFileHandle]);
+
+  const handleGenerateAllChapters = useCallback(async () => {
+    const key = apiKey?.trim();
+    if (!key) {
+      alert('请配置 VITE_AIGC_API_KEY 或 VITE_OPENAI_API_KEY');
+      return;
+    }
+    const scenes = flattenScenes(fw);
+    if (!scenes.length) {
+      alert('当前没有任何场景');
+      return;
+    }
+    let handle = twFileHandle;
+    if (!handle) {
+      try {
+        const [h] = (await (window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]> }).showOpenFilePicker?.({
+          types: [{ accept: { 'text/plain': ['.tw', '.twee'] }, description: 'Twee 故事文件' }],
+          multiple: false,
+          mode: 'readwrite',
+        }) ?? []) as FileSystemFileHandle[];
+        if (!h) {
+          alert('请选择要写入的 .tw 文件');
+          return;
+        }
+        handle = h;
+        setTwFileHandle(h);
+      } catch {
+        setJsonError('无法选择文件（需要支持 File System Access API 的浏览器）');
+        return;
+      }
+    }
+    setGeneratingAll(true);
+    setJsonError(null);
+    try {
+      const textMap = new Map<string, string>();
+      for (const ch of fw.chapters) {
+        for (let si = 0; si < ch.scenes.length; si++) {
+          const scene = ch.scenes[si];
+          const text = await generateScenePassageText(fw, scene, ch, si, key, apiUrl);
+          textMap.set(scene.id, text);
+        }
+      }
+      const story = frameworkToStory(fw);
+      for (const [, p] of story.passages) {
+        const newText = textMap.get(p.id) ?? textMap.get(p.name);
+        if (newText != null) p.text = newText;
+      }
+      const twee = serializeStory(story);
+      const w = await handle.createWritable();
+      await w.write(twee);
+      await w.close();
+      setJsonError(null);
     } catch (e) {
       setJsonError((e as Error).message);
-      return false;
+    } finally {
+      setGeneratingAll(false);
     }
-  };
-
-  const handleExport = () => downloadJson(fw, 'story-framework.json');
-
-  const handleLoadExample = () => {
-    const base = exampleFramework as StoryFramework;
-    const maps = Array.isArray(storyMaps) && storyMaps.length > 0 ? storyMaps : base.maps;
-    updateFw(() => ({ ...base, maps: maps ?? [] }));
-    setJsonError(null);
-  };
-
-  const handleSelectTwFile = useCallback(async () => {
-    try {
-      const [handle] = await (window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]> }).showOpenFilePicker?.({
-        types: [{ accept: { 'text/plain': ['.tw', '.twee'] }, description: 'Twee 故事文件' }],
-        multiple: false,
-        mode: 'readwrite',
-      }) ?? [];
-      if (handle) setTwFileHandle(handle);
-    } catch {
-      setJsonError('无法选择文件（需要支持 File System Access API 的浏览器）');
-    }
-  }, []);
+  }, [fw, apiKey, apiUrl, twFileHandle]);
 
   const handleGenerateChapter = useCallback(
     async (chi: number) => {
@@ -193,7 +389,7 @@ export function FrameworkEditor({
           handle = h;
           setTwFileHandle(h);
         } catch {
-          alert('请先点击「选择剧情文件」指定要覆盖的目标文件（需支持 File System Access API 的浏览器）');
+          alert('请先选择要覆盖的 .tw 文件（需支持 File System Access API 的浏览器）');
           return;
         }
       }
@@ -201,19 +397,33 @@ export function FrameworkEditor({
       setJsonError(null);
       try {
         const textMap = new Map<string, string>();
-        for (const scene of ch.scenes) {
-          const text = await generateScenePassageText(fw, scene, key, apiUrl);
+        for (let si = 0; si < ch.scenes.length; si++) {
+          const scene = ch.scenes[si];
+          const text = await generateScenePassageText(fw, scene, ch, si, key, apiUrl);
           textMap.set(scene.id, text);
         }
+        const fullStory = frameworkToStory(fw);
         const file = await handle.getFile();
-        let raw = await file.text();
+        const raw = await file.text();
         const story = parseTwee(raw);
-        const sceneIds = new Set(ch.scenes.map((s) => s.id));
+        const normalizedSceneIds = new Set(
+          ch.scenes.map((s) => s.id.trim().replace(/\s+/g, '_'))
+        );
         for (const [, p] of story.passages) {
-          if (sceneIds.has(p.id)) {
-            const newText = textMap.get(p.id);
-            if (newText != null) {
-              p.text = newText;
+          if (normalizedSceneIds.has(p.id) || normalizedSceneIds.has(p.name)) {
+            const newText = textMap.get(p.id) ?? textMap.get(p.name);
+            if (newText != null) p.text = newText;
+            const canon = fullStory.passages.get(p.id) ?? fullStory.passages.get(p.name);
+            if (canon?.links?.length) p.links = canon.links;
+          }
+        }
+        for (const scene of ch.scenes) {
+          const nid = scene.id.trim().replace(/\s+/g, '_');
+          if (!story.passages.has(nid)) {
+            const newP = fullStory.passages.get(nid);
+            if (newP) {
+              newP.text = textMap.get(scene.id) ?? scene.summary;
+              story.passages.set(nid, newP);
             }
           }
         }
@@ -233,36 +443,56 @@ export function FrameworkEditor({
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>剧情时间线编辑</h1>
+        <h1 style={styles.title}>时间线</h1>
         <div style={styles.actions}>
-          <button type="button" style={styles.btn} onClick={handleLoadExample}>
-            加载示例
+          <button type="button" style={styles.btn} onClick={handleNew}>
+            新建
           </button>
-          <button type="button" style={styles.btn} onClick={() => setShowImportModal(true)}>
-            导入 JSON
+          <FileHandleButton label="打开" fileHandle={frameworkFileHandle} onClick={handleOpen} />
+          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={handleSave} />
+          <button
+            type="button"
+            style={{
+              ...styles.btnGenerate,
+              ...(generatingAll || !flattenScenes(fw).length ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
+            }}
+            onClick={handleGenerateAllChapters}
+            disabled={generatingAll || !flattenScenes(fw).length}
+            title="AI 生成全部章节的剧情正文并写入 .tw 文件"
+          >
+            {generatingAll ? '生成中...' : '生成全部剧情'}
           </button>
-          <button type="button" style={styles.btn} onClick={handleExport}>
-            导出 JSON
-          </button>
+          {twFileHandle && (
+            <span style={styles.fileHandleBtnPath}>{truncatePathForDisplay(twFileHandle.name)}</span>
+          )}
         </div>
       </header>
 
-      <section style={styles.twPathSection}>
-        <div style={styles.twPathRow}>
-          <button type="button" style={styles.btn} onClick={handleSelectTwFile}>
-            选择剧情文件
-          </button>
-          {twFileHandle && <span style={styles.hint}>已选择，生成时将覆盖此文件</span>}
-        </div>
-      </section>
-
-      {!valid && (
+      {(!valid || jsonError) && (
         <div style={styles.errors}>
           {errors.map((e, i) => (
-            <div key={i} style={styles.errorItem}>{e}</div>
+            <div key={`v-${i}`} style={styles.errorItem}>{e}</div>
           ))}
+          {jsonError && <div style={styles.errorItem}>{jsonError}</div>}
         </div>
       )}
+
+      <section style={styles.section}>
+        <label style={styles.label}>当前玩家角色</label>
+        <select
+          value={fw.playerCharacterId ?? ''}
+          onChange={(e) => updateFwWithErrorReset((d) => ({ ...d, playerCharacterId: e.target.value || undefined }))}
+          style={styles.input}
+        >
+          <option value="">请选择（在时间线中指定玩家）</option>
+          {characterIds.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}（{c.id}）
+            </option>
+          ))}
+          {characterIds.length === 0 && <option value="" disabled>暂无人物，请在「人物」页添加</option>}
+        </select>
+      </section>
 
       <section style={styles.section}>
         <label style={styles.label}>故事标题</label>
@@ -327,7 +557,7 @@ export function FrameworkEditor({
             chi={chi}
             sceneIds={sceneIds}
             mapNodeIds={mapNodeIds}
-            npcIds={npcIds}
+            characterIds={characterIds}
             eventIds={eventIds}
             attributeDefs={attributeDefs}
             items={items}
@@ -342,32 +572,9 @@ export function FrameworkEditor({
         ))}
       </section>
 
-      {showImportModal && (
-        <div style={styles.modalOverlay} onClick={() => setShowImportModal(false)}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>导入 JSON</h2>
-              <button type="button" style={styles.modalClose} onClick={() => setShowImportModal(false)}>×</button>
-            </div>
-            <textarea
-              value={jsonInput}
-              onChange={(e) => {
-                setJsonInput(e.target.value);
-                setJsonError(null);
-              }}
-              style={{ ...styles.input, ...styles.textarea, minHeight: 120, fontFamily: 'monospace', fontSize: 12 }}
-              placeholder='粘贴 story-framework.json 内容...'
-            />
-            {jsonError && <div style={styles.errorItem}>{jsonError}</div>}
-            <div style={styles.modalActions}>
-              <button type="button" style={styles.btn} onClick={() => { if (handleImport()) setShowImportModal(false); }}>
-                导入
-              </button>
-              <button type="button" style={styles.btn} onClick={() => setShowImportModal(false)}>
-                取消
-              </button>
-            </div>
-          </div>
+      {jsonError && (
+        <div style={styles.errors}>
+          <div style={styles.errorItem}>{jsonError}</div>
         </div>
       )}
     </div>
@@ -379,7 +586,7 @@ function ChapterBlock({
   chi,
   sceneIds,
   mapNodeIds,
-  npcIds,
+  characterIds,
   eventIds,
   attributeDefs,
   items,
@@ -395,14 +602,14 @@ function ChapterBlock({
   chi: number;
   sceneIds: Set<string>;
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
-  npcIds: Array<{ id: string; name: string }>;
+  characterIds: Array<{ id: string; name: string }>;
   eventIds: Array<{ id: string; name: string }>;
   attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
   items: import('../schema/game-item').GameItem[];
   expandedCh: Set<string>;
   expandedScene: Set<string>;
   toggleCh: (id: string) => void;
-  toggleScene: (id: string) => void;
+  toggleScene: (key: string) => void;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
   onGenerate: () => void;
   isGenerating: boolean;
@@ -513,13 +720,13 @@ function ChapterBlock({
 
           {ch.scenes.map((scene, si) => (
             <SceneBlock
-              key={scene.id}
+              key={`${chi}-${si}`}
               scene={scene}
               chi={chi}
               si={si}
               sceneIds={sceneIds}
               mapNodeIds={mapNodeIds}
-              npcIds={npcIds}
+              characterIds={characterIds}
               eventIds={eventIds}
               attributeDefs={attributeDefs}
               items={items}
@@ -540,7 +747,7 @@ function SceneBlock({
   si,
   sceneIds,
   mapNodeIds,
-  npcIds,
+  characterIds,
   eventIds,
   attributeDefs,
   items,
@@ -553,15 +760,16 @@ function SceneBlock({
   si: number;
   sceneIds: Set<string>;
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
-  npcIds: Array<{ id: string; name: string }>;
+  characterIds: Array<{ id: string; name: string }>;
   eventIds: Array<{ id: string; name: string }>;
   attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
   items: import('../schema/game-item').GameItem[];
   expandedScene: Set<string>;
-  toggleScene: (id: string) => void;
+  toggleScene: (key: string) => void;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
-  const isExpanded = expandedScene.has(scene.id);
+  const sceneKey = `${chi}-${si}`;
+  const isExpanded = expandedScene.has(sceneKey);
 
   const updateScene = (fn: (s: FrameworkScene) => FrameworkScene) =>
     updateFw((d) => ({
@@ -573,7 +781,7 @@ function SceneBlock({
 
   return (
     <div style={styles.scene}>
-      <div style={styles.sceneHead} onClick={() => toggleScene(scene.id)}>
+      <div style={styles.sceneHead} onClick={() => toggleScene(sceneKey)}>
         <span style={styles.sceneTitle}>{isExpanded ? '▼' : '▶'} {scene.id}</span>
         <button
           type="button"
@@ -664,12 +872,12 @@ function SceneBlock({
             </select>
           </div>
           <div style={styles.row}>
-            <label style={styles.label}>出场人物（NPC）</label>
+            <label style={styles.label}>出场人物</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {npcIds.map((npc) => {
-                const selected = (scene.characterIds ?? []).includes(npc.id);
+              {characterIds.map((c) => {
+                const selected = (scene.characterIds ?? []).includes(c.id);
                 return (
-                  <label key={npc.id} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={selected}
@@ -677,17 +885,17 @@ function SceneBlock({
                         updateScene((s) => {
                           const ids = s.characterIds ?? [];
                           const next = e.target.checked
-                            ? [...ids, npc.id]
-                            : ids.filter((x) => x !== npc.id);
+                            ? [...ids, c.id]
+                            : ids.filter((x) => x !== c.id);
                           return { ...s, characterIds: next.length ? next : undefined };
                         })
                       }
                     />
-                    {npc.name}
+                    {c.name}
                   </label>
                 );
               })}
-              {npcIds.length === 0 && <span style={{ color: '#888', fontSize: 13 }}>暂无 NPC，请在「编辑人物」中添加</span>}
+              {characterIds.length === 0 && <span style={{ color: '#888', fontSize: 13 }}>暂无人物，请在「人物」页添加</span>}
             </div>
           </div>
           <div style={styles.row}>
@@ -894,9 +1102,13 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
   },
   modalActions: { display: 'flex', gap: 10, marginTop: 16 },
-  twPathSection: { marginBottom: 24 },
-  twPathRow: { display: 'flex', gap: 10, alignItems: 'center' },
-  hint: { fontSize: 12, color: '#888' },
+  fileHandleBtn: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2,
+  },
+  fileHandleBtnPath: { fontSize: 10, color: '#888', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   sectionHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   label: { display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa' },
   input: {
@@ -914,42 +1126,33 @@ const styles: Record<string, React.CSSProperties> = {
     resize: 'vertical' as const,
     boxSizing: 'border-box',
   },
-  chapter: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
+  chapter: { marginBottom: 12 },
   chapterHead: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '12px 16px',
+    padding: '6px 0',
     cursor: 'pointer',
-    backgroundColor: '#252540',
+    fontSize: 13,
+    color: '#a78bfa',
   },
   chapterHeadRight: { display: 'flex', alignItems: 'center', gap: 8 },
   chapterTitle: { fontWeight: 600, fontSize: 15 },
-  chapterBody: { padding: 16 },
+  chapterBody: { padding: '8px 0 0 0' },
   row: { marginBottom: 12 },
   scenesHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 10 },
-  scene: {
-    marginBottom: 12,
-    backgroundColor: '#1a1a2e',
-    borderRadius: 6,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
+  scene: { marginBottom: 12 },
   sceneHead: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '10px 12px',
+    padding: '6px 0',
     cursor: 'pointer',
-    backgroundColor: '#252540',
+    fontSize: 13,
+    color: '#a78bfa',
   },
   sceneTitle: { fontSize: 14 },
-  sceneBody: { padding: 12 },
+  sceneBody: { padding: '8px 0 0 0' },
   linksHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 8 },
   linkRow: {
     display: 'flex',

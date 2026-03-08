@@ -6,6 +6,7 @@
 import React from 'react';
 import type { FrameworkStateActions } from '../../schema/state-actions';
 import type { CharacterAttributeDef } from '../../schema/metadata';
+import { getAttrKey } from '../../schema/metadata';
 
 const styles: Record<string, React.CSSProperties> = {
   section: { marginTop: 16 },
@@ -21,6 +22,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   row: { marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' },
   btnIcon: { padding: '2px 8px', background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 },
+  readOnlyValue: { fontSize: 13, color: '#e8e8e8' },
 };
 
 export function AttributesEditorCard({
@@ -28,17 +30,20 @@ export function AttributesEditorCard({
   actions,
   onChange,
   title = '属性',
+  readOnly = false,
 }: {
   attributeDefs: CharacterAttributeDef[];
   actions?: FrameworkStateActions;
-  onChange: (a: FrameworkStateActions) => void;
+  onChange?: (a: FrameworkStateActions) => void;
   title?: string;
+  readOnly?: boolean;
 }) {
   const set_ = actions?.set ?? {};
   const add = actions?.add ?? {};
   const subtract = actions?.subtract ?? {};
 
   const updateSet = (k: string, v: string | number | boolean | undefined) => {
+    if (!onChange) return;
     const next = { ...set_ };
     if (v === '' || v === undefined) delete next[k];
     else next[k] = v;
@@ -46,6 +51,7 @@ export function AttributesEditorCard({
   };
 
   const updateAdd = (k: string, v: number) => {
+    if (!onChange) return;
     const next = { ...add };
     if (!v && v !== 0) delete next[k];
     else next[k] = v;
@@ -53,6 +59,7 @@ export function AttributesEditorCard({
   };
 
   const updateSubtract = (k: string, v: number) => {
+    if (!onChange) return;
     const next = { ...subtract };
     if (!v && v !== 0) delete next[k];
     else next[k] = v;
@@ -62,57 +69,78 @@ export function AttributesEditorCard({
   if (attributeDefs.length === 0) {
     return (
       <div style={styles.section}>
-        <label style={styles.label}>{title}</label>
-        <p style={{ color: '#888', fontSize: 13 }}>请在「编辑元信息」中先添加人物属性</p>
+        {title && <label style={styles.label}>{title}</label>}
+        <p style={{ color: '#888', fontSize: 13 }}>请在「元信息」中先添加人物属性</p>
       </div>
     );
   }
 
   return (
     <div style={styles.section}>
-      <label style={styles.label}>{title}</label>
+      {title && <label style={styles.label}>{title}</label>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {attributeDefs.map((def) => (
-          <div key={def.id} style={{ ...styles.row, flexWrap: 'wrap' }}>
-            <span style={{ minWidth: 80, fontSize: 13 }}>{def.name}</span>
-            <span style={{ color: '#666', fontSize: 12 }}>({def.type})</span>
-            {def.type === 'number' ? (
-              <>
+        {attributeDefs.map((def) => {
+          const key = getAttrKey(def);
+          const addVal = add[key] ?? add[def.id] ?? add[def.name];
+          const subVal = subtract[key] ?? subtract[def.id] ?? subtract[def.name];
+          const setVal = set_[key] ?? set_[def.id] ?? set_[def.name];
+          const hasVal = addVal !== undefined || subVal !== undefined || setVal !== undefined;
+
+          if (readOnly) {
+            const parts: string[] = [];
+            if (setVal !== undefined) parts.push(`设=${String(setVal)}`);
+            if (addVal !== undefined) parts.push(`+${addVal}`);
+            if (subVal !== undefined) parts.push(`-${subVal}`);
+            return (
+              <div key={key} style={{ ...styles.row, flexWrap: 'wrap' }}>
+                <span style={{ minWidth: 80, fontSize: 13 }}>{def.name}</span>
+                <span style={styles.readOnlyValue}>{hasVal ? parts.join(' ') : '-'}</span>
+              </div>
+            );
+          }
+
+          return (
+            <div key={key} style={{ ...styles.row, flexWrap: 'wrap' }}>
+              <span style={{ minWidth: 80, fontSize: 13 }}>{def.name}</span>
+              <span style={{ color: '#666', fontSize: 12 }}>({def.type})</span>
+              {def.type === 'number' ? (
+                <>
+                  <input
+                    type="number"
+                    value={addVal ?? ''}
+                    onChange={(e) => updateAdd(key, e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0)}
+                    placeholder="+增量"
+                    style={{ ...styles.input, width: 70 }}
+                  />
+                  <input
+                    type="number"
+                    value={subVal ?? ''}
+                    onChange={(e) => updateSubtract(key, e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0)}
+                    placeholder="-减量"
+                    style={{ ...styles.input, width: 70 }}
+                  />
+                  <input
+                    type="number"
+                    value={String(setVal ?? '')}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateSet(key, v === '' ? undefined : parseInt(v, 10) || 0);
+                    }}
+                    placeholder="=设值"
+                    style={{ ...styles.input, width: 70 }}
+                  />
+                </>
+              ) : (
                 <input
-                  type="number"
-                  value={add[def.id] ?? add[def.name] ?? ''}
-                  onChange={(e) => updateAdd(def.id, e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0)}
-                  placeholder="+增量"
-                  style={{ ...styles.input, width: 70 }}
+                  value={String(setVal ?? '')}
+                  onChange={(e) => updateSet(key, e.target.value === '' ? '' : def.type === 'boolean' ? e.target.value === 'true' : e.target.value)}
+                  placeholder={def.type === 'boolean' ? 'true/false' : '值'}
+                  style={{ ...styles.input, flex: 1, maxWidth: 120 }}
                 />
-                <input
-                  type="number"
-                  value={subtract[def.id] ?? subtract[def.name] ?? ''}
-                  onChange={(e) => updateSubtract(def.id, e.target.value === '' ? 0 : parseInt(e.target.value, 10) || 0)}
-                  placeholder="-减量"
-                  style={{ ...styles.input, width: 70 }}
-                />
-                <input
-                  type="number"
-                  value={String(set_[def.id] ?? set_[def.name] ?? '')}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    updateSet(def.id, v === '' ? undefined : parseInt(v, 10) || 0);
-                  }}
-                  placeholder="=设值"
-                  style={{ ...styles.input, width: 70 }}
-                />
-              </>
-            ) : (
-              <input
-                value={String(set_[def.id] ?? set_[def.name] ?? '')}
-                onChange={(e) => updateSet(def.id, e.target.value === '' ? '' : def.type === 'boolean' ? e.target.value === 'true' : e.target.value)}
-                placeholder={def.type === 'boolean' ? 'true/false' : '值'}
-                style={{ ...styles.input, flex: 1, maxWidth: 120 }}
-              />
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

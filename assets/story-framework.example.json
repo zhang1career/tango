@@ -1,0 +1,110 @@
+{
+  "title": "河阴的余晖",
+  "background": "公元528年河阴之变，费穆（字远刚）是北魏武将，曾献策尔朱荣大清洗洛阳百官，却在屠杀中死于乱军。本作以费穆视角展开。",
+  "rules": [
+    "使用第二人称或旁白视角",
+    "对白简洁有力，符合古代武将口吻",
+    "关键转折处留白，营造张力"
+  ],
+  "initialState": {
+    "variables": {},
+    "inventory": [],
+    "reputation": {}
+  },
+  "chapters": [
+    {
+      "id": "ch0",
+      "title": "序章：河阴的余晖",
+      "theme": "宿命与讽刺",
+      "scenes": [
+        {
+          "id": "序章",
+          "summary": "费穆志得意满站在尔朱荣身侧，刚献计大清洗。祭天突变为屠杀，费穆发现乱军也冲向自己，被同僚刺下马，倒在黄河边。旁白：如果你知道终点在此，当年的选择还会一样吗？",
+          "links": [
+            { "target": "序章", "displayText": "回到开始" },
+            { "target": "风起凉州", "displayText": "选择另一条路" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch1",
+      "title": "第一章：风起凉州",
+      "theme": "生存与野心",
+      "scenes": [
+        {
+          "id": "风起凉州",
+          "summary": "时间倒回，费穆战败沦为凉州阶下囚。需在资源匮乏下利用部族矛盾、煽动狱卒反叛，上演囚徒大逃杀。",
+          "links": [
+            { "target": "南线征旗", "displayText": "继续" },
+            { "target": "获取令牌", "displayText": "获取令牌" },
+            { "target": "军营外", "displayText": "前往军营" },
+            { "target": "序章", "displayText": "返回序章" }
+          ]
+        },
+        {
+          "id": "获取令牌",
+          "summary": "在地上发现一块令牌，悄悄收起。",
+          "stateActions": { "give": "令牌" },
+          "links": [{ "target": "风起凉州", "displayText": "返回" }]
+        },
+        {
+          "id": "军营外",
+          "summary": "营地入口有守卫把守。",
+          "links": [
+            { "target": "军营内", "displayText": "出示令牌", "condition": "$items has \"令牌\"" },
+            { "target": "风起凉州", "displayText": "离开" }
+          ]
+        },
+        {
+          "id": "军营内",
+          "summary": "守卫见到令牌肃然放行，军中声望提升。",
+          "stateActions": { "rep": { "尔朱荣": 2 } },
+          "links": [{ "target": "军营外", "displayText": "返回" }]
+        }
+      ]
+    },
+    {
+      "id": "ch2",
+      "title": "第二章：南线征旗",
+      "theme": "武勇之巅",
+      "scenes": [
+        {
+          "id": "南线征旗",
+          "summary": "费穆被派往南方对抗刘宋，需指挥骑兵冲击南朝方阵、阵前讨伐敌将，确立北魏名将地位。",
+          "links": [
+            { "target": "白袍之影", "displayText": "继续" },
+            { "target": "风起凉州", "displayText": "返回" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch3",
+      "title": "第三章：白袍之影",
+      "theme": "宿命的对决",
+      "scenes": [
+        {
+          "id": "白袍之影",
+          "summary": "陈庆之七千白袍军深入魏境。费穆临危受命，需在兵力悬殊下通过切断补给、地形伏击与陈庆之博弈。",
+          "links": [
+            { "target": "权力祭坛", "displayText": "结局" },
+            { "target": "南线征旗", "displayText": "返回" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch4",
+      "title": "第四章：权力祭坛",
+      "theme": "内心的黑化",
+      "scenes": [
+        {
+          "id": "权力祭坛",
+          "summary": "费穆回洛阳，见官场腐朽与尔朱荣强势，决定做恶人，亲起草处决名单。玩家选择影响名单。剧情闭环回河阴之变。",
+          "links": [{ "target": "序章", "displayText": "重新开始" }]
+        }
+      ]
+    }
+  ]
+}

@@ -19,6 +19,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e8e8e8',
     fontSize: 13,
   },
+  readOnlyValue: { fontSize: 13, color: '#e8e8e8' },
 };
 
 export function ItemsEditorCard({
@@ -27,33 +28,47 @@ export function ItemsEditorCard({
   take,
   onChange,
   title = '物品',
+  readOnly = false,
 }: {
   items: GameItem[];
   give: string[];
   take: string[];
-  onChange: (give: string[], take: string[]) => void;
+  onChange?: (give: string[], take: string[]) => void;
   title?: string;
+  readOnly?: boolean;
 }) {
   const parseList = (s: string) => s ? s.split(/[,，]/).map((x) => x.trim()).filter(Boolean) : [];
 
   if (items.length === 0) {
     return (
       <div style={styles.section}>
-        <label style={styles.label}>{title}</label>
-        <p style={{ color: '#888', fontSize: 13 }}>请在「编辑物品」中先添加物品</p>
+        {title && <label style={styles.label}>{title}</label>}
+        <p style={{ color: '#888', fontSize: 13 }}>请在「物品」中先添加物品</p>
+      </div>
+    );
+  }
+
+  if (readOnly) {
+    const giveStr = give.length > 0 ? `添加：${give.join(', ')}` : '';
+    const takeStr = take.length > 0 ? `移除：${take.join(', ')}` : '';
+    const text = [giveStr, takeStr].filter(Boolean).join('；') || '-';
+    return (
+      <div style={styles.section}>
+        {title && <label style={styles.label}>{title}</label>}
+        <div style={styles.readOnlyValue}>{text}</div>
       </div>
     );
   }
 
   return (
     <div style={styles.section}>
-      <label style={styles.label}>{title}</label>
+      {title && <label style={styles.label}>{title}</label>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div>
           <small style={{ color: '#888' }}>添加（give）</small>
           <input
             value={give.join(', ')}
-            onChange={(e) => onChange(parseList(e.target.value), take)}
+            onChange={(e) => onChange?.(parseList(e.target.value), take)}
             style={styles.input}
             placeholder="物品 id 或名称，逗号分隔"
           />
@@ -62,7 +77,7 @@ export function ItemsEditorCard({
           <small style={{ color: '#888' }}>移除（take）</small>
           <input
             value={take.join(', ')}
-            onChange={(e) => onChange(give, parseList(e.target.value))}
+            onChange={(e) => onChange?.(give, parseList(e.target.value))}
             style={styles.input}
             placeholder="物品 id 或名称，逗号分隔"
           />

@@ -1,7 +1,7 @@
 /**
  * 文字冒险游戏 - 入口
  * 支持 Twee 格式
- * 通过 .env 配置 VITE_GAME_CONTENT_PATH
+ * 配置 GAME_CONTENT_PATH 或 VITE_GAME_CONTENT_PATH（如 assets/story.tw）
  */
 
 import React, { useState, useCallback } from 'react';
@@ -12,25 +12,32 @@ import { CharacterEditor } from './components/CharacterEditor';
 import { EventEditor } from './components/EventEditor';
 import { MetadataEditor } from './components/MetadataEditor';
 import { ItemsEditorPage } from './components/ItemsEditorPage';
+import { getContentPath, getAppMode } from './config';
 import type { StoryFramework } from './schema/story-framework';
-import type { GameMap } from './schema/game-map';
-import exampleFramework from '../assets/story-framework.example.json';
-import storyMaps from '../assets/story-maps.json';
 
 async function fetchContent(path: string): Promise<string> {
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    const res = await fetch(path);
+  const p = path || getContentPath();
+  if (!p) {
+    throw new Error('请配置 GAME_CONTENT_PATH 或 VITE_GAME_CONTENT_PATH（如 assets/story.tw）');
+  }
+  if (p.startsWith('http://') || p.startsWith('https://')) {
+    const res = await fetch(p);
     if (!res.ok) throw new Error(`加载失败: ${res.status}`);
     return res.text();
   }
-  const { default: story } = await import('./data/story.tw');
-  return story;
+  // 开发环境：通过 API 读取项目内文件；生产环境：fetch 静态资源
+  const url = import.meta.env.DEV ? '/api/game-content' : (p.startsWith('/') ? p : `/${p}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`加载失败: ${res.status} ${p}`);
+  return res.text();
 }
 
 const DEFAULT_FRAMEWORK: StoryFramework = {
-  ...(exampleFramework as StoryFramework),
-  maps: (storyMaps as GameMap[]).length > 0 ? (storyMaps as GameMap[]) : (exampleFramework as StoryFramework).maps,
+  title: '未命名故事',
+  chapters: [{ id: 'ch0', title: '第一章', scenes: [] }],
 };
+
+const isProd = getAppMode() === 'prod';
 
 export default function App() {
   const [mode, setMode] = useState<'game' | 'timeline' | 'map' | 'characters' | 'events' | 'metadata' | 'items'>('game');
@@ -49,50 +56,54 @@ export default function App() {
         >
           游戏
         </button>
-        <button
-          type="button"
-          style={{...navStyles.tab, ...(mode === 'timeline' ? navStyles.tabActive : {})}}
-          onClick={() => setMode('timeline')}
-        >
-          编辑时间线
-        </button>
-        <button
-          type="button"
-          style={{...navStyles.tab, ...(mode === 'map' ? navStyles.tabActive : {})}}
-          onClick={() => setMode('map')}
-        >
-          编辑地图
-        </button>
-        <button
-          type="button"
-          style={{...navStyles.tab, ...(mode === 'characters' ? navStyles.tabActive : {})}}
-          onClick={() => setMode('characters')}
-        >
-          编辑人物
-        </button>
-        <button
-          type="button"
-          style={{...navStyles.tab, ...(mode === 'events' ? navStyles.tabActive : {})}}
-          onClick={() => setMode('events')}
-        >
-          编辑事件
-        </button>
-        <button
-          type="button"
-          style={{...navStyles.tab, ...(mode === 'items' ? navStyles.tabActive : {})}}
-          onClick={() => setMode('items')}
-        >
-          编辑物品
-        </button>
-        <button
-          type="button"
-          style={{...navStyles.tab, ...(mode === 'metadata' ? navStyles.tabActive : {})}}
-          onClick={() => setMode('metadata')}
-        >
-          编辑元信息
-        </button>
+        {!isProd && (
+          <>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'timeline' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('timeline')}
+            >
+              时间线
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'map' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('map')}
+            >
+              地图
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'characters' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('characters')}
+            >
+              人物
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'events' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('events')}
+            >
+              事件
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'items' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('items')}
+            >
+              物品
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'metadata' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('metadata')}
+            >
+              元信息
+            </button>
+          </>
+        )}
       </nav>
-      {mode === 'game' ? (
+      {(mode === 'game' || isProd) ? (
         <GameScreen fetchContent={fetchContent}/>
       ) : mode === 'timeline' ? (
         <FrameworkEditor fw={fw} updateFw={updateFw}/>

@@ -24,10 +24,67 @@ import {
 import '@xyflow/react/dist/style.css';
 import type { StoryFramework } from '../schema/story-framework';
 import type { GameMap, MapNode, MapEdge } from '../schema/game-map';
+import { formatJsonCompact } from '../utils/json-format';
+import { DetailEditModal } from './ui/DetailEditModal';
 
 const GRID_GAP = 120;
-const NODE_WIDTH = 140;
-const NODE_HEIGHT = 48;
+const NODE_WIDTH = 60;
+const NODE_HEIGHT = 24;
+
+/** 从 displayText 解析方位：北/南/东/西，返回主方向或 null */
+function parseDirectionFromDisplayText(text?: string): 'north' | 'south' | 'east' | 'west' | null {
+  if (!text || typeof text !== 'string') return null;
+  const t = text.trim();
+  if (/北|北上|北至|北经|北向|北出/.test(t)) return 'north';
+  if (/南|南下|南至|南经|南向|南出/.test(t)) return 'south';
+  if (/东|东至|东经|东向|东出|御道东/.test(t)) return 'east';
+  if (/西|西至|西经|西向|西出|御道西/.test(t)) return 'west';
+  return null;
+}
+
+/** 根据方位或坐标计算边的 sourceHandle 与 targetHandle，实现最近连线 */
+function computeHandleIds(
+  fromId: string,
+  toId: string,
+  nodePos: Map<string, { x: number; y: number }>,
+  displayText?: string
+): { sourceHandle: string; targetHandle: string } {
+  const src = nodePos.get(fromId);
+  const tgt = nodePos.get(toId);
+  type Side = 'top' | 'bottom' | 'left' | 'right';
+  const toSourceHandle = (s: Side) => `source-${s}`;
+  const toTargetHandle = (s: Side) => `target-${s}`;
+
+  const dir = parseDirectionFromDisplayText(displayText);
+  if (dir) {
+    const pairs: Record<string, { source: Side; target: Side }> = {
+      north: { source: 'top', target: 'bottom' },
+      south: { source: 'bottom', target: 'top' },
+      east: { source: 'right', target: 'left' },
+      west: { source: 'left', target: 'right' },
+    };
+    const { source, target } = pairs[dir];
+    return { sourceHandle: toSourceHandle(source), targetHandle: toTargetHandle(target) };
+  }
+
+  if (src && tgt) {
+    const dy = tgt.y - src.y;
+    const dx = tgt.x - src.x;
+    const useNS = Math.abs(dy) >= Math.abs(dx);
+    let source: Side;
+    let target: Side;
+    if (useNS) {
+      source = dy < 0 ? 'top' : 'bottom';
+      target = dy < 0 ? 'bottom' : 'top';
+    } else {
+      source = dx > 0 ? 'right' : 'left';
+      target = dx > 0 ? 'left' : 'right';
+    }
+    return { sourceHandle: toSourceHandle(source), targetHandle: toTargetHandle(target) };
+  }
+
+  return { sourceHandle: toSourceHandle('bottom'), targetHandle: toTargetHandle('top') };
+}
 
 function mapToFlow(map: GameMap): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = map.nodes.map((n, i) => ({
@@ -36,13 +93,24 @@ function mapToFlow(map: GameMap): { nodes: Node[]; edges: Edge[] } {
     position: { x: n.x ?? (i % 4) * GRID_GAP, y: n.y ?? Math.floor(i / 4) * GRID_GAP },
     data: { label: n.name || n.id, raw: n },
   }));
-  const edges: Edge[] = map.edges.map((e, i) => ({
-    id: `e-${e.from}-${e.to}-${i}`,
-    source: e.from,
-    target: e.to,
-    data: { displayText: e.displayText, condition: e.condition },
-    label: e.displayText || undefined,
-  }));
+  const nodePos = new Map(nodes.map((n) => [n.id, n.position]));
+  const edges: Edge[] = map.edges.map((e, i) => {
+    const { sourceHandle, targetHandle } = computeHandleIds(
+      e.from,
+      e.to,
+      nodePos,
+      e.displayText
+    );
+    return {
+      id: `e-${e.from}-${e.to}-${i}`,
+      source: e.from,
+      target: e.to,
+      sourceHandle,
+      targetHandle,
+      data: { displayText: e.displayText, condition: e.condition },
+      label: e.displayText || undefined,
+    };
+  });
   return { nodes, edges };
 }
 
@@ -52,7 +120,7 @@ function flowToMap(nodes: Node[], edges: Edge[], prevMap: GameMap): GameMap {
   const newNodes: MapNode[] = nodes.map((n) => {
     const raw = (n.data?.raw as MapNode) ?? prevNodeMap.get(n.id);
     return {
-      ...(raw ?? { id: n.id, name: String(n.data?.label ?? n.id), items: [], npcs: [] }),
+      ...(raw ?? { id: n.id, name: String(n.data?.label ?? n.id), items: [], characterIds: [] }),
       id: n.id,
       name: String(n.data?.label ?? raw?.name ?? n.id),
       x: Math.round(n.position.x),
@@ -76,25 +144,29 @@ function MapNodeComponent({ data, selected }: { data: { label: string; raw?: Map
   return (
     <div
       style={{
-        padding: '10px 14px',
+        padding: '6px 10px',
         minWidth: NODE_WIDTH,
         minHeight: NODE_HEIGHT,
         backgroundColor: selected ? '#3d2d64' : '#252540',
-        border: `2px solid ${selected ? '#a78bfa' : '#444'}`,
-        borderRadius: 10,
+        border: `1px solid ${selected ? '#a78bfa' : '#444'}`,
+        borderRadius: 6,
         color: '#e8e8e8',
-        fontSize: 14,
+        fontSize: 12,
         fontWeight: 500,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      <Handle type="target" position={Position.Top} style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="target" position={Position.Top} id="target-top" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="target" position={Position.Bottom} id="target-bottom" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="target" position={Position.Left} id="target-left" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="target" position={Position.Right} id="target-right" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Top} id="source-top" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Bottom} id="source-bottom" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Left} id="source-left" style={{ background: '#888', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} id="source-right" style={{ background: '#888', width: 8, height: 8 }} />
       <span>{data?.label || '节点'}</span>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#888', width: 8, height: 8 }} />
-      <Handle type="source" position={Position.Right} id="right" style={{ background: '#888', width: 8, height: 8 }} />
-      <Handle type="source" position={Position.Left} id="left" style={{ background: '#888', width: 8, height: 8 }} />
     </div>
   );
 }
@@ -112,12 +184,13 @@ function NodePropsPanel({
   const [name, setName] = React.useState(raw.name ?? '');
   const [rules, setRules] = React.useState((raw.rules ?? []).join('\n'));
   const [items, setItems] = React.useState((raw.items ?? []).join(', '));
-  const [npcs, setNpcs] = React.useState((raw.npcs ?? []).join(', '));
+  const charIds = raw.characterIds ?? raw.npcs ?? [];
+  const [characterIdsStr, setCharacterIdsStr] = React.useState(charIds.join(', '));
   React.useEffect(() => {
     setName(raw.name ?? '');
     setRules((raw.rules ?? []).join('\n'));
     setItems((raw.items ?? []).join(', '));
-    setNpcs((raw.npcs ?? []).join(', '));
+    setCharacterIdsStr((raw.characterIds ?? raw.npcs ?? []).join(', '));
   }, [node.id]);
   const commit = () => {
     const nextRaw: MapNode = {
@@ -125,7 +198,7 @@ function NodePropsPanel({
       name,
       rules: rules.trim() ? rules.split('\n').filter(Boolean) : undefined,
       items: items.trim() ? items.split(/[,，]/).map((x) => x.trim()).filter(Boolean) : undefined,
-      npcs: npcs.trim() ? npcs.split(/[,，]/).map((x) => x.trim()).filter(Boolean) : undefined,
+      characterIds: characterIdsStr.trim() ? characterIdsStr.split(/[,，]/).map((x) => x.trim()).filter(Boolean) : undefined,
     };
     onUpdate({ label: name, raw: nextRaw });
   };
@@ -162,8 +235,8 @@ function NodePropsPanel({
         <input value={items} onChange={(e) => setItems(e.target.value)} onBlur={commit} style={inputStyle} />
       </div>
       <div style={{ marginBottom: 10 }}>
-        <label style={{ fontSize: 12, color: '#888' }}>NPC id（逗号分隔）</label>
-        <input value={npcs} onChange={(e) => setNpcs(e.target.value)} onBlur={commit} style={inputStyle} />
+        <label style={{ fontSize: 12, color: '#888' }}>人物 id（逗号分隔）</label>
+        <input value={characterIdsStr} onChange={(e) => setCharacterIdsStr(e.target.value)} onBlur={commit} style={inputStyle} />
       </div>
     </div>
   );
@@ -210,14 +283,30 @@ function EdgePropsPanel({
   );
 }
 
-function saveToPreset(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+/** 保存地图到预设路径 assets/story-maps.json，开发模式下直接写入文件无弹窗 */
+async function saveMapsToPreset(maps: unknown): Promise<{ ok: boolean; error?: string }> {
+  if (import.meta.env.DEV) {
+    try {
+      const res = await fetch('/api/save-story-maps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: formatJsonCompact(maps),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (res.ok && json.ok) return { ok: true };
+      return { ok: false, error: json.error || `HTTP ${res.status}` };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+  const blob = new Blob([formatJsonCompact(maps)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = 'story-maps.json';
   a.click();
   URL.revokeObjectURL(url);
+  return { ok: true };
 }
 
 function MapCanvasInner({
@@ -225,11 +314,13 @@ function MapCanvasInner({
   mapIndex,
   onUpdate,
   onClose,
+  onSave,
 }: {
   map: GameMap;
   mapIndex: number;
   onUpdate: (fn: (m: GameMap) => GameMap) => void;
   onClose: () => void;
+  onSave?: (currentMap: GameMap) => void;
 }) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => mapToFlow(map), [map.id]);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -299,7 +390,7 @@ function MapCanvasInner({
         id,
         type: 'mapNode',
         position: base,
-        data: { label: '新地点', raw: { id, name: '新地点', x: base.x, y: base.y, items: [], npcs: [] } },
+        data: { label: '新地点', raw: { id, name: '新地点', x: base.x, y: base.y, items: [], characterIds: [] } },
       };
       return [...nds, newNode];
     });
@@ -356,17 +447,31 @@ function MapCanvasInner({
           maskColor="rgba(0,0,0,0.6)"
           style={{ width: 120, height: 80, bottom: 10, left: 10 }}
         />
-        <Panel position="top-left" style={{ margin: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={handleAddNode} style={btnStyle}>
-            + 添加节点
-          </button>
+        <Panel position="top-left" style={{ margin: 12 }}>
           <button type="button" onClick={onClose} style={btnStyle}>
             ← 返回
           </button>
         </Panel>
-        {selNode && (
-          <Panel position="top-right" style={{ margin: 12, width: 260, maxHeight: '80vh', overflow: 'auto' }}>
-            <NodePropsPanel
+        <Panel position="top-right" style={{ margin: 12, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={handleAddNode} style={btnStyle}>
+              + 添加节点
+            </button>
+            {onSave && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await onSave(flowToMap(nodes, edges, map));
+                }}
+                style={btnStyle}
+              >
+                保存
+              </button>
+            )}
+          </div>
+          {selNode && (
+            <div style={{ width: 260, maxHeight: '80vh', overflow: 'auto' }}>
+              <NodePropsPanel
               node={selNode}
               onUpdate={(data) =>
                 setNodes((nds) =>
@@ -374,11 +479,11 @@ function MapCanvasInner({
                 )
               }
             />
-          </Panel>
-        )}
-        {selEdge && !selNode && (
-          <Panel position="top-right" style={{ margin: 12, width: 260 }}>
-            <EdgePropsPanel
+            </div>
+          )}
+          {selEdge && !selNode && (
+            <div style={{ width: 260 }}>
+              <EdgePropsPanel
               edge={selEdge}
               onUpdate={(data) =>
                 setEdges((eds) =>
@@ -390,10 +495,77 @@ function MapCanvasInner({
                 )
               }
             />
-          </Panel>
-        )}
+            </div>
+          )}
+        </Panel>
       </ReactFlow>
     </div>
+  );
+}
+
+function MapFormContent({
+  map,
+  editable,
+  onUpdate,
+}: {
+  map: GameMap;
+  editable: boolean;
+  onUpdate?: (fn: (m: GameMap) => GameMap) => void;
+}) {
+  if (!editable || !onUpdate) {
+    return (
+      <div style={{ color: '#e8e8e8', fontSize: 14 }}>
+        <p style={{ margin: '0 0 8px' }}><strong>名称：</strong>{map.name || map.id}</p>
+        <p style={{ margin: '0 0 8px' }}><strong>ID：</strong>{map.id}</p>
+      </div>
+    );
+  }
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: 10, backgroundColor: '#252540', border: '1px solid #333',
+    borderRadius: 6, color: '#e8e8e8', fontSize: 14, marginTop: 4,
+  };
+  return (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: '#a78bfa' }}>ID</label>
+        <input
+          value={map.id}
+          onChange={(e) => onUpdate((m) => ({ ...m, id: e.target.value }))}
+          style={inputStyle}
+          placeholder="map_xxx"
+        />
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: '#a78bfa' }}>名称</label>
+        <input
+          value={map.name}
+          onChange={(e) => onUpdate((m) => ({ ...m, name: e.target.value }))}
+          style={inputStyle}
+          placeholder="未命名地图"
+        />
+      </div>
+    </div>
+  );
+}
+
+function MapDetailModal({ map, onClose }: { map: GameMap; onClose: () => void }) {
+  return (
+    <DetailEditModal title="地图详情" open onClose={onClose} editable={false}>
+      <div style={{ color: '#e8e8e8', fontSize: 14 }}>
+        <p style={{ margin: '0 0 8px' }}><strong>名称：</strong>{map.name || map.id}</p>
+        <p style={{ margin: '0 0 8px' }}><strong>ID：</strong>{map.id}</p>
+        <p style={{ margin: '0 0 8px' }}><strong>节点数：</strong>{map.nodes.length}</p>
+        <p style={{ margin: '0 0 8px' }}><strong>连接数：</strong>{map.edges.length}</p>
+        {map.nodes.length > 0 && (
+          <>
+            <p style={{ margin: '0 0 4px' }}><strong>节点：</strong></p>
+            <ul style={{ margin: '0 0 12px 20px', padding: 0 }}>{map.nodes.map((n) => (
+              <li key={n.id}>{n.name || n.id}</li>
+            ))}</ul>
+          </>
+        )}
+      </div>
+    </DetailEditModal>
   );
 }
 
@@ -412,15 +584,17 @@ function MapCanvas({
   mapIndex,
   onUpdate,
   onClose,
+  onSave,
 }: {
   map: GameMap;
   mapIndex: number;
   onUpdate: (fn: (m: GameMap) => GameMap) => void;
   onClose: () => void;
+  onSave?: (currentMap: GameMap) => void;
 }) {
   return (
     <ReactFlowProvider>
-      <MapCanvasInner map={map} mapIndex={mapIndex} onUpdate={onUpdate} onClose={onClose} />
+      <MapCanvasInner map={map} mapIndex={mapIndex} onUpdate={onUpdate} onClose={onClose} onSave={onSave} />
     </ReactFlowProvider>
   );
 }
@@ -437,19 +611,37 @@ export function MapEditor({
     updateFw((d) => ({ ...d, maps: fn(d.maps ?? []) }));
 
   const [activeMapIndex, setActiveMapIndex] = React.useState<number | null>(null);
+  const [detailMapIndex, setDetailMapIndex] = React.useState<number | null>(null);
+  const [addModalOpen, setAddModalOpen] = React.useState(false);
+  const [newMap, setNewMap] = React.useState<GameMap>(() => ({
+    id: `map_${Date.now()}`,
+    name: '未命名地图',
+    nodes: [],
+    edges: [],
+  }));
 
-  const addMap = () => {
-    const id = `map_${Date.now()}`;
-    setMaps((m) => [...m, { id, name: '未命名地图', nodes: [], edges: [] }]);
-    setActiveMapIndex(maps.length);
+  const openAddModal = () => {
+    setNewMap({ id: `map_${Date.now()}`, name: '未命名地图', nodes: [], edges: [] });
+    setAddModalOpen(true);
+  };
+
+  const confirmAddMap = async () => {
+    const next = [...maps, newMap];
+    setMaps(() => next);
+    const result = await saveMapsToPreset(next);
+    if (!result.ok) alert(`保存失败: ${result.error}`);
+    else setAddModalOpen(false);
   };
 
   const updateMap = (index: number, fn: (m: GameMap) => GameMap) =>
     setMaps((m) => m.map((x, i) => (i === index ? fn(x) : x)));
 
-  const removeMap = (index: number) => {
-    setMaps((m) => m.filter((_, i) => i !== index));
+  const removeMap = async (index: number) => {
+    const next = maps.filter((_, i) => i !== index);
+    setMaps(() => next);
     setActiveMapIndex(null);
+    const result = await saveMapsToPreset(next);
+    if (!result.ok) alert(`保存失败: ${result.error}`);
   };
 
   const activeMap = activeMapIndex !== null ? maps[activeMapIndex] : null;
@@ -462,6 +654,13 @@ export function MapEditor({
           mapIndex={activeMapIndex}
           onUpdate={(fn) => updateMap(activeMapIndex, fn)}
           onClose={() => setActiveMapIndex(null)}
+          onSave={async (currentMap) => {
+            const nextMaps = [...(fw.maps ?? [])];
+            nextMaps[activeMapIndex] = currentMap;
+            updateFw((d) => ({ ...d, maps: nextMaps }));
+            const result = await saveMapsToPreset(nextMaps);
+            if (!result.ok) alert(`保存失败: ${result.error}`);
+          }}
         />
       </div>
     );
@@ -470,15 +669,12 @@ export function MapEditor({
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>地图编辑</h1>
-        <button type="button" style={styles.btn} onClick={() => saveToPreset('story-maps.json', fw.maps ?? [])}>
-          保存
-        </button>
+        <h1 style={styles.title}>地图</h1>
       </header>
       <section style={styles.section}>
         <div style={styles.sectionHead}>
           <label style={styles.label}>地图</label>
-          <button type="button" style={styles.btnSmall} onClick={addMap}>
+          <button type="button" style={styles.btnSmall} onClick={openAddModal}>
             + 添加地图
           </button>
         </div>
@@ -488,18 +684,19 @@ export function MapEditor({
         {maps.map((map, mi) => (
           <div key={map.id} style={styles.card}>
             <div style={styles.cardHead}>
-              <span style={{ fontWeight: 600 }}>{map.name || map.id}</span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" style={styles.btnSmall} onClick={() => setActiveMapIndex(mi)}>
-                  打开图编辑
+              <span
+                style={{ fontWeight: 600, flex: 1, cursor: 'pointer' }}
+                onClick={() => setDetailMapIndex(mi)}
+              >
+                {map.name || map.id}
+                <span style={{ marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400 }}>
+                  · {map.nodes.length} 个节点 · {map.edges.length} 条连接
+                </span>
+              </span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button type="button" style={styles.btnIcon} onClick={() => setActiveMapIndex(mi)} title="编辑">
+                  ✎
                 </button>
-                <input
-                  value={map.name}
-                  onChange={(e) => updateMap(mi, (m) => ({ ...m, name: e.target.value }))}
-                  style={{ ...styles.input, width: 160 }}
-                  placeholder="地图名称"
-                  onClick={(e) => e.stopPropagation()}
-                />
                 <button
                   type="button"
                   style={styles.btnIcon}
@@ -510,13 +707,29 @@ export function MapEditor({
                 </button>
               </div>
             </div>
-            <div style={styles.cardBody}>
-              <p style={{ color: '#888', fontSize: 13, margin: 0 }}>
-                {map.nodes.length} 个节点 · {map.edges.length} 条连接
-              </p>
-            </div>
           </div>
         ))}
+      {detailMapIndex !== null && maps[detailMapIndex] && (
+        <MapDetailModal
+          map={maps[detailMapIndex]}
+          onClose={() => setDetailMapIndex(null)}
+        />
+      )}
+      {addModalOpen && (
+        <DetailEditModal
+          title="添加地图"
+          open
+          onClose={() => setAddModalOpen(false)}
+          editable
+          onSave={confirmAddMap}
+        >
+          <MapFormContent
+            map={newMap}
+            editable
+            onUpdate={(fn) => setNewMap(fn(newMap))}
+          />
+        </DetailEditModal>
+      )}
       </section>
     </div>
   );

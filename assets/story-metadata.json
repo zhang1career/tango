@@ -1,0 +1,13 @@
+{
+  "characterAttributes": [
+    {"id":"chapter","name":"章节进度","type":"number","valueRange":"1,5"},
+    {"id":"hp","name":"血量","type":"number","valueRange":"0,100"},
+    {"id":"str","name":"力量","type":"number","valueRange":"1,10"},
+    {"id":"int","name":"智力","type":"number","valueRange":"1,10"},
+    {"id":"chr","name":"魅力","type":"number","valueRange":"1,10"},
+    {"id":"lck","name":"运气","type":"number","valueRange":"1,10"},
+    {"id":"reputation","subId":"erzhurong","name":"声誉-尔朱荣","type":"number","valueRange":"-100,100"},
+    {"id":"reputation","subId":"beiwei","name":"声誉-北魏朝廷","type":"number","valueRange":"-100,100"},
+    {"id":"experience","subId":"escapedPrison","name":"经历-曾越狱","type":"boolean"}
+  ]
+}

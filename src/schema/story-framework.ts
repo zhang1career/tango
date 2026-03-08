@@ -78,6 +78,8 @@ export interface StoryFramework {
   metadata?: GameMetadata;
   /** 可选：物品列表 */
   items?: GameItem[];
+  /** 当前玩家角色 id（用户操作的角色），在时间线中选定 */
+  playerCharacterId?: string;
 }
 
 /** 扁平化所有场景（用于生成） */
