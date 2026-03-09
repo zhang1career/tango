@@ -4,16 +4,18 @@
  * 配置 GAME_CONTENT_PATH 或 VITE_GAME_CONTENT_PATH（如 assets/story.tw）
  */
 
-import React, { useState, useCallback } from 'react';
-import { GameScreen } from './components/GameScreen';
-import { FrameworkEditor } from './components/FrameworkEditor';
-import { MapEditor } from './components/MapEditor';
-import { CharacterEditor } from './components/CharacterEditor';
-import { EventEditor } from './components/EventEditor';
-import { MetadataEditor } from './components/MetadataEditor';
-import { ItemsEditorPage } from './components/ItemsEditorPage';
-import { getContentPath, getAppMode } from './config';
-import type { StoryFramework } from './schema/story-framework';
+import React, {useCallback, useState} from 'react';
+import {GameScreen} from './components/GameScreen';
+import {FrameworkEditor} from './components/FrameworkEditor';
+import {MapEditor} from './components/MapEditor';
+import {CharacterEditor} from './components/CharacterEditor';
+import {EventEditor} from './components/EventEditor';
+import {MetadataEditor} from './components/MetadataEditor';
+import {ItemsEditorPage} from './components/ItemsEditorPage';
+import {SceneEditor} from './components/SceneEditor';
+import {RuleEditor} from './components/RuleEditor';
+import {getAppMode, getContentPath} from './config';
+import type {StoryFramework} from './schema/story-framework';
 
 async function fetchContent(path: string): Promise<string> {
   const p = path || getContentPath();
@@ -34,20 +36,20 @@ async function fetchContent(path: string): Promise<string> {
 
 const DEFAULT_FRAMEWORK: StoryFramework = {
   title: '未命名故事',
-  chapters: [{ id: 'ch0', title: '第一章', scenes: [] }],
+  chapters: [{id: 'ch0', title: '第一章', sceneEntries: []}],
 };
 
 const isProd = getAppMode() === 'prod';
 
 export default function App() {
-  const [mode, setMode] = useState<'game' | 'timeline' | 'map' | 'characters' | 'events' | 'metadata' | 'items'>('game');
+  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'metadata'>('game');
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
     setFw((prev) => fn(prev));
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#1a1a2e' }}>
+    <div style={{minHeight: '100vh', backgroundColor: '#1a1a2e'}}>
       <nav style={navStyles.bar}>
         <button
           type="button"
@@ -63,7 +65,14 @@ export default function App() {
               style={{...navStyles.tab, ...(mode === 'timeline' ? navStyles.tabActive : {})}}
               onClick={() => setMode('timeline')}
             >
-              时间线
+              剧情
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'scenes' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('scenes')}
+            >
+              场景
             </button>
             <button
               type="button"
@@ -95,6 +104,13 @@ export default function App() {
             </button>
             <button
               type="button"
+              style={{...navStyles.tab, ...(mode === 'rules' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('rules')}
+            >
+              规则
+            </button>
+            <button
+              type="button"
               style={{...navStyles.tab, ...(mode === 'metadata' ? navStyles.tabActive : {})}}
               onClick={() => setMode('metadata')}
             >
@@ -107,16 +123,20 @@ export default function App() {
         <GameScreen fetchContent={fetchContent}/>
       ) : mode === 'timeline' ? (
         <FrameworkEditor fw={fw} updateFw={updateFw}/>
+      ) : mode === 'scenes' ? (
+        <SceneEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'map' ? (
-        <MapEditor fw={fw} updateFw={updateFw} />
+        <MapEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'events' ? (
-        <EventEditor fw={fw} updateFw={updateFw} />
-      ) : mode === 'metadata' ? (
-        <MetadataEditor fw={fw} updateFw={updateFw} />
+        <EventEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'items' ? (
-        <ItemsEditorPage fw={fw} updateFw={updateFw} />
+        <ItemsEditorPage fw={fw} updateFw={updateFw}/>
+      ) : mode === 'rules' ? (
+        <RuleEditor fw={fw} updateFw={updateFw}/>
+      ) : mode === 'metadata' ? (
+        <MetadataEditor fw={fw} updateFw={updateFw}/>
       ) : (
-        <CharacterEditor fw={fw} updateFw={updateFw} />
+        <CharacterEditor fw={fw} updateFw={updateFw}/>
       )}
     </div>
   );

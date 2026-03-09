@@ -3,7 +3,7 @@
  * 事件通过规则引擎对玩家施加作用（变量、物品、声誉等）
  */
 
-import type { FrameworkStateActions } from './state-actions';
+import type {FrameworkStateActions} from './state-actions';
 
 export type EventTriggerType = 'unconditional' | 'conditional';
 
@@ -17,4 +17,6 @@ export interface GameEvent {
   condition?: string;
   /** 计算规则：满足触发条件时对玩家的状态变更 */
   actions?: FrameworkStateActions;
+  /** 是否已使用（通用字段） */
+  is_used?: boolean;
 }

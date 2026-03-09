@@ -4,7 +4,7 @@
  * 非用户操作的人物按脚本（时间线偶发行为、人物详情规律行为）行动
  */
 
-import type { FrameworkStateActions } from './state-actions';
+import type {FrameworkStateActions} from './state-actions';
 
 /** @deprecated 人物不再区分类型，保留仅为兼容旧数据 */
 export type CharacterType = 'player' | 'npc';
@@ -21,8 +21,10 @@ export interface GameCharacter {
   attributes?: Record<string, string | number | boolean>;
   /** 物品 id 列表 */
   inventory?: string[];
-  /** 规则：条件满足时生效 */
-  rules?: string[];
+  /** 行为：非玩家控制时按脚本行动（每行一条） */
+  behaviors?: string[];
+  /** 是否已使用（通用字段） */
+  is_used?: boolean;
   /** 首次遇见时的状态变更（属性+物品） */
   onMeet?: FrameworkStateActions;
   /** @deprecated 人物-地点关系在时间线场景中设定（scene.characterIds），保留仅为兼容旧数据 */

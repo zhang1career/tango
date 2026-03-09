@@ -4,12 +4,11 @@
  */
 
 import React from 'react';
-import type { FrameworkStateActions } from '../../schema/state-actions';
-import type { GameItem } from '../../schema/game-item';
+import type {GameItem} from '@/schema/game-item.ts';
 
 const styles: Record<string, React.CSSProperties> = {
-  section: { marginTop: 16 },
-  label: { display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa' },
+  section: {marginTop: 16},
+  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
   input: {
     width: '100%',
     padding: 8,
@@ -19,17 +18,17 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e8e8e8',
     fontSize: 13,
   },
-  readOnlyValue: { fontSize: 13, color: '#e8e8e8' },
+  readOnlyValue: {fontSize: 13, color: '#e8e8e8'},
 };
 
 export function ItemsEditorCard({
-  items,
-  give,
-  take,
-  onChange,
-  title = '物品',
-  readOnly = false,
-}: {
+                                  items,
+                                  give,
+                                  take,
+                                  onChange,
+                                  title = '物品',
+                                  readOnly = false,
+                                }: {
   items: GameItem[];
   give: string[];
   take: string[];
@@ -43,7 +42,7 @@ export function ItemsEditorCard({
     return (
       <div style={styles.section}>
         {title && <label style={styles.label}>{title}</label>}
-        <p style={{ color: '#888', fontSize: 13 }}>请在「物品」中先添加物品</p>
+        <p style={{color: '#888', fontSize: 13}}>请在「物品」中先添加物品</p>
       </div>
     );
   }
@@ -63,9 +62,9 @@ export function ItemsEditorCard({
   return (
     <div style={styles.section}>
       {title && <label style={styles.label}>{title}</label>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{display: 'flex', flexDirection: 'column', gap: 8}}>
         <div>
-          <small style={{ color: '#888' }}>添加（give）</small>
+          <small style={{color: '#888'}}>添加（give）</small>
           <input
             value={give.join(', ')}
             onChange={(e) => onChange?.(parseList(e.target.value), take)}
@@ -74,7 +73,7 @@ export function ItemsEditorCard({
           />
         </div>
         <div>
-          <small style={{ color: '#888' }}>移除（take）</small>
+          <small style={{color: '#888'}}>移除（take）</small>
           <input
             value={take.join(', ')}
             onChange={(e) => onChange?.(give, parseList(e.target.value))}
@@ -82,7 +81,7 @@ export function ItemsEditorCard({
             placeholder="物品 id 或名称，逗号分隔"
           />
         </div>
-        <div style={{ fontSize: 11, color: '#666' }}>
+        <div style={{fontSize: 11, color: '#666'}}>
           可选: {items.map((i) => `${i.name}(${i.id})`).join(', ')}
         </div>
       </div>

@@ -42,17 +42,6 @@ src/
 assets/         # 故事源文件（.tw、story-*.json）
 ```
 
-## 剧情生成
-
-支持「人工编辑剧情框架 → AI 生成剧情内容」：
-
-```bash
-npm run generate:story
-# 或指定框架：npx tsx scripts/generate-story.ts assets/story-framework.example.json --output assets/story.tw
-```
-
-配置 `VITE_AIGC_API_KEY` 后，脚本会调用 AI 生成每个场景正文；未配置则使用框架中的 `summary`。
-
 ## 扩展
 
 - **远程内容**：`GAME_CONTENT_PATH` 设为 URL，`fetchContent` 会通过 `fetch` 加载

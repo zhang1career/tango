@@ -1,20 +1,205 @@
 /**
  * Twee 3 格式解析器 - 兼容 Twine
  * 参考: https://github.com/iftechfoundation/twine-specs/blob/master/twee-3-specification.md
- * 扩展: 支持条件链接 [[display|target]] condition、StoryData 初始状态、passage metadata 状态动作
+ * 扩展: 条件链接、StoryData、passage metadata、Sugarcube 语法（<<if>>、<<set>>、[[link][setter]]）
  */
 
-import type { Passage, PassageLink, Story, InitialRuntimeState, PassageStateActions } from '../types';
+import type {Passage, PassageLink, PassageStateActions, Story} from '@/types';
 
-const PASSAGE_HEADER_RE = /^::\s*(.+?)(?:\s+\[([^\]]*)\])?(?:\s*(\{.*\}))?$/;
-// Twine link + 可选条件: [[...]] condition
-const LINK_RE =
-  /\[\[([^\]]+?)(?:\|([^\]]+?))?\]\]|\[\[([^\]]+?)->([^\]]+?)\]\]|\[\[([^\]]+?)<-([^\]]+?)\]\]/g;
+const PASSAGE_HEADER_RE = /^::\s*(.+?)(?:\s+\[([^\]]*)])?(?:\s*(\{.*}))?$/;
 
-function parseLinks(text: string): Array<{ displayText: string; passageName: string; raw: string; condition?: string }> {
+/** 解析 Sugarcube setter 如 [$x to 1, $rep.xxx to 5, $reputation["x"] to ($reputation["x"]||0)+5] 为 linkActions */
+function parseSetterToActions(setterStr: string): PassageStateActions | undefined {
+  const actions: PassageStateActions = {};
+  const assignments = setterStr.split(',').map((s) => s.trim()).filter(Boolean);
+  for (const a of assignments) {
+    const repBracket = a.match(/^\$reputation\[\s*"([^"]+)"\s*]\s+to\s+\([^)]*\)\s*\+\s*(\d+)\s*$/);
+    if (repBracket) {
+      actions.rep = actions.rep ?? {};
+      actions.rep[repBracket[1]] = (actions.rep[repBracket[1]] ?? 0) + Number(repBracket[2]);
+      continue;
+    }
+    const m = a.match(/^\$([a-zA-Z0-9_.]+)\s+to\s+(.+)$/);
+    if (!m) continue;
+    const [, path, valStr] = m;
+    const val = parseSetterValue(valStr.trim());
+    if (val === undefined && !valStr.includes('concat') && !valStr.includes('filter')) continue;
+    if (path.startsWith('reputation.') || path.startsWith('rep.')) {
+      const entity = path.replace(/^(reputation|rep)\./, '');
+      actions.rep = actions.rep ?? {};
+      actions.rep[entity] = (actions.rep[entity] ?? 0) + (typeof val === 'number' ? val : Number(val) || 0);
+    } else if (path === 'inventory') {
+      const concat = valStr.match(/concat\(\s*\[\s*"([^"]*)"\s*]\s*\)/);
+      if (concat) {
+        actions.give = actions.give ? (Array.isArray(actions.give) ? [...actions.give, concat[1]] : [actions.give, concat[1]]) : concat[1];
+      }
+      const filter = valStr.match(/filter\([^)]*"([^"]*)"[^)]*\)/);
+      if (filter) {
+        actions.take = actions.take ? (Array.isArray(actions.take) ? [...actions.take, filter[1]] : [actions.take, filter[1]]) : filter[1];
+      }
+    } else if (val !== undefined) {
+      actions.set = actions.set ?? {};
+      (actions.set as Record<string, string | number | boolean>)[path] = val as string | number | boolean;
+    }
+  }
+  return Object.keys(actions).length ? actions : undefined;
+}
+
+function parseSetterValue(s: string): string | number | boolean | undefined {
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  const n = Number(s);
+  if (!Number.isNaN(n) && String(n) === s) return n;
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1).replace(/\\(.)/g, '$1');
+  }
+  if (s.startsWith('$')) return undefined;
+  if (s.includes('||') || s.includes('+')) {
+    const numMatch = s.match(/\([^)]*\)\s*\+\s*(\d+)/);
+    if (numMatch) return Number(numMatch[1]);
+  }
+  return s;
+}
+
+/** Sugarcube 段落内容解析：提取链接（含 setter、<<if>>）、<<set>>/<<run>> 等宏 */
+function parseSugarcubeContent(rawContent: string): {
+  text: string;
+  links: Array<{ displayText: string; passageName: string; condition?: string; linkActions?: PassageStateActions }>;
+  metadataMerge: Partial<PassageStateActions>;
+} {
+  let text = rawContent;
+  const links: Array<{
+    displayText: string;
+    passageName: string;
+    condition?: string;
+    linkActions?: PassageStateActions
+  }> = [];
+  const metadataMerge: Partial<PassageStateActions> = {};
+  const setVars: Record<string, string | number | boolean> = {};
+  const giveItems: string[] = [];
+  const takeItems: string[] = [];
+  const repDeltas: Record<string, number> = {};
+
+  const collectSet = (key: string, val: string | number | boolean) => {
+    setVars[key] = val;
+  };
+  const collectGive = (item: string) => {
+    giveItems.push(item);
+  };
+  const collectTake = (item: string) => {
+    takeItems.push(item);
+  };
+  const collectRep = (entity: string, delta: number) => {
+    repDeltas[entity] = (repDeltas[entity] ?? 0) + delta;
+  };
+
+  const extractMacros = (block: string) => {
+    block.replace(/<<set\s+\$variables\[\s*"([^"]+)"\s*]\s+to\s+([^>]+)>>/g, (_, key, valStr) => {
+      const v = parseSetterValue(valStr.trim());
+      if (v !== undefined) collectSet(key.replace(/\\"/g, '"'), v as string | number | boolean);
+      return '';
+    });
+    block.replace(/<<set\s+\$([a-zA-Z0-9_.]+)\s+to\s+([^>]+)>>/g, (_, key, valStr) => {
+      const v = parseSetterValue(valStr.trim());
+      if (v !== undefined) collectSet(key, v as string | number | boolean);
+      return '';
+    });
+    block.replace(/<<set\s+\$reputation\["([^"]+)"]\s+to\s+(.+?)>>/g, (_, entity, expr) => {
+      const m = expr.match(/\(\s*\$reputation\["[^"]+"]\s*\|\|\s*0\s*\)\s*\+\s*(\d+)/);
+      collectRep(entity, m ? Number(m[1]) : 0);
+      return '';
+    });
+    block.replace(/<<run\s+\$inventory\.push\("([^"]*)"\)>>/g, (_, item) => {
+      collectGive(item);
+      return '';
+    });
+    block.replace(/<<run\s+\$inventory\s*=\s*\$inventory\.filter\([^)]+\)>>/g, (m) => {
+      const itemMatch = m.match(/x\s*!==\s*"([^"]*)"/);
+      if (itemMatch) collectTake(itemMatch[1]);
+      return '';
+    });
+  };
+
+  text = text.replace(/<<silently>>[\s\S]*?<<\/silently>>/gi, (m) => {
+    extractMacros(m);
+    return '';
+  });
+  extractMacros(text);
+  text = text.replace(/<<set\s+\$[^>]+>>/g, '');
+  text = text.replace(/<<run\s+[^>]+>>/g, '');
+
+  const pushLink = (
+    display: string,
+    target: string,
+    cond?: string,
+    linkActions?: PassageStateActions
+  ) => {
+    links.push({
+      displayText: display.trim(),
+      passageName: target.trim().replace(/\s+/g, '_'),
+      condition: cond && cond.trim() ? cond.trim() : undefined,
+      linkActions,
+    });
+  };
+
+  text = text.replace(/<<if\s+([^>]+)>>([\s\S]*?)<<endif>>/gi, (_, cond, inner) => {
+    const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\s*\[\s*([^\]]+)\s*]/g;
+    const plainLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]|\[\[([^\]|]+)->([^\]]+)]]|\[\[([^\]|]+)<-([^\]]+)]]/g;
+    let found = false;
+    inner.replace(setterLinkRe, (m: string, d: string, t: string, setter: string) => {
+      found = true;
+      pushLink(d, t, cond, parseSetterToActions(setter));
+      return '';
+    });
+    if (!found) {
+      inner.replace(plainLinkRe, (m: string, d?: string, t?: string, d2?: string, t2?: string, d3?: string, t3?: string) => {
+        const disp = d ?? d2 ?? t3 ?? '';
+        const tgt = t ?? t2 ?? d3 ?? '';
+        if (disp || tgt) {
+          found = true;
+          pushLink(disp || tgt, tgt || disp, cond, undefined);
+        }
+        return '';
+      });
+    }
+    return '';
+  });
+
+  const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\s*\[\s*([^\]]+)\s*]/g;
+  text = text.replace(setterLinkRe, (_, display: string, target: string, setter: string) => {
+    pushLink(display, target, undefined, parseSetterToActions(setter));
+    return '';
+  });
+
+  const standardLinks = parseLinks(text);
+  for (const l of standardLinks) {
+    pushLink(l.displayText, l.passageName, l.condition, undefined);
+  }
+
+  text = text.replace(
+    /\[\[([^\]]+?)(?:\|([^\]]+?))?]]|\[\[([^\]]+?)->([^\]]+?)]]|\[\[([^\]]+?)<-([^\]]+?)]](\s+[^\[]*)?(?=\[\[|$)/g,
+    ''
+  )
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (Object.keys(setVars).length) metadataMerge.set = setVars;
+  if (giveItems.length) metadataMerge.give = giveItems.length === 1 ? giveItems[0] : giveItems;
+  if (takeItems.length) metadataMerge.take = takeItems.length === 1 ? takeItems[0] : takeItems;
+  if (Object.keys(repDeltas).length) metadataMerge.rep = repDeltas;
+
+  return {text, links, metadataMerge};
+}
+
+function parseLinks(text: string): Array<{
+  displayText: string;
+  passageName: string;
+  raw: string;
+  condition?: string
+}> {
   const links: Array<{ displayText: string; passageName: string; raw: string; condition?: string }> = [];
   // 匹配 [[...]] 及可选条件（]] 后至下一个 [[ 或结尾）
-  const fullRe = /\[\[([^\]]+?)(?:\|([^\]]+?))?\]\]|\[\[([^\]]+?)->([^\]]+?)\]\]|\[\[([^\]]+?)<-([^\]]+?)\]\](\s+[^\[]*)?(?=\[\[|$)/g;
+  const fullRe = /\[\[([^\]]+?)(?:\|([^\]]+?))?]]|\[\[([^\]]+?)->([^\]]+?)]]|\[\[([^\]]+?)<-([^\]]+?)]](\s+[^\[]*)?(?=\[\[|$)/g;
   let m: RegExpExecArray | null;
 
   while ((m = fullRe.exec(text)) !== null) {
@@ -105,29 +290,40 @@ export function parseTwee(source: string): Story {
       continue;
     }
 
-    const links = parseLinks(rawContent);
-    const fullLinkRe =
-      /\[\[([^\]]+?)(?:\|([^\]]+?))?\]\]|\[\[([^\]]+?)->([^\]]+?)\]\]|\[\[([^\]]+?)<-([^\]]+?)\]\](\s+[^\[]*)?(?=\[\[|$)/g;
-    const cleanText = rawContent
-      .replace(fullLinkRe, (match) => {
-        const parsed = parseLinks(match)[0];
-        return parsed ? '' : match;
-      })
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    const sugarcube = parseSugarcubeContent(rawContent);
+    const mergedMeta: Record<string, unknown> = {...metadata};
+    if (sugarcube.metadataMerge.set) {
+      mergedMeta.set = {...((mergedMeta.set as Record<string, unknown>) ?? {}), ...sugarcube.metadataMerge.set};
+    }
+    if (sugarcube.metadataMerge.give) {
+      const prev = (mergedMeta.give as string[]) ?? [];
+      mergedMeta.give = Array.isArray(sugarcube.metadataMerge.give)
+        ? [...(Array.isArray(prev) ? prev : [prev]), ...sugarcube.metadataMerge.give]
+        : [...(Array.isArray(prev) ? prev : prev ? [prev] : []), sugarcube.metadataMerge.give];
+    }
+    if (sugarcube.metadataMerge.take) {
+      const prev = (mergedMeta.take as string[]) ?? [];
+      mergedMeta.take = Array.isArray(sugarcube.metadataMerge.take)
+        ? [...(Array.isArray(prev) ? prev : [prev]), ...sugarcube.metadataMerge.take]
+        : [...(Array.isArray(prev) ? prev : prev ? [prev] : []), sugarcube.metadataMerge.take];
+    }
+    if (sugarcube.metadataMerge.rep) {
+      mergedMeta.rep = {...((mergedMeta.rep as Record<string, number>) ?? {}), ...sugarcube.metadataMerge.rep};
+    }
 
     const id = normalizeId(name);
     passages.set(id, {
       id,
       name,
-      text: cleanText,
+      text: sugarcube.text,
       tags: tags.length ? tags : undefined,
-      metadata: Object.keys(metadata).length ? metadata : undefined,
-      links: links.map(
+      metadata: Object.keys(mergedMeta).length ? mergedMeta : undefined,
+      links: sugarcube.links.map(
         (l): PassageLink => ({
           displayText: l.displayText,
           passageName: l.passageName,
           condition: l.condition,
+          linkActions: l.linkActions,
         })
       ),
     });

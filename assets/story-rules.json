@@ -1,0 +1,3 @@
+[
+  {"id":"rule_0001","name":"onlyOnce","judgeExpr":"!$entity.is_used","writebackExpr":"$entity.is_used = true"}
+]

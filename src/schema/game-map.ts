@@ -3,7 +3,7 @@
  * 用于开发时规划空间结构，地图节点可带规则引擎效果
  */
 
-import type { FrameworkStateActions } from './state-actions';
+import type {FrameworkStateActions} from './state-actions';
 
 /** 地图节点（地点） */
 export interface MapNode {
@@ -24,6 +24,8 @@ export interface MapNode {
   characterIds?: string[];
   /** @deprecated 使用 characterIds */
   npcs?: string[];
+  /** 是否已使用（通用字段） */
+  is_used?: boolean;
 }
 
 /** 地图连边（地点间的连接） */

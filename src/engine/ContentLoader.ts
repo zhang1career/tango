@@ -2,9 +2,9 @@
  * 统一内容加载器 - 支持 Twee 格式
  */
 
-import { getContentPath } from '../config';
-import type { Story } from '../types';
-import { parseTwee } from './TweeParser';
+import {getContentPath} from '@/config';
+import type {Story} from '@/types';
+import {parseTwee} from './TweeParser';
 
 export type FetchContent = (path: string) => Promise<string>;
 

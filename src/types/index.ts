@@ -8,6 +8,8 @@ export interface PassageLink {
   passageName: string;
   /** 条件表达式，空则始终显示 */
   condition?: string;
+  /** Sugarcube setter：点击链接时执行的状态变更（再跳转） */
+  linkActions?: PassageStateActions;
 }
 
 /** 单个段落/场景 */
@@ -29,9 +31,6 @@ export interface Story {
   /** StoryData 中的 ifid 等元信息 */
   metadata?: Record<string, unknown>;
 }
-
-/** 链接语法: [[display|target]] 或 [[target]] 或 [[display->target]] */
-export type LinkSyntax = 'pipe' | 'arrow' | 'arrow-reverse';
 
 /** 游戏运行时状态（变量、物品、声誉） */
 export interface RuntimeState {

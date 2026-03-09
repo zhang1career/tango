@@ -11,6 +11,9 @@ export default defineConfig(({ mode }) => {
   const port = portRaw ? (parseInt(portRaw, 10) || undefined) : undefined;
 
   return {
+  resolve: {
+    alias: { '@': resolve(process.cwd(), 'src') },
+  },
   server: port ? { port } : undefined,
   plugins: [
     react(),
@@ -159,6 +162,82 @@ export default defineConfig(({ mode }) => {
             try {
               const metadata = JSON.parse(body);
               writeFileSync(outPath, formatJsonCompact(metadata), 'utf-8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true }));
+            } catch (e) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String(e) }));
+            }
+          });
+        });
+      },
+    },
+    {
+      name: 'save-story-scenes',
+      configureServer(server) {
+        server.middlewares.use('/api/story-scenes', (req, res, next) => {
+          const outPath = resolve(process.cwd(), 'assets/story-scenes.json');
+          if (req.method === 'GET') {
+            try {
+              if (!existsSync(outPath)) {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'not found' }));
+                return;
+              }
+              const data = readFileSync(outPath, 'utf-8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(data);
+            } catch (e) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String(e) }));
+            }
+            return;
+          }
+          if (req.method !== 'POST') return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const scenes = JSON.parse(body);
+              writeFileSync(outPath, formatJsonCompact(scenes), 'utf-8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true }));
+            } catch (e) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String(e) }));
+            }
+          });
+        });
+      },
+    },
+    {
+      name: 'save-story-rules',
+      configureServer(server) {
+        server.middlewares.use('/api/story-rules', (req, res, next) => {
+          const outPath = resolve(process.cwd(), 'assets/story-rules.json');
+          if (req.method === 'GET') {
+            try {
+              if (!existsSync(outPath)) {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'not found' }));
+                return;
+              }
+              const data = readFileSync(outPath, 'utf-8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(data);
+            } catch (e) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String(e) }));
+            }
+            return;
+          }
+          if (req.method !== 'POST') return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const rules = JSON.parse(body);
+              writeFileSync(outPath, formatJsonCompact(rules), 'utf-8');
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {

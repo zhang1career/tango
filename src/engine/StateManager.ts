@@ -2,7 +2,7 @@
  * 游戏状态管理 - 变量、物品、声誉
  */
 
-import type { RuntimeState } from '../types';
+import type {RuntimeState} from '@/types';
 
 export class StateManager {
   private state: RuntimeState;
@@ -11,29 +11,16 @@ export class StateManager {
     this.state = {
       variables: initial?.variables ?? {},
       inventory: initial?.inventory ? [...initial.inventory] : [],
-      reputation: initial?.reputation ? { ...initial.reputation } : {},
+      reputation: initial?.reputation ? {...initial.reputation} : {},
     };
   }
 
   getState(): RuntimeState {
     return {
-      variables: { ...this.state.variables },
+      variables: {...this.state.variables},
       inventory: [...this.state.inventory],
-      reputation: { ...this.state.reputation },
+      reputation: {...this.state.reputation},
     };
-  }
-
-  // ---------- Variables ----------
-  setVar(key: string, value: string | number | boolean): void {
-    this.state.variables[key] = value;
-  }
-
-  getVar(key: string): string | number | boolean | undefined {
-    return this.state.variables[key];
-  }
-
-  hasVar(key: string): boolean {
-    return key in this.state.variables;
   }
 
   // ---------- Inventory ----------
@@ -50,25 +37,9 @@ export class StateManager {
     return true;
   }
 
-  hasItem(item: string): boolean {
-    return this.state.inventory.includes(item);
-  }
-
-  getInventory(): string[] {
-    return [...this.state.inventory];
-  }
-
   // ---------- Reputation ----------
-  setReputation(entity: string, value: number): void {
-    this.state.reputation[entity] = value;
-  }
-
   addReputation(entity: string, delta: number): void {
     this.state.reputation[entity] = (this.state.reputation[entity] ?? 0) + delta;
-  }
-
-  getReputation(entity: string): number {
-    return this.state.reputation[entity] ?? 0;
   }
 
   // ---------- Apply passage actions ----------
@@ -103,7 +74,7 @@ export class StateManager {
     this.state = {
       variables: initial?.variables ?? {},
       inventory: initial?.inventory ? [...initial.inventory] : [],
-      reputation: initial?.reputation ? { ...initial.reputation } : {},
+      reputation: initial?.reputation ? {...initial.reputation} : {},
     };
   }
 }

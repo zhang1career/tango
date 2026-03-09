@@ -3,11 +3,11 @@
  */
 
 import React from 'react';
-import type { GameItem } from '../../schema/game-item';
+import type {GameItem} from '@/schema/game-item.ts';
 
 const styles: Record<string, React.CSSProperties> = {
-  section: { marginTop: 16 },
-  label: { display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa' },
+  section: {marginTop: 16},
+  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
   input: {
     width: '100%',
     padding: 8,
@@ -19,15 +19,15 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-const readOnlyValue: React.CSSProperties = { fontSize: 13, color: '#e8e8e8' };
+const readOnlyValue: React.CSSProperties = {fontSize: 13, color: '#e8e8e8'};
 
 export function InventoryValuesCard({
-  items,
-  inventory,
-  onChange,
-  title = '物品',
-  readOnly = false,
-}: {
+                                      items,
+                                      inventory,
+                                      onChange,
+                                      title = '物品',
+                                      readOnly = false,
+                                    }: {
   items: GameItem[];
   inventory: string[];
   onChange?: (ids: string[]) => void;
@@ -40,7 +40,7 @@ export function InventoryValuesCard({
     return (
       <div style={styles.section}>
         {title && <label style={styles.label}>{title}</label>}
-        <p style={{ color: '#888', fontSize: 13 }}>请在「物品」中先添加物品</p>
+        <p style={{color: '#888', fontSize: 13}}>请在「物品」中先添加物品</p>
       </div>
     );
   }
@@ -58,7 +58,7 @@ export function InventoryValuesCard({
             style={styles.input}
             placeholder="物品 id，逗号分隔"
           />
-          <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+          <div style={{fontSize: 11, color: '#666', marginTop: 4}}>
             可选: {items.map((i) => `${i.name}(${i.id})`).join(', ')}
           </div>
         </>

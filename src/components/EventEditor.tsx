@@ -2,16 +2,16 @@
  * 事件编辑界面
  */
 
-import React, { useState } from 'react';
-import type { StoryFramework } from '../schema/story-framework';
-import type { GameEvent } from '../schema/game-event';
-import { AttributesEditorCard } from './cards/AttributesEditorCard';
-import { ItemsEditorCard } from './cards/ItemsEditorCard';
-import { formatJsonCompact } from '../utils/json-format';
-import { DetailEditModal } from './ui/DetailEditModal';
+import React, {useState} from 'react';
+import type {StoryFramework} from '../schema/story-framework';
+import type {GameEvent} from '../schema/game-event';
+import {AttributesEditorCard} from './cards/AttributesEditorCard';
+import {ItemsEditorCard} from './cards/ItemsEditorCard';
+import {formatJsonCompact} from '../utils/json-format';
+import {DetailEditModal} from './ui/DetailEditModal';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8' },
+  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
   header: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -20,7 +20,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: 16,
     borderBottom: '1px solid #333',
   },
-  title: { fontSize: 20, fontWeight: 600, margin: 0 },
+  title: {fontSize: 20, fontWeight: 600, margin: 0},
   btn: {
     padding: '8px 16px',
     backgroundColor: '#2d2d44',
@@ -30,8 +30,8 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 14,
   },
-  section: { marginBottom: 24 },
-  label: { display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa' },
+  section: {marginBottom: 24},
+  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
   input: {
     width: '100%',
     padding: 10,
@@ -55,9 +55,24 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '12px 16px',
     backgroundColor: '#252540',
   },
-  row: { marginBottom: 12 },
-  btnSmall: { padding: '4px 10px', backgroundColor: '#333', border: 'none', borderRadius: 4, color: '#aaa', cursor: 'pointer', fontSize: 12 },
-  btnIcon: { padding: '2px 8px', backgroundColor: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 },
+  row: {marginBottom: 12},
+  btnSmall: {
+    padding: '4px 10px',
+    backgroundColor: '#333',
+    border: 'none',
+    borderRadius: 4,
+    color: '#aaa',
+    cursor: 'pointer',
+    fontSize: 12
+  },
+  btnIcon: {
+    padding: '2px 8px',
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: '#888',
+    cursor: 'pointer',
+    fontSize: 16
+  },
 };
 
 /** 保存事件到预设路径 assets/story-events.json */
@@ -66,24 +81,24 @@ async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error
     try {
       const res = await fetch('/api/story-events', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(events),
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
-      if (res.ok && json.ok) return { ok: true };
-      return { ok: false, error: json.error || `HTTP ${res.status}` };
+      if (res.ok && json.ok) return {ok: true};
+      return {ok: false, error: json.error || `HTTP ${res.status}`};
     } catch (e) {
-      return { ok: false, error: String(e) };
+      return {ok: false, error: String(e)};
     }
   }
-  const blob = new Blob([formatJsonCompact(events)], { type: 'application/json' });
+  const blob = new Blob([formatJsonCompact(events)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = 'story-events.json';
   a.click();
   URL.revokeObjectURL(url);
-  return { ok: true };
+  return {ok: true};
 }
 
 type EventFormProps = {
@@ -94,18 +109,19 @@ type EventFormProps = {
   onUpdate?: (fn: (e: GameEvent) => GameEvent) => void;
 };
 
-function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: EventFormProps) {
+function EventFormContent({evt, editable, attributeDefs, items, onUpdate}: EventFormProps) {
   if (!editable || !onUpdate) {
     return (
-      <div style={{ color: '#e8e8e8', fontSize: 14 }}>
-        <p style={{ margin: '0 0 8px' }}><strong>ID：</strong>{evt.id}</p>
-        <p style={{ margin: '0 0 8px' }}><strong>名称：</strong>{evt.name}</p>
-        <p style={{ margin: '0 0 8px' }}><strong>触发类型：</strong>{evt.trigger === 'unconditional' ? '无条件' : '条件'}</p>
+      <div style={{color: '#e8e8e8', fontSize: 14}}>
+        <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
+        <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
+        <p style={{margin: '0 0 8px'}}><strong>触发类型：</strong>{evt.trigger === 'unconditional' ? '无条件' : '条件'}
+        </p>
         {evt.trigger === 'conditional' && evt.condition && (
-          <p style={{ margin: '0 0 8px' }}><strong>触发条件：</strong>{evt.condition}</p>
+          <p style={{margin: '0 0 8px'}}><strong>触发条件：</strong>{evt.condition}</p>
         )}
         {evt.actions && (Object.keys(evt.actions).length > 0 || evt.actions.give || evt.actions.take) && (
-          <p style={{ margin: '0 0 8px' }}><strong>计算规则：</strong>{JSON.stringify(evt.actions)}</p>
+          <p style={{margin: '0 0 8px'}}><strong>计算规则：</strong>{JSON.stringify(evt.actions)}</p>
         )}
       </div>
     );
@@ -117,7 +133,7 @@ function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: Eve
         <label style={styles.label}>ID</label>
         <input
           value={evt.id}
-          onChange={(e) => onUpdate((c) => ({ ...c, id: e.target.value }))}
+          onChange={(e) => onUpdate((c) => ({...c, id: e.target.value}))}
           style={styles.input}
           placeholder="evt_xxx"
         />
@@ -126,7 +142,7 @@ function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: Eve
         <label style={styles.label}>名称</label>
         <input
           value={evt.name}
-          onChange={(e) => onUpdate((c) => ({ ...c, name: e.target.value }))}
+          onChange={(e) => onUpdate((c) => ({...c, name: e.target.value}))}
           style={styles.input}
           placeholder="进入军营"
         />
@@ -135,7 +151,7 @@ function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: Eve
         <label style={styles.label}>触发类型</label>
         <select
           value={evt.trigger}
-          onChange={(e) => onUpdate((c) => ({ ...c, trigger: e.target.value as 'unconditional' | 'conditional' }))}
+          onChange={(e) => onUpdate((c) => ({...c, trigger: e.target.value as 'unconditional' | 'conditional'}))}
           style={styles.input}
         >
           <option value="unconditional">无条件触发</option>
@@ -147,7 +163,7 @@ function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: Eve
           <label style={styles.label}>触发条件</label>
           <input
             value={evt.condition ?? ''}
-            onChange={(e) => onUpdate((c) => ({ ...c, condition: e.target.value || undefined }))}
+            onChange={(e) => onUpdate((c) => ({...c, condition: e.target.value || undefined}))}
             style={styles.input}
             placeholder={'$items has "令牌" 或 $var.尔朱荣 >= 5'}
           />
@@ -156,7 +172,7 @@ function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: Eve
       <AttributesEditorCard
         attributeDefs={attributeDefs}
         actions={evt.actions}
-        onChange={(a) => onUpdate((c) => ({ ...c, actions: a }))}
+        onChange={(a) => onUpdate((c) => ({...c, actions: a}))}
         title="计算规则（属性）"
       />
       <ItemsEditorCard
@@ -179,18 +195,25 @@ function EventFormContent({ evt, editable, attributeDefs, items, onUpdate }: Eve
   );
 }
 
-export function EventEditor({ fw, updateFw }: { fw: StoryFramework; updateFw: (fn: (d: StoryFramework) => StoryFramework) => void }) {
+export function EventEditor({fw, updateFw}: {
+  fw: StoryFramework;
+  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
+}) {
   const events = fw.events ?? [];
   const setEvents = (fn: (e: GameEvent[]) => GameEvent[]) =>
-    updateFw((d) => ({ ...d, events: fn(d.events ?? []) }));
+    updateFw((d) => ({...d, events: fn(d.events ?? [])}));
 
   const [detailIndex, setDetailIndex] = useState<number | null>(null);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [newEvent, setNewEvent] = useState<GameEvent>(() => ({ id: `evt_${Date.now()}`, name: '新事件', trigger: 'unconditional' }));
+  const [newEvent, setNewEvent] = useState<GameEvent>(() => ({
+    id: `evt_${Date.now()}`,
+    name: '新事件',
+    trigger: 'unconditional'
+  }));
 
   const openAddModal = () => {
-    setNewEvent({ id: `evt_${Date.now()}`, name: '新事件', trigger: 'unconditional' });
+    setNewEvent({id: `evt_${Date.now()}`, name: '新事件', trigger: 'unconditional'});
     setAddModalOpen(true);
   };
 
@@ -232,21 +255,21 @@ export function EventEditor({ fw, updateFw }: { fw: StoryFramework; updateFw: (f
 
       <section style={styles.section}>
         {events.length === 0 && (
-          <p style={{ color: '#888', fontSize: 14 }}>暂无事件，点击「添加事件」创建。</p>
+          <p style={{color: '#888', fontSize: 14}}>暂无事件，点击「添加事件」创建。</p>
         )}
         {events.map((evt, ei) => (
           <div key={`evt-${ei}`} style={styles.card}>
             <div style={styles.cardHead}>
               <span
-                style={{ fontWeight: 600, flex: 1, cursor: 'pointer' }}
+                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
                 onClick={() => setDetailIndex(ei)}
               >
                 {evt.name}
-                <span style={{ marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400 }}>
+                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
                   {evt.trigger === 'unconditional' ? '(无条件)' : '(条件)'} · {evt.id}
                 </span>
               </span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ei)} title="编辑">
                   ✎
                 </button>
@@ -267,7 +290,7 @@ export function EventEditor({ fw, updateFw }: { fw: StoryFramework; updateFw: (f
       {detailIndex !== null && events[detailIndex] && (
         <DetailEditModal
           title="事件详情"
-          open
+          open={true}
           onClose={() => setDetailIndex(null)}
           editable={false}
         >
@@ -283,14 +306,14 @@ export function EventEditor({ fw, updateFw }: { fw: StoryFramework; updateFw: (f
       {editIndex !== null && events[editIndex] && (
         <DetailEditModal
           title="编辑事件"
-          open
+          open={true}
           onClose={() => setEditIndex(null)}
-          editable
+          editable={true}
           onSave={saveEvents}
         >
           <EventFormContent
             evt={events[editIndex]}
-            editable
+            editable={true}
             attributeDefs={attributeDefs}
             items={items}
             onUpdate={(fn) => updateEvent(editIndex, fn)}
@@ -301,14 +324,14 @@ export function EventEditor({ fw, updateFw }: { fw: StoryFramework; updateFw: (f
       {addModalOpen && (
         <DetailEditModal
           title="添加事件"
-          open
+          open={true}
           onClose={() => setAddModalOpen(false)}
-          editable
+          editable={true}
           onSave={confirmAddEvent}
         >
           <EventFormContent
             evt={newEvent}
-            editable
+            editable={true}
             attributeDefs={attributeDefs}
             items={items}
             onUpdate={(fn) => setNewEvent(fn(newEvent))}

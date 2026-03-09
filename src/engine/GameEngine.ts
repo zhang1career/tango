@@ -2,9 +2,9 @@
  * 游戏引擎 - 管理段落、历史、导航、变量/物品/声誉
  */
 
-import type { Passage, PassageLink, Story, InitialRuntimeState, PassageStateActions } from '../types';
-import { StateManager } from './StateManager';
-import { evaluateCondition } from './ConditionEvaluator';
+import type {InitialRuntimeState, Passage, PassageLink, PassageStateActions, Story} from '@/types';
+import {StateManager} from './StateManager';
+import {evaluateCondition} from './ConditionEvaluator';
 
 export interface GameState {
   story: Story;
@@ -94,54 +94,32 @@ export class GameEngine {
     return this.state.story;
   }
 
-  get currentPassage(): Passage | null {
-    return this.state.currentPassage;
-  }
-
-  get history(): string[] {
-    return [...this.state.history];
-  }
-
   /** 当前段落下满足条件的可见链接 */
   getVisibleLinks(): PassageLink[] {
     const passage = this.state.currentPassage;
     if (!passage) return [];
     const ctx = this.stateManager.getState();
+    const visitedIds = new Set([
+      ...this.state.history,
+      this.state.currentPassage?.id,
+      this.state.currentPassage?.name,
+    ].filter(Boolean) as string[]);
     return passage.links.filter((link) => {
       if (!link.condition) return true;
-      return evaluateCondition(link.condition, ctx);
+      const target = this.getPassage(link.passageName);
+      const entityCtx = target ? { entity: target, visitedIds } : undefined;
+      return evaluateCondition(link.condition, ctx, entityCtx);
     });
   }
 
-  /** 变量/物品/声誉 API */
-  setVar(key: string, value: string | number | boolean): void {
-    this.stateManager.setVar(key, value);
-  }
-  getVar(key: string): string | number | boolean | undefined {
-    return this.stateManager.getVar(key);
-  }
-  addItem(item: string): void {
-    this.stateManager.addItem(item);
-  }
-  removeItem(item: string): boolean {
-    return this.stateManager.removeItem(item);
-  }
-  hasItem(item: string): boolean {
-    return this.stateManager.hasItem(item);
-  }
-  setReputation(entity: string, value: number): void {
-    this.stateManager.setReputation(entity, value);
-  }
-  addReputation(entity: string, delta: number): void {
-    this.stateManager.addReputation(entity, delta);
-  }
-  getReputation(entity: string): number {
-    return this.stateManager.getReputation(entity);
-  }
-
-  goTo(passageNameOrId: string): boolean {
+  /** 跳转到指定 passage；可选传入 link 以先执行 Sugarcube setter（linkActions） */
+  goTo(passageNameOrId: string, link?: PassageLink): boolean {
     const passage = this.getPassage(passageNameOrId);
     if (!passage) return false;
+
+    if (link?.linkActions) {
+      this.stateManager.applyActions(link.linkActions);
+    }
 
     const actions = getPassageActions(passage.metadata);
     if (actions) {

@@ -230,10 +230,14 @@ interface CharacterAttributeDef {
 
 ```json
 {
-  "start": "序章",
-  "variables": {"chapter": 1},
+  "smoke": "序章",
+  "variables": {
+    "chapter": 1
+  },
   "inventory": [],
-  "reputation": {"朝廷": 5}
+  "reputation": {
+    "朝廷": 5
+  }
 }
 ```
 

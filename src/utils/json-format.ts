@@ -17,7 +17,7 @@ function indentStr(n: number): string {
   return '  '.repeat(n);
 }
 
-export function formatJsonCompact(data: unknown, space = 2): string {
+export function formatJsonCompact(data: unknown): string {
   const indent = (n: number) => indentStr(n);
 
   function fmt(val: unknown, depth: number): string {
@@ -37,7 +37,7 @@ export function formatJsonCompact(data: unknown, space = 2): string {
       return '[\n' + lines.join(',\n') + '\n' + indent(depth) + ']';
     }
 
-    if (typeof val === 'object' && val !== null) {
+    if (typeof val === 'object') {
       const entries = Object.entries(val as Record<string, unknown>);
       if (entries.length === 0) return '{}';
       const pad = indent(depth + 1);

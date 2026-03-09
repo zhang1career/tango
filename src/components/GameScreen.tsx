@@ -2,16 +2,15 @@
  * 游戏主画面 - 文字冒险展示
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { GameEngine } from '../engine';
-import { loadStory, type FetchContent } from '../engine/ContentLoader';
+import React, {useCallback, useEffect, useState} from 'react';
+import {type FetchContent, GameEngine, loadStory} from '@/engine';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
   className?: string;
 }
 
-export function GameScreen({ fetchContent, className }: GameScreenProps) {
+export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [engine, setEngine] = useState<GameEngine | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,14 +35,16 @@ export function GameScreen({ fetchContent, className }: GameScreenProps) {
           setLoading(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [fetchContent]);
 
   if (loading) {
     return (
       <div className={`game-container ${className ?? ''}`} style={styles.container}>
         <div style={styles.loading}>
-          <div className="spinner" style={styles.spinner} />
+          <div className="spinner" style={styles.spinner}/>
           <p style={styles.loadingText}>加载故事中...</p>
         </div>
       </div>
@@ -67,8 +68,8 @@ export function GameScreen({ fetchContent, className }: GameScreenProps) {
 
   const passage = state.currentPassage;
 
-  const handleLink = (passageName: string) => {
-    engine.goTo(passageName);
+  const handleLink = (passageName: string, link?: import('@/types').PassageLink) => {
+    engine.goTo(passageName, link ?? undefined);
     refresh();
   };
 
@@ -121,7 +122,7 @@ export function GameScreen({ fetchContent, className }: GameScreenProps) {
                   key={i}
                   type="button"
                   style={styles.linkButton}
-                  onClick={() => handleLink(link.passageName)}
+                  onClick={() => handleLink(link.passageName, link)}
                 >
                   {link.displayText}
                 </button>
@@ -129,7 +130,7 @@ export function GameScreen({ fetchContent, className }: GameScreenProps) {
             </nav>
 
             {state.isEnding && engine.getVisibleLinks().length === 0 && (
-              <p style={{ ...styles.passageText, fontStyle: 'italic', color: '#888' }}>
+              <p style={{...styles.passageText, fontStyle: 'italic', color: '#888'}}>
                 — 故事结束 —
               </p>
             )}
@@ -171,13 +172,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     fontSize: 14,
   },
-  statusLabel: { color: '#a78bfa', marginRight: 8 },
-  statusValue: { color: '#c4b5fd' },
-  title: { fontSize: 18, color: '#e8e8e8', fontWeight: 600, margin: 0 },
-  scroll: { flex: 1, overflow: 'auto', paddingBottom: 40 },
-  passageName: { fontSize: 14, color: '#888', marginBottom: 12 },
-  passageText: { fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap' },
-  linkList: { display: 'flex', flexDirection: 'column', gap: 10 },
+  statusLabel: {color: '#a78bfa', marginRight: 8},
+  statusValue: {color: '#c4b5fd'},
+  title: {fontSize: 18, color: '#e8e8e8', fontWeight: 600, margin: 0},
+  scroll: {flex: 1, overflow: 'auto', paddingBottom: 40},
+  passageName: {fontSize: 14, color: '#888', marginBottom: 12},
+  passageText: {fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap'},
+  linkList: {display: 'flex', flexDirection: 'column', gap: 10},
   linkButton: {
     backgroundColor: '#2d2d44',
     padding: '14px 18px',
@@ -189,7 +190,7 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'left',
     cursor: 'pointer',
   },
-  toolbar: { display: 'flex', gap: 12, marginTop: 16 },
+  toolbar: {display: 'flex', gap: 12, marginTop: 16},
   toolbarButton: {
     padding: '8px 14px',
     backgroundColor: '#333',
@@ -199,7 +200,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     cursor: 'pointer',
   },
-  loading: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' },
+  loading: {flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center'},
   spinner: {
     width: 40,
     height: 40,
@@ -208,6 +209,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     animation: 'spin 0.8s linear infinite',
   },
-  loadingText: { color: '#888', marginTop: 12 },
-  error: { color: '#e74c3c', padding: 16, textAlign: 'center' },
+  loadingText: {color: '#888', marginTop: 12},
+  error: {color: '#e74c3c', padding: 16, textAlign: 'center'},
 };

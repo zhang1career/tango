@@ -2,14 +2,14 @@
  * 物品编辑界面
  */
 
-import React, { useState } from 'react';
-import type { StoryFramework } from '../schema/story-framework';
-import type { GameItem } from '../schema/game-item';
-import { formatJsonCompact } from '../utils/json-format';
-import { DetailEditModal } from './ui/DetailEditModal';
+import React, {useState} from 'react';
+import type {StoryFramework} from '../schema/story-framework';
+import type {GameItem} from '../schema/game-item';
+import {formatJsonCompact} from '../utils/json-format';
+import {DetailEditModal} from './ui/DetailEditModal';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8' },
+  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
   header: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -18,7 +18,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: 16,
     borderBottom: '1px solid #333',
   },
-  title: { fontSize: 20, fontWeight: 600, margin: 0 },
+  title: {fontSize: 20, fontWeight: 600, margin: 0},
   btn: {
     padding: '8px 16px',
     backgroundColor: '#2d2d44',
@@ -42,8 +42,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '12px 16px',
     backgroundColor: '#252540',
   },
-  row: { marginBottom: 12 },
-  label: { display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa' },
+  row: {marginBottom: 12},
+  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
   input: {
     width: '100%',
     padding: 10,
@@ -53,8 +53,23 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e8e8e8',
     fontSize: 14,
   },
-  btnSmall: { padding: '4px 10px', backgroundColor: '#333', border: 'none', borderRadius: 4, color: '#aaa', cursor: 'pointer', fontSize: 12 },
-  btnIcon: { padding: '2px 8px', background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 },
+  btnSmall: {
+    padding: '4px 10px',
+    backgroundColor: '#333',
+    border: 'none',
+    borderRadius: 4,
+    color: '#aaa',
+    cursor: 'pointer',
+    fontSize: 12
+  },
+  btnIcon: {
+    padding: '2px 8px',
+    background: 'transparent',
+    border: 'none',
+    color: '#888',
+    cursor: 'pointer',
+    fontSize: 16
+  },
 };
 
 /** 保存物品到预设路径 assets/story-items.json */
@@ -63,24 +78,24 @@ async function saveItemsToPreset(items: unknown): Promise<{ ok: boolean; error?:
     try {
       const res = await fetch('/api/story-items', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(items),
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
-      if (res.ok && json.ok) return { ok: true };
-      return { ok: false, error: json.error || `HTTP ${res.status}` };
+      if (res.ok && json.ok) return {ok: true};
+      return {ok: false, error: json.error || `HTTP ${res.status}`};
     } catch (e) {
-      return { ok: false, error: String(e) };
+      return {ok: false, error: String(e)};
     }
   }
-  const blob = new Blob([formatJsonCompact(items)], { type: 'application/json' });
+  const blob = new Blob([formatJsonCompact(items)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = 'story-items.json';
   a.click();
   URL.revokeObjectURL(url);
-  return { ok: true };
+  return {ok: true};
 }
 
 type ItemFormProps = {
@@ -89,12 +104,12 @@ type ItemFormProps = {
   onUpdate?: (fn: (x: GameItem) => GameItem) => void;
 };
 
-function ItemFormContent({ item, editable, onUpdate }: ItemFormProps) {
+function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
   if (!editable || !onUpdate) {
     return (
-      <div style={{ color: '#e8e8e8', fontSize: 14 }}>
-        <p style={{ margin: '0 0 8px' }}><strong>ID：</strong>{item.id}</p>
-        <p style={{ margin: '0 0 8px' }}><strong>名称：</strong>{item.name}</p>
+      <div style={{color: '#e8e8e8', fontSize: 14}}>
+        <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{item.id}</p>
+        <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{item.name}</p>
       </div>
     );
   }
@@ -105,7 +120,7 @@ function ItemFormContent({ item, editable, onUpdate }: ItemFormProps) {
         <label style={styles.label}>ID</label>
         <input
           value={item.id}
-          onChange={(e) => onUpdate((x) => ({ ...x, id: e.target.value }))}
+          onChange={(e) => onUpdate((x) => ({...x, id: e.target.value}))}
           style={styles.input}
         />
       </div>
@@ -113,7 +128,7 @@ function ItemFormContent({ item, editable, onUpdate }: ItemFormProps) {
         <label style={styles.label}>名称</label>
         <input
           value={item.name}
-          onChange={(e) => onUpdate((x) => ({ ...x, name: e.target.value }))}
+          onChange={(e) => onUpdate((x) => ({...x, name: e.target.value}))}
           style={styles.input}
         />
       </div>
@@ -121,18 +136,21 @@ function ItemFormContent({ item, editable, onUpdate }: ItemFormProps) {
   );
 }
 
-export function ItemsEditorPage({ fw, updateFw }: { fw: StoryFramework; updateFw: (fn: (d: StoryFramework) => StoryFramework) => void }) {
+export function ItemsEditorPage({fw, updateFw}: {
+  fw: StoryFramework;
+  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
+}) {
   const items = fw.items ?? [];
   const setItems = (fn: (i: GameItem[]) => GameItem[]) =>
-    updateFw((d) => ({ ...d, items: fn(d.items ?? []) }));
+    updateFw((d) => ({...d, items: fn(d.items ?? [])}));
 
   const [detailIndex, setDetailIndex] = useState<number | null>(null);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [newItem, setNewItem] = useState<GameItem>(() => ({ id: `item_${Date.now()}`, name: '新物品' }));
+  const [newItem, setNewItem] = useState<GameItem>(() => ({id: `item_${Date.now()}`, name: '新物品'}));
 
   const openAddModal = () => {
-    setNewItem({ id: `item_${Date.now()}`, name: '新物品' });
+    setNewItem({id: `item_${Date.now()}`, name: '新物品'});
     setAddModalOpen(true);
   };
 
@@ -170,20 +188,20 @@ export function ItemsEditorPage({ fw, updateFw }: { fw: StoryFramework; updateFw
       </header>
 
       <section>
-        {items.length === 0 && <p style={{ color: '#888' }}>暂无物品，点击「添加物品」创建。</p>}
+        {items.length === 0 && <p style={{color: '#888'}}>暂无物品，点击「添加物品」创建。</p>}
         {items.map((item, i) => (
           <div key={`item-${i}`} style={styles.card}>
             <div style={styles.cardHead}>
               <span
-                style={{ fontWeight: 600, flex: 1, cursor: 'pointer' }}
+                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
                 onClick={() => setDetailIndex(i)}
               >
                 {item.name}
-                <span style={{ marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400 }}>
+                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
                   · {item.id}
                 </span>
               </span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
                   ✎
                 </button>
@@ -199,25 +217,25 @@ export function ItemsEditorPage({ fw, updateFw }: { fw: StoryFramework; updateFw
       {detailIndex !== null && items[detailIndex] && (
         <DetailEditModal
           title="物品详情"
-          open
+          open={true}
           onClose={() => setDetailIndex(null)}
           editable={false}
         >
-          <ItemFormContent item={items[detailIndex]} editable={false} />
+          <ItemFormContent item={items[detailIndex]} editable={false}/>
         </DetailEditModal>
       )}
 
       {editIndex !== null && items[editIndex] && (
         <DetailEditModal
           title="编辑物品"
-          open
+          open={true}
           onClose={() => setEditIndex(null)}
-          editable
+          editable={true}
           onSave={saveItems}
         >
           <ItemFormContent
             item={items[editIndex]}
-            editable
+            editable={true}
             onUpdate={(fn) => updateItem(editIndex, fn)}
           />
         </DetailEditModal>
@@ -226,14 +244,14 @@ export function ItemsEditorPage({ fw, updateFw }: { fw: StoryFramework; updateFw
       {addModalOpen && (
         <DetailEditModal
           title="添加物品"
-          open
+          open={true}
           onClose={() => setAddModalOpen(false)}
-          editable
+          editable={true}
           onSave={confirmAddItem}
         >
           <ItemFormContent
             item={newItem}
-            editable
+            editable={true}
             onUpdate={(fn) => setNewItem(fn(newItem))}
           />
         </DetailEditModal>

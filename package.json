@@ -1,15 +1,14 @@
 {
   "name": "ta",
   "version": "1.0.0",
-  "description": "React Web 文字冒险游戏框架，兼容 Twine，支持 tw/lua 内容",
+  "description": "React Web 文字冒险游戏框架，兼容 Twine，支持 tw 文件格式",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "smoke": "bash scripts/smoke.sh",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint .",
-    "generate": "tsx scripts/generate-story.ts",
-    "generate:story": "tsx scripts/generate-story.ts assets/story-framework.example.json --output assets/story.tw"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@xyflow/react": "^12.10.1",
@@ -21,7 +20,6 @@
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
-    "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.10"
   }
