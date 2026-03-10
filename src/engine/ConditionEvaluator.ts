@@ -3,14 +3,19 @@
  * 支持: $var, $var == value, $items has "x", $rep.xxx >= n, $entity.is_used
  */
 
-import type {Passage, RuntimeState} from '@/types';
+import type {RuntimeState} from '@/types';
 
 type Context = RuntimeState;
 
+export interface EntityLike {
+  id: string;
+  name?: string;
+}
+
 export interface EntityContext {
-  /** 链接目标 passage（$entity 指代） */
-  entity: Passage;
-  /** 已访问过的 passage id/name 集合 */
+  /** 实体（passage、行为等），$entity 指代 */
+  entity: EntityLike;
+  /** 已访问/已使用的 id 集合 */
   visitedIds: Set<string>;
 }
 
@@ -53,7 +58,7 @@ export function evaluateCondition(
   // !$entity.is_used 或 $entity.is_used（链接条件，需传入 entityCtx）
   const entityUsedMatch = expr.match(/^!?\$entity\.is_used$/);
   if (entityUsedMatch && entityCtx) {
-    const used = entityCtx.visitedIds.has(entityCtx.entity.id) || entityCtx.visitedIds.has(entityCtx.entity.name);
+    const used = entityCtx.visitedIds.has(entityCtx.entity.id) || (entityCtx.entity.name != null && entityCtx.visitedIds.has(entityCtx.entity.name));
     return expr.startsWith('!') ? !used : used;
   }
 

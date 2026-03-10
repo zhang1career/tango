@@ -314,9 +314,9 @@ export default defineConfig(({ mode }) => {
         const distAssets = resolve(outDir, 'assets');
         if (existsSync(assetsDir)) {
           mkdirSync(distAssets, { recursive: true });
-          const storyPath = resolve(assetsDir, 'story.tw');
-          if (existsSync(storyPath)) {
-            copyFileSync(storyPath, resolve(distAssets, 'story.tw'));
+          for (const f of ['story.tw', 'story-characters.json', 'story-rules.json']) {
+            const src = resolve(assetsDir, f);
+            if (existsSync(src)) copyFileSync(src, resolve(distAssets, f));
           }
         }
       },

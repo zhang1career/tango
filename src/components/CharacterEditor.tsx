@@ -2,10 +2,12 @@
  * 人物编辑界面
  */
 
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
+import {getAIGCApiKey, getAIGCApiUrl} from '../config';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameCharacter} from '../schema/game-character';
+import type {GameBehavior} from '../schema/game-behavior';
 import {AttributeValuesCard} from './cards/AttributeValuesCard';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {AttributesEditorCard} from './cards/AttributesEditorCard';
@@ -89,17 +91,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   collapsibleBody: {padding: '8px 0 0 0'},
   readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
+  dialogueItem: {marginBottom: 16, padding: 12, backgroundColor: '#1e1e32', borderRadius: 8, border: '1px solid #333'},
 };
 
 function CollapsibleSection({
                               title,
                               expanded,
                               onToggle,
+                              rightAction,
                               children,
                             }: {
   title: string;
   expanded: boolean;
   onToggle: () => void;
+  rightAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -107,7 +112,10 @@ function CollapsibleSection({
       <div style={styles.collapsibleHead} onClick={onToggle} role="button" tabIndex={0}
            onKeyDown={(e) => e.key === 'Enter' && onToggle()}>
         <span>{title}</span>
-        <span>{expanded ? '▼' : '▶'}</span>
+        <span style={{display: 'flex', alignItems: 'center', gap: 8}}>
+          {rightAction && <span onClick={(e) => e.stopPropagation()}>{rightAction}</span>}
+          <span>{expanded ? '▼' : '▶'}</span>
+        </span>
       </div>
       {expanded && <div style={styles.collapsibleBody}>{children}</div>}
     </div>
@@ -140,7 +148,193 @@ async function saveCharactersToPreset(characters: unknown): Promise<{ ok: boolea
   return {ok: true};
 }
 
-const COLLAPSE_KEYS = ['attr', 'inv', 'behaviors', 'onMeetAttr', 'onMeetItems'] as const;
+const COLLAPSE_KEYS = ['attr', 'inv', 'dialogueLib', 'onMeetAttr', 'onMeetItems'] as const;
+
+/** 基于人物描述，调用 AI 生成多条对话行为 */
+async function generateBehaviorsFromAI(
+  description: string,
+  apiKey: string,
+  apiUrl: string
+): Promise<GameBehavior[]> {
+  const system = `你是一名文字冒险游戏编剧。根据人物描述，生成多条对话行为。
+每条行为包含：q（玩家可能说的话/提问）、a（该人物的回答）。
+输出纯 JSON 数组，不要包含 markdown 代码块或其它文字。格式：[{"q":"...","a":"..."},{"q":"...","a":"..."},...]
+生成 5-8 条，风格契合人物设定。`;
+  const user = `人物描述：${description || '（未填写）'}\n\n请生成对话行为 JSON 数组：`;
+
+  const res = await fetch(`${apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        {role: 'system', content: system},
+        {role: 'user', content: user},
+      ],
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`API 错误 ${res.status}: ${err}`);
+  }
+
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const content = json.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('API 未返回内容');
+
+  let raw = content;
+  const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) raw = codeBlockMatch[1].trim();
+
+  const parsed = JSON.parse(raw) as Array<{ q?: string; a?: string }>;
+  if (!Array.isArray(parsed)) throw new Error('解析结果非数组');
+
+  return parsed
+    .filter((x) => x && (typeof x.q === 'string' || typeof x.a === 'string'))
+    .map((x) => ({
+      id: uuid(),
+      q: String(x.q ?? ''),
+      a: String(x.a ?? ''),
+      t: 'dialog' as const,
+    }));
+}
+
+/** 获取下一批行为 id：<charId>.b_100, .b_200, ...（以点分隔级联 id） */
+function assignBehaviorIds(
+  charId: string,
+  existing: GameBehavior[],
+  count: number
+): string[] {
+  const reDot = new RegExp(`^${escapeRegExp(charId)}\\.b_(\\d+)$`);
+  const reUnderscore = new RegExp(`^${escapeRegExp(charId)}_b_(\\d+)$`);
+  let max = 0;
+  for (const b of existing) {
+    const m = b.id.match(reDot) ?? b.id.match(reUnderscore);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) {
+    max += 100;
+    ids.push(`${charId}.b_${max}`);
+  }
+  return ids;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function uuid(): string {
+  return crypto.randomUUID?.() ?? `b_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function DialogueLibrarySection({
+  lib,
+  editable,
+  onUpdate,
+}: {
+  lib: GameBehavior[];
+  editable: boolean;
+  onUpdate?: (lib: GameBehavior[]) => void;
+}) {
+  if (!editable || !onUpdate) {
+    return (
+      <div style={styles.row}>
+        {lib.length === 0 ? (
+          <div style={styles.readOnlyValue}>暂无对话</div>
+        ) : (
+          <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
+            {lib.map((b, i) => (
+              <li key={b.id} style={{marginBottom: 12, padding: 10, backgroundColor: '#1e1e32', borderRadius: 6}}>
+                <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
+                <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
+                {b.judgeExpr && <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+  const add = () => {
+    onUpdate([...lib, {id: uuid(), q: '', a: '', t: 'dialog'}]);
+  };
+  const remove = (i: number) => {
+    onUpdate(lib.filter((_, idx) => idx !== i));
+  };
+  const update = (i: number, fn: (b: GameBehavior) => GameBehavior) => {
+    onUpdate(lib.map((b, idx) => (idx === i ? fn(b) : b)));
+  };
+  return (
+    <div style={styles.row}>
+      {lib.map((b, i) => (
+        <div key={b.id} style={styles.dialogueItem}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6}}>
+            <span style={{fontSize: 12, color: '#888'}}>行为 #{i + 1}</span>
+            <button type="button" style={styles.btnSmall} onClick={() => remove(i)}>
+              删除
+            </button>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>请求</label>
+            <input
+              value={b.q}
+              onChange={(e) => update(i, (x) => ({...x, q: e.target.value}))}
+              style={styles.input}
+              placeholder="对话或动作的发起内容"
+            />
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>响应</label>
+            <input
+              value={b.a}
+              onChange={(e) => update(i, (x) => ({...x, a: e.target.value}))}
+              style={styles.input}
+              placeholder="交互结果内容"
+            />
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>类型</label>
+            <select
+              value={b.t ?? 'dialog'}
+              onChange={(e) => update(i, (x) => ({...x, t: e.target.value as 'dialog' | 'action'}))}
+              style={styles.input}
+            >
+              <option value="dialog">对话</option>
+              <option value="action">动作</option>
+            </select>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>准入条件 judgeExpr</label>
+            <input
+              value={b.judgeExpr ?? ''}
+              onChange={(e) => update(i, (x) => ({...x, judgeExpr: e.target.value || undefined}))}
+              style={styles.input}
+              placeholder="例如 $rep.费穆 >= 5"
+            />
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>回写 writebackExpr</label>
+            <input
+              value={b.writebackExpr ?? ''}
+              onChange={(e) => update(i, (x) => ({...x, writebackExpr: e.target.value || undefined}))}
+              style={styles.input}
+              placeholder='例如 $rep.费穆 = ($rep.费穆||0)+1'
+            />
+          </div>
+        </div>
+      ))}
+      <button type="button" style={styles.btn} onClick={add}>
+        + 添加行为
+      </button>
+    </div>
+  );
+}
 
 function FieldRow({
                     label,
@@ -182,6 +376,38 @@ function CharacterFormContent({
   const [expanded, setExpanded] = useState<Set<string>>(() =>
     collapsibleDefaultExpanded ? new Set(COLLAPSE_KEYS) : new Set()
   );
+  const [isGeneratingBehaviors, setIsGeneratingBehaviors] = useState(false);
+
+  const handleGenerateBehaviors = useCallback(async () => {
+    const apiKey = getAIGCApiKey();
+    const apiUrl = getAIGCApiUrl();
+    if (!apiKey) {
+      alert('请配置 VITE_AIGC_API_KEY 或 VITE_OPENAI_API_KEY');
+      return;
+    }
+    if (!onUpdate) return;
+    setIsGeneratingBehaviors(true);
+    try {
+      const raw = await generateBehaviorsFromAI(char.description ?? '', apiKey, apiUrl);
+      onUpdate((c) => {
+        const existing = c.behaviorLibrary ?? [];
+        const ids = assignBehaviorIds(c.id, existing, raw.length);
+        const behaviors: GameBehavior[] = raw.map((r, i) => ({
+          ...r,
+          id: ids[i],
+        }));
+        return {
+          ...c,
+          behaviorLibrary: [...existing, ...behaviors],
+        };
+      });
+      setExpanded((s) => new Set(s).add('dialogueLib'));
+    } catch (e) {
+      alert(`生成失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsGeneratingBehaviors(false);
+    }
+  }, [char.description, onUpdate]);
 
   const toggle = (key: string) => {
     setExpanded((s) => {
@@ -251,19 +477,29 @@ function CharacterFormContent({
           readOnly={!editable || !onUpdate}
         />
       </CollapsibleSection>
-      <CollapsibleSection title="行为（每行一条，非玩家控制时按脚本行动）" expanded={expanded.has('behaviors')}
-                          onToggle={() => toggle('behaviors')}>
-        <div style={styles.row}>
-          <textarea
-            value={(char.behaviors ?? (char as { rules?: string[] }).rules ?? []).join('\n')}
-            onChange={(e) =>
-              onUpdate?.((c) => ({...c, behaviors: e.target.value.split('\n').filter(Boolean) || undefined}))
-            }
-            style={{...styles.input, ...styles.textarea, minHeight: 40}}
-            placeholder="$var.尔朱荣 >= 7 时解锁密谈"
-            readOnly={!editable || !onUpdate}
-          />
-        </div>
+      <CollapsibleSection
+        title="行为库"
+        expanded={expanded.has('dialogueLib')}
+        onToggle={() => toggle('dialogueLib')}
+        rightAction={
+          editable && onUpdate ? (
+            <button
+              type="button"
+              style={styles.btnSmall}
+              onClick={handleGenerateBehaviors}
+              disabled={isGeneratingBehaviors}
+              title="基于描述调用 AI 生成多条对话行为"
+            >
+              {isGeneratingBehaviors ? '生成中...' : '生成行为'}
+            </button>
+          ) : undefined
+        }
+      >
+        <DialogueLibrarySection
+          lib={char.behaviorLibrary ?? []}
+          editable={editable && !!onUpdate}
+          onUpdate={onUpdate ? (lib) => onUpdate((c) => ({...c, behaviorLibrary: lib.length ? lib : undefined})) : undefined}
+        />
       </CollapsibleSection>
       <CollapsibleSection title="onMeet 属性变更" expanded={expanded.has('onMeetAttr')}
                           onToggle={() => toggle('onMeetAttr')}>

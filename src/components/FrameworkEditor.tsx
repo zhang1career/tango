@@ -310,8 +310,10 @@ export function FrameworkEditor({
       const text = await file.text();
       const parsed = JSON.parse(text) as Record<string, unknown>;
       if (!parsed.title) parsed.title = '未命名故事';
-      if (!parsed.chapters?.length) parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
-      migrateFramework(parsed as StoryFramework);
+      if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
+        parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
+      }
+      migrateFramework(parsed as unknown as StoryFramework);
       updateFw(() => fromPersistedFramework(parsed));
       setFrameworkFileHandle(handle);
       setJsonError(null);
@@ -463,8 +465,10 @@ export function FrameworkEditor({
             if (newText != null) p.text = newText;
             const canon = fullStory.passages.get(pid);
             if (canon?.links?.length) p.links = canon.links;
+            if (canon?.metadata) p.metadata = { ...p.metadata, ...canon.metadata };
           }
         }
+        story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
         for (const entry of ch.sceneEntries) {
           const pid = toPassageId(chi, entry.sceneId);
           if (!story.passages.has(pid)) {
@@ -545,12 +549,14 @@ export function FrameworkEditor({
         if (existing) {
           existing.text = text;
           existing.links = template?.links ?? existing.links;
+          if (template?.metadata) existing.metadata = { ...existing.metadata, ...template.metadata };
           story.passages.set(pid, existing);
           if (nameId !== pid) story.passages.delete(nameId);
         } else if (template) {
           template.text = text;
           story.passages.set(pid, template);
         }
+        story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
         // StoryData start：本章「起点（地图节点）」对应的场景名称
         const startMapNodeId = ch.startMapNodeId;
         if (startMapNodeId) {
@@ -666,7 +672,7 @@ export function FrameworkEditor({
 
       <section style={styles.section}>
         <div style={styles.sectionHead}>
-          <label style={styles.label}>章节</label>
+          <span>章节</span>
           <button
             type="button"
             style={styles.btnSmall}
@@ -857,7 +863,7 @@ function ChapterBlock({
           </div>
 
           <div style={styles.scenesHead}>
-            <span>剧情（多选场景）</span>
+            <span>场景</span>
             <select
               value=""
               onChange={(e) => {

@@ -21,3 +21,19 @@ export function getAppMode(): 'dev' | 'prod' {
   const v = (env.VITE_APP_MODE ?? env.APP_MODE ?? 'dev') as string;
   return v === 'prod' ? 'prod' : 'dev';
 }
+
+/** 行为引擎：可用行为列表最大返回数量 */
+export function getBehaviorListLimit(): number {
+  const n = Number(env.VITE_BEHAVIOR_LIST_LIMIT);
+  return Number.isNaN(n) || n < 1 ? 10 : n;
+}
+
+/** 人物数据请求 URL（dev 走 api，prod 走静态资源） */
+export function getCharactersFetchUrl(): string {
+  return import.meta.env.DEV ? '/api/story-characters' : (env.VITE_CHARACTERS_PATH ?? 'assets/story-characters.json');
+}
+
+/** 规则数据请求 URL（dev 走 api，prod 走静态资源） */
+export function getRulesFetchUrl(): string {
+  return import.meta.env.DEV ? '/api/story-rules' : (env.VITE_RULES_PATH ?? 'assets/story-rules.json');
+}

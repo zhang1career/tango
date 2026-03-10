@@ -3,7 +3,18 @@
  */
 
 import React, {useCallback, useEffect, useState} from 'react';
-import {type FetchContent, GameEngine, loadStory} from '@/engine';
+import {
+  type FetchContent,
+  GameEngine,
+  loadStory,
+  getAvailableBehaviors,
+  executeBehavior,
+  toBehaviorFullId,
+  type BehaviorInteractionContext,
+} from '@/engine';
+import type {GameCharacter} from '@/schema/game-character';
+import type {GameRule} from '@/schema/game-rule';
+import type {GameBehavior} from '@/schema/game-behavior';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -12,9 +23,14 @@ interface GameScreenProps {
 
 export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [engine, setEngine] = useState<GameEngine | null>(null);
+  const [characters, setCharacters] = useState<GameCharacter[]>([]);
+  const [rules, setRules] = useState<GameRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [, forceUpdate] = useState(0);
+  const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
+  const [behaviorList, setBehaviorList] = useState<GameBehavior[]>([]);
+  const [lastResponse, setLastResponse] = useState<string | null>(null);
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
 
@@ -24,10 +40,12 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     setError(null);
     loadStory(fetchContent)
       .then((story) => {
-        if (!cancelled) {
-          setEngine(new GameEngine(story));
-          setLoading(false);
-        }
+        if (cancelled) return;
+        setEngine(new GameEngine(story));
+        const meta = story.metadata as { characters?: unknown[]; gameRules?: unknown[] } | undefined;
+        setCharacters(Array.isArray(meta?.characters) ? (meta.characters as GameCharacter[]) : []);
+        setRules(Array.isArray(meta?.gameRules) ? (meta.gameRules as GameRule[]) : []);
+        setLoading(false);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -67,19 +85,69 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   if (!state?.story) return null;
 
   const passage = state.currentPassage;
+  const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
+
+  const behaviorCtx: BehaviorInteractionContext = {
+    characters,
+    ruleMap: new Map(rules.map((r) => [r.id, r])),
+    getState: () => {
+      const s = engine.getState();
+      return {
+        variables: s.variables,
+        inventory: s.inventory,
+        reputation: s.reputation,
+      };
+    },
+    applyActions: (actions) => engine.applyActions(actions),
+    usedBehaviorIds: engine.usedBehaviorIds,
+  };
 
   const handleLink = (passageName: string, link?: import('@/types').PassageLink) => {
+    setSelectedCharId(null);
+    setBehaviorList([]);
+    setLastResponse(null);
     engine.goTo(passageName, link ?? undefined);
     refresh();
   };
 
   const handleBack = () => {
+    setSelectedCharId(null);
+    setBehaviorList([]);
+    setLastResponse(null);
     engine.goBack();
     refresh();
   };
 
   const handleRestart = () => {
+    setSelectedCharId(null);
+    setBehaviorList([]);
+    setLastResponse(null);
     engine.restart();
+    refresh();
+  };
+
+  const handleSelectCharacter = (charId: string) => {
+    const list = getAvailableBehaviors(charId, behaviorCtx);
+    setSelectedCharId(charId);
+    setBehaviorList(list);
+    setLastResponse(null);
+    refresh();
+  };
+
+  const handleExecuteBehavior = (charId: string, b: GameBehavior) => {
+    const bid = toBehaviorFullId(charId, b.id);
+    const result = executeBehavior(bid, behaviorCtx);
+    setLastResponse(result.response);
+    setBehaviorList([]);
+    refresh();
+  };
+
+  const handleClickResponse = () => {
+    if (selectedCharId) {
+      const list = getAvailableBehaviors(selectedCharId, behaviorCtx);
+      setBehaviorList(list);
+      setLastResponse(null);
+    }
     refresh();
   };
 
@@ -116,6 +184,59 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
             <p style={styles.passageName}>{passage.name}</p>
             <p style={styles.passageText}>{passage.text}</p>
 
+            {characterIds.length > 0 && (
+              <section style={styles.behaviorPanel}>
+                <div style={styles.charList}>
+                  <span style={styles.charListLabel}>攀谈：</span>
+                  {characterIds.map((cid) => {
+                    const c = characters.find((x) => x.id === cid);
+                    return (
+                      <button
+                        key={cid}
+                        type="button"
+                        style={{
+                          ...styles.charButton,
+                          ...(selectedCharId === cid ? styles.charButtonActive : {}),
+                        }}
+                        onClick={() => handleSelectCharacter(cid)}
+                      >
+                        {c?.name ?? cid}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedCharId && (
+                  lastResponse ? (
+                    <p
+                      style={styles.responseText}
+                      onClick={handleClickResponse}
+                      onKeyDown={(e) => e.key === 'Enter' && handleClickResponse()}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      {lastResponse}
+                    </p>
+                  ) : behaviorList.length > 0 ? (
+                    <ul style={styles.behaviorList}>
+                      {behaviorList.map((b) => (
+                        <li key={b.id}>
+                          <button
+                            type="button"
+                            style={styles.behaviorButton}
+                            onClick={() => handleExecuteBehavior(selectedCharId, b)}
+                          >
+                            {b.t === 'action' ? `(${b.q})` : b.q}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={styles.emptyHint}>暂无可用行为</p>
+                  )
+                )}
+              </section>
+            )}
+
             <nav style={styles.linkList}>
               {engine.getVisibleLinks().map((link, i) => (
                 <button
@@ -124,7 +245,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   style={styles.linkButton}
                   onClick={() => handleLink(link.passageName, link)}
                 >
-                  {link.displayText}
+                  {link.displayText.startsWith('前往') ? link.displayText : `前往 ${link.displayText}`}
                 </button>
               ))}
             </nav>
@@ -178,7 +299,44 @@ const styles: Record<string, React.CSSProperties> = {
   scroll: {flex: 1, overflow: 'auto', paddingBottom: 40},
   passageName: {fontSize: 14, color: '#888', marginBottom: 12},
   passageText: {fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap'},
-  linkList: {display: 'flex', flexDirection: 'column', gap: 10},
+  linkList: {display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16},
+  behaviorPanel: {marginTop: 16, paddingTop: 16, borderTop: '1px solid #333'},
+  charList: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12},
+  charListLabel: {fontSize: 14, color: '#888'},
+  charButton: {
+    padding: '6px 12px',
+    backgroundColor: '#2d2d44',
+    border: '1px solid #444',
+    borderRadius: 6,
+    color: '#c4b5fd',
+    fontSize: 14,
+    cursor: 'pointer',
+  },
+  charButtonActive: {borderColor: '#6c5ce7', color: '#e8e8e8'},
+  behaviorList: {listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8},
+  behaviorButton: {
+    padding: '10px 14px',
+    backgroundColor: '#252540',
+    border: 'none',
+    borderRadius: 6,
+    color: '#e8e8e8',
+    fontSize: 15,
+    textAlign: 'left',
+    cursor: 'pointer',
+    borderLeft: '3px solid #6c5ce7',
+  },
+  responseText: {
+    padding: 14,
+    backgroundColor: '#252540',
+    borderRadius: 8,
+    color: '#d4d4d4',
+    fontSize: 15,
+    lineHeight: 1.5,
+    cursor: 'pointer',
+    margin: 0,
+    borderLeft: '4px solid #a78bfa',
+  },
+  emptyHint: {fontSize: 14, color: '#888', margin: 0},
   linkButton: {
     backgroundColor: '#2d2d44',
     padding: '14px 18px',

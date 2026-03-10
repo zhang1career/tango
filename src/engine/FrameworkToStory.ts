@@ -95,10 +95,11 @@ export function frameworkToStory(fw: StoryFramework): Story {
           (x) => toPassageId(x.chapterIndex, x.entry.sceneId) === targetPid
         );
         const targetNodeName = nodeNameById.get(targetNodeId);
-        // displayText：优先非空边文案，否则用目标地图节点名称
-        const displayText = (edge.displayText?.trim())
+        // displayText：优先非空边文案，否则用目标地图节点名称；统一加「前往」前缀以便与 Twine 展示一致
+        const raw = (edge.displayText?.trim())
           ? edge.displayText.trim()
           : (targetNodeName ?? targetEntry?.scene.name ?? targetNodeId);
+        const displayText = raw.startsWith('前往') ? raw : `前往 ${raw}`;
         // passageName：目标场景名称（.tw 中 passage 以 name 标识）
         const passageName = targetEntry ? targetEntry.scene.name : (targetNodeName ?? targetNodeId);
         links.push({
@@ -116,6 +117,10 @@ export function frameworkToStory(fw: StoryFramework): Story {
       if (scene.stateActions.give) metadata.give = scene.stateActions.give;
       if (scene.stateActions.take) metadata.take = scene.stateActions.take;
       if (scene.stateActions.rep) metadata.rep = scene.stateActions.rep;
+    }
+    if (scene.characterIds?.length) {
+      const ids = scene.characterIds.filter((id) => id !== fw.playerCharacterId);
+      if (ids.length) metadata.characterIds = ids;
     }
 
     passages.set(pid, {
@@ -143,10 +148,10 @@ export function frameworkToStory(fw: StoryFramework): Story {
     if (nextCh?.startMapNodeId) {
       const nextStartPid = findPassageByMapNode(ci + 1, nextCh.startMapNodeId, flatEntries);
       if (nextStartPid) {
-        p.links = [...(p.links ?? []), {displayText: '下一章', passageName: nextStartPid}];
+        p.links = [...(p.links ?? []), {displayText: '前往 下一章', passageName: nextStartPid}];
       }
     } else {
-      p.links = [...(p.links ?? []), {displayText: '完结', passageName: 'End'}];
+      p.links = [...(p.links ?? []), {displayText: '前往 完结', passageName: 'End'}];
     }
   }
 
@@ -171,6 +176,8 @@ export function frameworkToStory(fw: StoryFramework): Story {
     variables: fw.initialState?.variables ?? {},
     inventory: fw.initialState?.inventory ?? [],
     reputation: (fw.initialState as { reputation?: Record<string, number> })?.reputation ?? {},
+    characters: fw.characters ?? [],
+    gameRules: fw.gameRules ?? [],
   };
 
   return {

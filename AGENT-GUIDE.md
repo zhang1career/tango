@@ -113,7 +113,6 @@ interface GameCharacter {
   description?: string;
   attributes?: Record<string, string | number | boolean>;
   inventory?: string[];
-  rules?: string[];              // 非玩家控制时按脚本行动
   onMeet?: FrameworkStateActions; // 首次遇见时变更
   inLocations?: string[];        // @deprecated 人物-地点关系在 scene.characterIds 中设定
 }

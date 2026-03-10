@@ -5,6 +5,7 @@
  */
 
 import type {FrameworkStateActions} from './state-actions';
+import type {GameBehavior} from './game-behavior';
 
 /** @deprecated 人物不再区分类型，保留仅为兼容旧数据 */
 export type CharacterType = 'player' | 'npc';
@@ -21,8 +22,8 @@ export interface GameCharacter {
   attributes?: Record<string, string | number | boolean>;
   /** 物品 id 列表 */
   inventory?: string[];
-  /** 行为：非玩家控制时按脚本行动（每行一条） */
-  behaviors?: string[];
+  /** 人物专属行为库：行为列表 */
+  behaviorLibrary?: GameBehavior[];
   /** 是否已使用（通用字段） */
   is_used?: boolean;
   /** 首次遇见时的状态变更（属性+物品） */
