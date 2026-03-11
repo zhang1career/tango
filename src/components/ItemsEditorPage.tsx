@@ -7,6 +7,7 @@ import type {StoryFramework} from '../schema/story-framework';
 import type {GameItem} from '../schema/game-item';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
+import {MediaCarouselField} from './ui/MediaFields';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -106,10 +107,14 @@ type ItemFormProps = {
 
 function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
   if (!editable || !onUpdate) {
+    const imgs = item.images ?? [];
     return (
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{item.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{item.name}</p>
+        {imgs.length > 0 && (
+          <p style={{margin: '0 0 8px'}}><strong>配图：</strong>{imgs.join(', ')}</p>
+        )}
       </div>
     );
   }
@@ -132,6 +137,12 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
           style={styles.input}
         />
       </div>
+      <MediaCarouselField
+        label="配图"
+        value={item.images}
+        onChange={(v) => onUpdate((x) => ({...x, images: v.length ? v : undefined}))}
+        editable={true}
+      />
     </div>
   );
 }

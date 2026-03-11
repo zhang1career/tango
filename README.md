@@ -45,6 +45,7 @@ assets/         # 故事源文件（.tw、story-*.json）
 ## 扩展
 
 - **远程内容**：`GAME_CONTENT_PATH` 设为 URL，`fetchContent` 会通过 `fetch` 加载
+- **多媒体**：支持 HTML `<img>`、`<audio>`、`<video>`，以及 SugarCube 宏 `<<image>>`、`<<audio>>`、`<<video>>`。配置 `VITE_MEDIA_BASE_URL` 可将相对路径解析为 CDN 地址
 
 ## 参考资料
 

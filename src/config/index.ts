@@ -37,3 +37,18 @@ export function getCharactersFetchUrl(): string {
 export function getRulesFetchUrl(): string {
   return import.meta.env.DEV ? '/api/story-rules' : (env.VITE_RULES_PATH ?? 'assets/story-rules.json');
 }
+
+/** 媒体资源基础 URL（如 CDN），相对路径会拼接此前缀。留空则使用相对路径 */
+export function getMediaBaseUrl(): string {
+  const base = (env.VITE_MEDIA_BASE_URL ?? env.MEDIA_BASE_URL ?? '') as string;
+  return base.endsWith('/') ? base.slice(0, -1) : base;
+}
+
+/** 解析媒体 URL：若为 http(s) 则原样返回，否则拼上媒体基础 URL */
+export function resolveMediaUrl(path: string): string {
+  if (!path || /^https?:\/\//i.test(path)) return path;
+  const base = getMediaBaseUrl();
+  if (!base) return path;
+  const normalized = path.startsWith('/') ? path.slice(1) : path;
+  return `${base}/${normalized}`;
+}

@@ -122,6 +122,10 @@ export function frameworkToStory(fw: StoryFramework): Story {
       const ids = scene.characterIds.filter((id) => id !== fw.playerCharacterId);
       if (ids.length) metadata.characterIds = ids;
     }
+    if (scene.openingAnimation) metadata.openingAnimation = scene.openingAnimation;
+    const validImages = scene.images?.filter((u) => u?.trim());
+    if (validImages?.length) metadata.images = validImages.map((u) => u.trim());
+    if (scene.backgroundMusic) metadata.backgroundMusic = scene.backgroundMusic;
 
     passages.set(pid, {
       id: pid,

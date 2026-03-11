@@ -30,4 +30,6 @@ export interface GameCharacter {
   onMeet?: FrameworkStateActions;
   /** @deprecated 人物-地点关系在时间线场景中设定（scene.characterIds），保留仅为兼容旧数据 */
   inLocations?: string[];
+  /** 头像 URL */
+  avatar?: string;
 }

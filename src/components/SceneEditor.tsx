@@ -6,6 +6,7 @@ import React, {useEffect, useState} from 'react';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
+import {MediaUrlField, MediaCarouselField} from './ui/MediaFields';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
@@ -227,6 +228,25 @@ function SceneFormContent({
         }
         title="物品"
         readOnly={!editable || !onUpdate}
+      />
+
+      <MediaUrlField
+        label="开场动画"
+        value={scene.openingAnimation}
+        onChange={(v) => onUpdate?.((s) => ({...s, openingAnimation: v}))}
+        editable={editable && !!onUpdate}
+      />
+      <MediaCarouselField
+        label="配图"
+        value={scene.images}
+        onChange={(v) => onUpdate?.((s) => ({...s, images: v.length ? v : undefined}))}
+        editable={editable && !!onUpdate}
+      />
+      <MediaUrlField
+        label="背景音乐"
+        value={scene.backgroundMusic}
+        onChange={(v) => onUpdate?.((s) => ({...s, backgroundMusic: v}))}
+        editable={editable && !!onUpdate}
       />
     </div>
   );

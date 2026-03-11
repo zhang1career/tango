@@ -2,7 +2,7 @@
  * 游戏主画面 - 文字冒险展示
  */
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   type FetchContent,
   GameEngine,
@@ -15,6 +15,8 @@ import {
 import type {GameCharacter} from '@/schema/game-character';
 import type {GameRule} from '@/schema/game-rule';
 import type {GameBehavior} from '@/schema/game-behavior';
+import {resolveMediaUrl} from '@/config';
+import {sanitizePassageContent} from '@/utils/sanitize';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -31,8 +33,12 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
   const [behaviorList, setBehaviorList] = useState<GameBehavior[]>([]);
   const [lastResponse, setLastResponse] = useState<string | null>(null);
+  const [introVisible, setIntroVisible] = useState(false);
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
+  const passageContentRef = useRef<HTMLDivElement>(null);
+  const introPlayedRef = useRef<Set<string>>(new Set());
+  const bgmRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +63,71 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       cancelled = true;
     };
   }, [fetchContent]);
+
+  useEffect(() => {
+    const el = passageContentRef.current;
+    if (!el) return;
+    const carousels = el.querySelectorAll<HTMLDivElement>('.media-carousel');
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    carousels.forEach((div) => {
+      const raw = div.getAttribute('data-images');
+      if (!raw) return;
+      try {
+        const urls = JSON.parse(raw.replace(/&quot;/g, '"')) as string[];
+        if (urls.length < 2) return;
+        const img = div.querySelector('img');
+        if (!img) return;
+        let i = 0;
+        const t = setInterval(() => {
+          i = (i + 1) % urls.length;
+          img.src = urls[i];
+        }, 4000);
+        intervals.push(t);
+      } catch {
+        // ignore
+      }
+    });
+    return () => intervals.forEach(clearInterval);
+  }, [engine?.getState()?.currentPassage?.id]);
+
+  // BGM: play when passage has backgroundMusic and not showing intro overlay
+  useEffect(() => {
+    const passage = engine?.getState()?.currentPassage;
+    const url = passage?.metadata?.backgroundMusic as string | undefined;
+    const opening = passage?.metadata?.openingAnimation as string | undefined;
+    const shouldPlay = url && (!opening || introPlayedRef.current.has(passage?.id ?? ''));
+    const audio = bgmRef.current;
+    if (audio) {
+      audio.pause();
+      audio.src = '';
+    }
+    if (url && shouldPlay) {
+      const src = resolveMediaUrl(url);
+      if (audio) {
+        audio.src = src;
+        audio.loop = true;
+        audio.play().catch(() => {});
+      }
+    }
+  }, [engine?.getState()?.currentPassage?.id, introVisible]);
+
+  // Set introVisible when entering passage with openingAnimation (first time)
+  useEffect(() => {
+    const passage = engine?.getState()?.currentPassage;
+    const opening = passage?.metadata?.openingAnimation as string | undefined;
+    if (opening && passage?.id && !introPlayedRef.current.has(passage.id)) {
+      setIntroVisible(true);
+    } else {
+      setIntroVisible(false);
+    }
+  }, [engine?.getState()?.currentPassage?.id]);
+
+  const handleIntroEnded = useCallback(() => {
+    const passageId = engine?.getState()?.currentPassage?.id;
+    if (passageId) introPlayedRef.current.add(passageId);
+    setIntroVisible(false);
+    refresh();
+  }, [engine, refresh]);
 
   if (loading) {
     return (
@@ -86,6 +157,10 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
 
   const passage = state.currentPassage;
   const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
+  const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
+  const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u)).filter(Boolean);
+  const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
+  const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
 
   const behaviorCtx: BehaviorInteractionContext = {
     characters,
@@ -122,6 +197,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     setSelectedCharId(null);
     setBehaviorList([]);
     setLastResponse(null);
+    introPlayedRef.current.clear();
     engine.restart();
     refresh();
   };
@@ -181,8 +257,37 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       <main style={styles.scroll}>
         {passage && (
           <>
-            <p style={styles.passageName}>{passage.name}</p>
-            <p style={styles.passageText}>{passage.text}</p>
+            {introVisible && openingAnimation && (
+              <div style={overlayStyles.overlay}>
+                <video
+                  src={resolveMediaUrl(openingAnimation)}
+                  autoPlay
+                  muted
+                  playsInline
+                  onEnded={handleIntroEnded}
+                  style={overlayStyles.video}
+                />
+              </div>
+            )}
+            {!introVisible && (
+              <>
+                <p style={styles.passageName}>{passage.name}</p>
+                <div ref={passageContentRef} className="passage-content">
+                  {resolvedImages.length > 0 && (
+                    <div
+                      className="media-carousel"
+                      data-images={JSON.stringify(resolvedImages)}
+                      style={{marginBottom: 16}}
+                    >
+                      <img src={resolvedImages[0]} alt="" style={{maxWidth: '100%', borderRadius: 8}} />
+                    </div>
+                  )}
+                  <div
+                    style={styles.passageText}
+                    dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
+                  />
+                </div>
+                <audio ref={bgmRef} loop style={{display: 'none'}} />
 
             {characterIds.length > 0 && (
               <section style={styles.behaviorPanel}>
@@ -190,6 +295,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   <span style={styles.charListLabel}>攀谈：</span>
                   {characterIds.map((cid) => {
                     const c = characters.find((x) => x.id === cid);
+                    const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar) : undefined;
                     return (
                       <button
                         key={cid}
@@ -200,6 +306,13 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                         }}
                         onClick={() => handleSelectCharacter(cid)}
                       >
+                        {avatarUrl && (
+                          <img
+                            src={avatarUrl}
+                            alt=""
+                            style={{width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', marginRight: 6}}
+                          />
+                        )}
                         {c?.name ?? cid}
                       </button>
                     );
@@ -254,6 +367,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
               <p style={{...styles.passageText, fontStyle: 'italic', color: '#888'}}>
                 — 故事结束 —
               </p>
+            )}
+              </>
             )}
           </>
         )}
@@ -369,4 +484,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loadingText: {color: '#888', marginTop: 12},
   error: {color: '#e74c3c', padding: 16, textAlign: 'center'},
+};
+
+const overlayStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 1100,
+    backgroundColor: '#000',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  video: {
+    maxWidth: '100%',
+    maxHeight: '100%',
+    objectFit: 'contain',
+  },
 };

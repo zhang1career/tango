@@ -14,6 +14,7 @@ import {AttributesEditorCard} from './cards/AttributesEditorCard';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
+import {MediaUrlField} from './ui/MediaFields';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -456,6 +457,12 @@ function CharacterFormContent({
           placeholder="权臣，北魏将领..."
         />
       </FieldRow>
+      <MediaUrlField
+        label="头像"
+        value={char.avatar}
+        onChange={(v) => onUpdate?.((c) => ({...c, avatar: v}))}
+        editable={editable && !!onUpdate}
+      />
       <CollapsibleSection title="属性" expanded={expanded.has('attr')} onToggle={() => toggle('attr')}>
         <AttributeValuesCard
           attributeDefs={attributeDefs}
