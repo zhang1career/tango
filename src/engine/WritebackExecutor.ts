@@ -73,7 +73,6 @@ export function parseWritebackToActions(
       actions.take = actions.take
         ? (Array.isArray(actions.take) ? [...actions.take, takeMatch[1]] : [actions.take as string, takeMatch[1]])
         : takeMatch[1];
-      continue;
     }
   }
   return Object.keys(actions).length ? actions : null;

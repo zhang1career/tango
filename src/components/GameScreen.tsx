@@ -7,7 +7,6 @@ import {
   type FetchContent,
   GameEngine,
   loadStory,
-  getAvailableBehaviors,
   executeBehavior,
   toBehaviorFullId,
   type BehaviorInteractionContext,
@@ -35,8 +34,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [, forceUpdate] = useState(0);
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
-  const [behaviorList, setBehaviorList] = useState<GameBehavior[]>([]);
-  const [lastResponse, setLastResponse] = useState<string | null>(null);
+  const [, setBehaviorList] = useState<GameBehavior[]>([]);
+  const [, setLastResponse] = useState<string | null>(null);
   const [introVisible, setIntroVisible] = useState(false);
   const [behaviorHistory, setBehaviorHistory] = useState<BehaviorHistoryEntry[]>([]);
   const behaviorSeqRef = useRef(0);

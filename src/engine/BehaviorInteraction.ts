@@ -8,7 +8,7 @@ import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {GameRule} from '../schema/game-rule';
 import {admissionCalc} from './AdmissionCalculator';
-import {getBehaviorListLimit} from '../config';
+import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
 
 const UNAVAILABLE_RESPONSE = '（喔…当前不可用）';

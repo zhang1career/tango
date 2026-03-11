@@ -4,7 +4,7 @@
 
 import React, {useCallback, useEffect, useState} from 'react';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
-import {getAIGCApiKey, getAIGCApiUrl} from '../config';
+import {getAIGCApiKey, getAIGCApiUrl} from '@/config';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
