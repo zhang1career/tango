@@ -1,22 +1,25 @@
 /**
- * 游戏事件 Schema - 触发条件与计算规则
- * 事件通过规则引擎对玩家施加作用（变量、物品、声誉等）
+ * 游戏事件 Schema - 行为序列
  */
 
-import type {FrameworkStateActions} from './state-actions';
+import type {GameBehavior} from './game-behavior';
 
-export type EventTriggerType = 'unconditional' | 'conditional';
+/** 行为序列项：主体对客体执行一组行为（内容列表） */
+export interface EventBehaviorSequenceItem {
+  /** 主体：行为执行者，characterId 或 "player" */
+  subject: string;
+  /** 客体：行为承受者，可选；characterId 或 "player"；"" 表示无 */
+  object?: string;
+  /** 内容列表：顺序执行的行为（复用 GameBehavior） */
+  contents: GameBehavior[];
+}
 
 /** 事件定义 */
 export interface GameEvent {
   id: string;
   name: string;
-  /** 触发类型：无条件触发 或 条件触发 */
-  trigger: EventTriggerType;
-  /** 条件表达式（当 trigger 为 conditional 时必填） */
-  condition?: string;
-  /** 计算规则：满足触发条件时对玩家的状态变更 */
-  actions?: FrameworkStateActions;
+  /** 行为序列：按时间顺序执行 */
+  behaviorSequence?: EventBehaviorSequenceItem[];
   /** 是否已使用（通用字段） */
   is_used?: boolean;
   /** 开场动画 URL */

@@ -14,6 +14,7 @@ import {MetadataEditor} from './components/MetadataEditor';
 import {ItemsEditorPage} from './components/ItemsEditorPage';
 import {SceneEditor} from './components/SceneEditor';
 import {RuleEditor} from './components/RuleEditor';
+import {FeaturePanelEditor} from './components/FeaturePanelEditor';
 import {getAppMode, getContentPath} from './config';
 import type {StoryFramework} from './schema/story-framework';
 
@@ -42,7 +43,7 @@ const DEFAULT_FRAMEWORK: StoryFramework = {
 const isProd = getAppMode() === 'prod';
 
 export default function App() {
-  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'metadata'>('game');
+  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata'>('game');
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
     setFw((prev) => fn(prev));
@@ -111,6 +112,13 @@ export default function App() {
             </button>
             <button
               type="button"
+              style={{...navStyles.tab, ...(mode === 'features' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('features')}
+            >
+              功能板块
+            </button>
+            <button
+              type="button"
               style={{...navStyles.tab, ...(mode === 'metadata' ? navStyles.tabActive : {})}}
               onClick={() => setMode('metadata')}
             >
@@ -133,6 +141,8 @@ export default function App() {
         <ItemsEditorPage fw={fw} updateFw={updateFw}/>
       ) : mode === 'rules' ? (
         <RuleEditor fw={fw} updateFw={updateFw}/>
+      ) : mode === 'features' ? (
+        <FeaturePanelEditor/>
       ) : mode === 'metadata' ? (
         <MetadataEditor fw={fw} updateFw={updateFw}/>
       ) : (

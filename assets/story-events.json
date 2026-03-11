@@ -1,0 +1,15 @@
+[
+  {
+    "id": "evt_1773220540755",
+    "name": "是兄弟就砍我一刀",
+    "behaviorSequence": [
+      {
+        "subject": "yuanyong",
+        "object": "feimu",
+        "contents": [
+          {"id":"evt_1773220540755.b_100100","q":"攻击","a":"","t":"action","actionKind":"battle","ruleIds":["rule_0001"],"writebackExpr":"$entity.is_used = true"}
+        ]
+      }
+    ]
+  }
+]

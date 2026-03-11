@@ -63,6 +63,8 @@ export class GameEngine {
   private stateManager: StateManager;
   /** 已使用的行为 id 集合，用于 onlyOnce 等准入规则 */
   usedBehaviorIds = new Set<string>();
+  /** 已使用的事件 id 集合，用于事件准入（onlyOnce 等） */
+  usedEventIds = new Set<string>();
 
   constructor(story: Story) {
     const startId = story.startPassageId.trim().replace(/\s+/g, '_');
@@ -157,6 +159,7 @@ export class GameEngine {
     this.state.history = [];
     this.state.isEnding = false;
     this.usedBehaviorIds.clear();
+    this.usedEventIds.clear();
   }
 
   /** 应用状态变更（供行为交互系统执行回写） */

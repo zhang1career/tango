@@ -2,14 +2,17 @@
  * 事件编辑界面
  */
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import type {StoryFramework} from '../schema/story-framework';
-import type {GameEvent} from '../schema/game-event';
-import {AttributesEditorCard} from './cards/AttributesEditorCard';
-import {ItemsEditorCard} from './cards/ItemsEditorCard';
+import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
+import type {GameBehavior} from '../schema/game-behavior';
+import type {GameCharacter} from '../schema/game-character';
+import type {GameRule} from '../schema/game-rule';
 import {formatJsonCompact} from '../utils/json-format';
+import {assignBehaviorIds} from '../utils/behavior-ids';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
+import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -64,7 +67,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: '#aaa',
     cursor: 'pointer',
-    fontSize: 12
+    fontSize: 12,
   },
   btnIcon: {
     padding: '2px 8px',
@@ -72,9 +75,377 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     color: '#888',
     cursor: 'pointer',
-    fontSize: 16
+    fontSize: 16,
   },
+  seqItem: {
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#1e1e32',
+    borderRadius: 8,
+    border: '1px solid #333',
+  },
+  contentItem: {
+    marginBottom: 12,
+    padding: 10,
+    backgroundColor: '#252540',
+    borderRadius: 6,
+    border: '1px solid #333',
+  },
+  readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
 };
+
+/** 收集事件下所有行为用于 id 生成 */
+function collectAllBehaviors(evt: GameEvent): GameBehavior[] {
+  const list: GameBehavior[] = [];
+  for (const item of evt.behaviorSequence ?? []) {
+    list.push(...(item.contents ?? []));
+  }
+  return list;
+}
+
+type EventFormProps = {
+  evt: GameEvent;
+  editable: boolean;
+  characters: GameCharacter[];
+  gameRules: GameRule[];
+  onUpdate?: (fn: (e: GameEvent) => GameEvent) => void;
+};
+
+function EventBehaviorContentsEditor({
+  ownerId,
+  contents,
+  allBehaviorsInEvent,
+  ruleList,
+  editable,
+  onUpdate,
+}: {
+  ownerId: string;
+  contents: GameBehavior[];
+  allBehaviorsInEvent: GameBehavior[];
+  ruleList: Array<{id: string; name: string}>;
+  editable: boolean;
+  onUpdate?: (contents: GameBehavior[]) => void;
+}) {
+  const add = () => {
+    if (!onUpdate) return;
+    const [id] = assignBehaviorIds(ownerId, allBehaviorsInEvent, 1);
+    onUpdate([...contents, {id, q: '', a: '', t: 'dialog'}]);
+  };
+  const remove = (i: number) => {
+    onUpdate?.(contents.filter((_, idx) => idx !== i));
+  };
+  const update = (i: number, fn: (b: GameBehavior) => GameBehavior) => {
+    onUpdate?.(contents.map((b, idx) => (idx === i ? fn(b) : b)));
+  };
+
+  if (!editable || !onUpdate) {
+    return (
+      <div style={styles.row}>
+        {contents.length === 0 ? (
+          <div style={styles.readOnlyValue}>暂无行为</div>
+        ) : (
+          <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
+            {contents.map((b, i) => (
+              <li key={b.id} style={{...styles.contentItem, marginBottom: 8}}>
+                <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
+                <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
+                {b.judgeExpr && (
+                  <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.row}>
+      {contents.map((b, i) => (
+        <div key={b.id} style={styles.contentItem}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6}}>
+            <span style={{fontSize: 12, color: '#888'}}>行为 #{i + 1}</span>
+            <button type="button" style={styles.btnSmall} onClick={() => remove(i)}>
+              删除
+            </button>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>请求</label>
+            <input
+              value={b.q}
+              onChange={(e) => update(i, (x) => ({...x, q: e.target.value}))}
+              style={styles.input}
+              placeholder="主体说的话或动作描述"
+            />
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>响应</label>
+            <input
+              value={b.a}
+              onChange={(e) => update(i, (x) => ({...x, a: e.target.value}))}
+              style={styles.input}
+              placeholder="客体回应；无客体时可填旁白或留空"
+            />
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>类型</label>
+            <select
+              value={b.t ?? 'dialog'}
+              onChange={(e) => update(i, (x) => ({...x, t: e.target.value as 'dialog' | 'action'}))}
+              style={styles.input}
+            >
+              <option value="dialog">对话</option>
+              <option value="action">动作</option>
+            </select>
+          </div>
+          {(b.t ?? 'dialog') === 'action' && (
+            <div style={styles.row}>
+              <label style={styles.label}>动作类型</label>
+              <select
+                value={b.actionKind ?? ''}
+                onChange={(e) =>
+                  update(i, (x) => ({
+                    ...x,
+                    actionKind: (e.target.value || undefined) as import('../schema/game-behavior').ActionKind | undefined,
+                  }))
+                }
+                style={styles.input}
+              >
+                <option value="">—</option>
+                <option value="battle">战斗</option>
+              </select>
+            </div>
+          )}
+          <RuleIdsSelector
+            ruleList={ruleList}
+            value={b.ruleIds ?? []}
+            onChange={(ids) => update(i, (x) => ({...x, ruleIds: ids.length ? ids : undefined}))}
+            readOnly={false}
+            label="规则"
+          />
+          <div style={styles.row}>
+            <label style={styles.label}>条件表达式</label>
+            <input
+              value={b.judgeExpr ?? ''}
+              onChange={(e) => update(i, (x) => ({...x, judgeExpr: e.target.value || undefined}))}
+              style={styles.input}
+              placeholder="例如 $rep.费穆 >= 5"
+            />
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>回写表达式</label>
+            <input
+              value={b.writebackExpr ?? ''}
+              onChange={(e) => update(i, (x) => ({...x, writebackExpr: e.target.value || undefined}))}
+              style={styles.input}
+              placeholder='例如 $rep.费穆 = ($rep.费穆||0)+1'
+            />
+          </div>
+        </div>
+      ))}
+      <button type="button" style={styles.btn} onClick={add}>
+        + 添加内容
+      </button>
+    </div>
+  );
+}
+
+function BehaviorSequenceEditor({
+  evt,
+  characters,
+  gameRules,
+  editable,
+  onUpdate,
+}: {
+  evt: GameEvent;
+  characters: GameCharacter[];
+  gameRules: GameRule[];
+  editable: boolean;
+  onUpdate?: (fn: (e: GameEvent) => GameEvent) => void;
+}) {
+  const seq = evt.behaviorSequence ?? [];
+  const ruleList = gameRules.map((r) => ({id: r.id, name: r.name}));
+  const subjectOptions = [...characters.map((c) => ({id: c.id, name: c.name}))];
+  const objectOptions = [{id: '', name: '无'}, ...characters.map((c) => ({id: c.id, name: c.name}))];
+
+  const addSeqItem = () => {
+    if (!onUpdate) return;
+    const next: EventBehaviorSequenceItem = {subject: '', object: '', contents: []};
+    onUpdate((e) => ({
+      ...e,
+      behaviorSequence: [...(e.behaviorSequence ?? []), next],
+    }));
+  };
+  const removeSeqItem = (idx: number) => {
+    onUpdate?.((e) => ({
+      ...e,
+      behaviorSequence: (e.behaviorSequence ?? []).filter((_, i) => i !== idx),
+    }));
+  };
+  const updateSeqItem = (idx: number, fn: (item: EventBehaviorSequenceItem) => EventBehaviorSequenceItem) => {
+    onUpdate?.((e) => ({
+      ...e,
+      behaviorSequence: (e.behaviorSequence ?? []).map((item, i) => (i === idx ? fn(item) : item)),
+    }));
+  };
+
+  if (!editable || !onUpdate) {
+    return (
+      <div style={styles.section}>
+        <label style={styles.label}>行为序列</label>
+        {seq.length === 0 ? (
+          <div style={styles.readOnlyValue}>暂无</div>
+        ) : (
+          seq.map((item, i) => {
+            const subName = subjectOptions.find((o) => o.id === item.subject)?.name ?? item.subject;
+            const objName = item.object ? (objectOptions.find((o) => o.id === item.object)?.name ?? item.object) : '无';
+            return (
+              <div key={i} style={{...styles.seqItem, marginBottom: 8}}>
+                <p style={{margin: '0 0 6px', fontWeight: 600}}>
+                  项 {i + 1}：{subName} → {objName}
+                </p>
+                <p style={{margin: 0, fontSize: 13, color: '#888'}}>{item.contents.length} 条行为</p>
+              </div>
+            );
+          })
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.section}>
+      <label style={styles.label}>行为序列</label>
+      {seq.map((item, idx) => (
+        <div key={idx} style={styles.seqItem}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
+            <span style={{fontSize: 13, color: '#a78bfa'}}>行为序列项 #{idx + 1}</span>
+            <button type="button" style={styles.btnSmall} onClick={() => removeSeqItem(idx)}>
+              删除
+            </button>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>主体</label>
+            <select
+              value={item.subject}
+              onChange={(e) => updateSeqItem(idx, (x) => ({...x, subject: e.target.value}))}
+              style={styles.input}
+            >
+              {subjectOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>客体</label>
+            <select
+              value={item.object ?? ''}
+              onChange={(e) => updateSeqItem(idx, (x) => ({...x, object: e.target.value}))}
+              style={styles.input}
+            >
+              {objectOptions.map((o) => (
+                <option key={o.id || '_none'} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{marginTop: 12}}>
+            <label style={{...styles.label, marginBottom: 8}}>内容列表</label>
+            <EventBehaviorContentsEditor
+              ownerId={evt.id}
+              contents={item.contents}
+              allBehaviorsInEvent={collectAllBehaviors(evt)}
+              ruleList={ruleList}
+              editable={editable}
+              onUpdate={(contents) => updateSeqItem(idx, (x) => ({...x, contents}))}
+            />
+          </div>
+        </div>
+      ))}
+      <button type="button" style={styles.btn} onClick={addSeqItem}>
+        + 添加行为
+      </button>
+    </div>
+  );
+}
+
+function EventFormContent({evt, editable, characters, gameRules, onUpdate}: EventFormProps) {
+  if (!editable || !onUpdate) {
+    return (
+      <div style={{color: '#e8e8e8', fontSize: 14}}>
+        <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
+        <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
+        {evt.openingAnimation && (
+          <p style={{margin: '0 0 8px'}}><strong>开场动画：</strong>{evt.openingAnimation}</p>
+        )}
+        {evt.endingAnimation && (
+          <p style={{margin: '0 0 8px'}}><strong>终场动画：</strong>{evt.endingAnimation}</p>
+        )}
+        {evt.backgroundMusic && (
+          <p style={{margin: '0 0 8px'}}><strong>背景音乐：</strong>{evt.backgroundMusic}</p>
+        )}
+        <BehaviorSequenceEditor
+          evt={evt}
+          characters={characters}
+          gameRules={gameRules}
+          editable={false}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={styles.row}>
+        <label style={styles.label}>ID</label>
+        <input
+          value={evt.id}
+          onChange={(e) => onUpdate((c) => ({...c, id: e.target.value}))}
+          style={styles.input}
+          placeholder="evt_xxx"
+        />
+      </div>
+      <div style={styles.row}>
+        <label style={styles.label}>名称</label>
+        <input
+          value={evt.name}
+          onChange={(e) => onUpdate((c) => ({...c, name: e.target.value}))}
+          style={styles.input}
+          placeholder="进入军营"
+        />
+      </div>
+      <MediaUrlField
+        label="开场动画"
+        value={evt.openingAnimation}
+        onChange={(v) => onUpdate((c) => ({...c, openingAnimation: v}))}
+        editable={editable && !!onUpdate}
+      />
+      <MediaUrlField
+        label="终场动画"
+        value={evt.endingAnimation}
+        onChange={(v) => onUpdate((c) => ({...c, endingAnimation: v}))}
+        editable={editable && !!onUpdate}
+      />
+      <MediaUrlField
+        label="背景音乐"
+        value={evt.backgroundMusic}
+        onChange={(v) => onUpdate((c) => ({...c, backgroundMusic: v}))}
+        editable={editable && !!onUpdate}
+      />
+      <BehaviorSequenceEditor
+        evt={evt}
+        characters={characters}
+        gameRules={gameRules}
+        editable={editable}
+        onUpdate={onUpdate}
+      />
+    </div>
+  );
+}
 
 /** 保存事件到预设路径 assets/story-events.json */
 async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error?: string }> {
@@ -102,131 +473,34 @@ async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error
   return {ok: true};
 }
 
-type EventFormProps = {
-  evt: GameEvent;
-  editable: boolean;
-  attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
-  items: import('../schema/game-item').GameItem[];
-  onUpdate?: (fn: (e: GameEvent) => GameEvent) => void;
-};
-
-function EventFormContent({evt, editable, attributeDefs, items, onUpdate}: EventFormProps) {
-  if (!editable || !onUpdate) {
-    return (
-      <div style={{color: '#e8e8e8', fontSize: 14}}>
-        <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
-        <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
-        <p style={{margin: '0 0 8px'}}><strong>触发类型：</strong>{evt.trigger === 'unconditional' ? '无条件' : '条件'}
-        </p>
-        {evt.trigger === 'conditional' && evt.condition && (
-          <p style={{margin: '0 0 8px'}}><strong>触发条件：</strong>{evt.condition}</p>
-        )}
-        {evt.openingAnimation && (
-          <p style={{margin: '0 0 8px'}}><strong>开场动画：</strong>{evt.openingAnimation}</p>
-        )}
-        {evt.endingAnimation && (
-          <p style={{margin: '0 0 8px'}}><strong>终场动画：</strong>{evt.endingAnimation}</p>
-        )}
-        {evt.backgroundMusic && (
-          <p style={{margin: '0 0 8px'}}><strong>背景音乐：</strong>{evt.backgroundMusic}</p>
-        )}
-        {evt.actions && (Object.keys(evt.actions).length > 0 || evt.actions.give || evt.actions.take) && (
-          <p style={{margin: '0 0 8px'}}><strong>计算规则：</strong>{JSON.stringify(evt.actions)}</p>
-        )}
-      </div>
-    );
+async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void) {
+  const apis: Array<{url: string; key: keyof StoryFramework}> = [
+    {url: '/api/story-events', key: 'events'},
+    {url: '/api/story-characters', key: 'characters'},
+    {url: '/api/story-rules', key: 'gameRules'},
+  ];
+  for (const {url, key} of apis) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = Array.isArray(data) ? data : null;
+        if (parsed) updateFw((d) => ({...d, [key]: parsed}));
+      }
+    } catch {
+      // ignore
+    }
   }
-
-  return (
-    <div>
-      <div style={styles.row}>
-        <label style={styles.label}>ID</label>
-        <input
-          value={evt.id}
-          onChange={(e) => onUpdate((c) => ({...c, id: e.target.value}))}
-          style={styles.input}
-          placeholder="evt_xxx"
-        />
-      </div>
-      <div style={styles.row}>
-        <label style={styles.label}>名称</label>
-        <input
-          value={evt.name}
-          onChange={(e) => onUpdate((c) => ({...c, name: e.target.value}))}
-          style={styles.input}
-          placeholder="进入军营"
-        />
-      </div>
-      <div style={styles.row}>
-        <label style={styles.label}>触发类型</label>
-        <select
-          value={evt.trigger}
-          onChange={(e) => onUpdate((c) => ({...c, trigger: e.target.value as 'unconditional' | 'conditional'}))}
-          style={styles.input}
-        >
-          <option value="unconditional">无条件触发</option>
-          <option value="conditional">条件触发</option>
-        </select>
-      </div>
-      {evt.trigger === 'conditional' && (
-        <div style={styles.row}>
-          <label style={styles.label}>触发条件</label>
-          <input
-            value={evt.condition ?? ''}
-            onChange={(e) => onUpdate((c) => ({...c, condition: e.target.value || undefined}))}
-            style={styles.input}
-            placeholder={'$items has "令牌" 或 $var.尔朱荣 >= 5'}
-          />
-        </div>
-      )}
-      <MediaUrlField
-        label="开场动画"
-        value={evt.openingAnimation}
-        onChange={(v) => onUpdate((c) => ({...c, openingAnimation: v}))}
-        editable={editable && !!onUpdate}
-      />
-      <MediaUrlField
-        label="终场动画"
-        value={evt.endingAnimation}
-        onChange={(v) => onUpdate((c) => ({...c, endingAnimation: v}))}
-        editable={editable && !!onUpdate}
-      />
-      <MediaUrlField
-        label="背景音乐"
-        value={evt.backgroundMusic}
-        onChange={(v) => onUpdate((c) => ({...c, backgroundMusic: v}))}
-        editable={editable && !!onUpdate}
-      />
-      <AttributesEditorCard
-        attributeDefs={attributeDefs}
-        actions={evt.actions}
-        onChange={(a) => onUpdate((c) => ({...c, actions: a}))}
-        title="计算规则（属性）"
-      />
-      <ItemsEditorCard
-        items={items}
-        give={Array.isArray(evt.actions?.give) ? evt.actions.give : evt.actions?.give ? [evt.actions.give] : []}
-        take={Array.isArray(evt.actions?.take) ? evt.actions.take : evt.actions?.take ? [evt.actions.take] : []}
-        onChange={(give, take) =>
-          onUpdate((c) => ({
-            ...c,
-            actions: {
-              ...c.actions,
-              give: give.length ? give : undefined,
-              take: take.length ? take : undefined,
-            },
-          }))
-        }
-        title="计算规则（物品）"
-      />
-    </div>
-  );
 }
 
 export function EventEditor({fw, updateFw}: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
+  useEffect(() => {
+    preloadForEvents(updateFw);
+  }, [updateFw]);
+
   const events = fw.events ?? [];
   const setEvents = (fn: (e: GameEvent[]) => GameEvent[]) =>
     updateFw((d) => ({...d, events: fn(d.events ?? [])}));
@@ -237,11 +511,15 @@ export function EventEditor({fw, updateFw}: {
   const [newEvent, setNewEvent] = useState<GameEvent>(() => ({
     id: `evt_${Date.now()}`,
     name: '新事件',
-    trigger: 'unconditional'
+    behaviorSequence: [],
   }));
 
   const openAddModal = () => {
-    setNewEvent({id: `evt_${Date.now()}`, name: '新事件', trigger: 'unconditional'});
+    setNewEvent({
+      id: `evt_${Date.now()}`,
+      name: '新事件',
+      behaviorSequence: [],
+    });
     setAddModalOpen(true);
   };
 
@@ -269,8 +547,8 @@ export function EventEditor({fw, updateFw}: {
     else setEditIndex(null);
   };
 
-  const attributeDefs = fw.metadata?.characterAttributes ?? [];
-  const items = fw.items ?? [];
+  const characters = fw.characters ?? [];
+  const gameRules = fw.gameRules ?? [];
 
   return (
     <div style={styles.container}>
@@ -294,7 +572,7 @@ export function EventEditor({fw, updateFw}: {
               >
                 {evt.name}
                 <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {evt.trigger === 'unconditional' ? '(无条件)' : '(条件)'} · {evt.id}
+                  {evt.id}
                 </span>
               </span>
               <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
@@ -325,8 +603,8 @@ export function EventEditor({fw, updateFw}: {
           <EventFormContent
             evt={events[detailIndex]}
             editable={false}
-            attributeDefs={attributeDefs}
-            items={items}
+            characters={characters}
+            gameRules={gameRules}
           />
         </DetailEditModal>
       )}
@@ -342,8 +620,8 @@ export function EventEditor({fw, updateFw}: {
           <EventFormContent
             evt={events[editIndex]}
             editable={true}
-            attributeDefs={attributeDefs}
-            items={items}
+            characters={characters}
+            gameRules={gameRules}
             onUpdate={(fn) => updateEvent(editIndex, fn)}
           />
         </DetailEditModal>
@@ -360,8 +638,8 @@ export function EventEditor({fw, updateFw}: {
           <EventFormContent
             evt={newEvent}
             editable={true}
-            attributeDefs={attributeDefs}
-            items={items}
+            characters={characters}
+            gameRules={gameRules}
             onUpdate={(fn) => setNewEvent(fn(newEvent))}
           />
         </DetailEditModal>

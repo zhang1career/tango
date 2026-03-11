@@ -8,8 +8,9 @@ import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {GameRule} from '../schema/game-rule';
 import {admissionCalc} from './AdmissionCalculator';
-import {getBehaviorListLimit} from '../config';
+import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
+import {parseWritebackToActions, hasEntityIsUsedWriteback} from './WritebackExecutor';
 
 const UNAVAILABLE_RESPONSE = '（喔…当前不可用）';
 
@@ -121,4 +122,47 @@ export function executeBehavior(
 
   if (!passed) return { ok: false, response: UNAVAILABLE_RESPONSE };
   return { ok: true, response: b.a };
+}
+
+/** 获取动作标识：t=action 时，取 actionKind 或 q */
+function getActionId(b: GameBehavior): string {
+  const id = (b.actionKind ?? b.q ?? '').trim().toLowerCase();
+  if (id === 'attack' || id === '攻击') return 'battle';
+  return id;
+}
+
+/** 判定行为是否应触发战斗：t=action 且功能模块中存在 key 匹配 actionId，且 key=battle 映射战斗 */
+export function shouldOpenBattle(
+  b: GameBehavior,
+  features: { battle?: unknown } | null
+): boolean {
+  if (b.t !== 'action') return false;
+  const actionId = getActionId(b);
+  if (actionId !== 'battle') return false;
+  return features != null && 'battle' in features && features.battle != null;
+}
+
+/** @deprecated 使用 shouldOpenBattle(b, features)，兼容旧调用 */
+export function isAttackBehavior(b: GameBehavior): boolean {
+  return shouldOpenBattle(b, { battle: {} });
+}
+
+/** 战斗结束后执行回写（使用累计数值），并标记行为已用 */
+export function executeBattleWriteback(
+  behaviorId: string,
+  behavior: GameBehavior,
+  battleResult: { rounds: number; damageDealt: number; damageTaken: number; won: boolean },
+  ctx: BehaviorInteractionContext
+): void {
+  ctx.usedBehaviorIds.add(behaviorId);
+  if (hasEntityIsUsedWriteback(behavior.writebackExpr ?? '')) {
+    ctx.usedBehaviorIds.add(behaviorId);
+  }
+  const state = ctx.getState();
+  const actions = parseWritebackToActions(behavior.writebackExpr ?? '', {
+    variables: state.variables,
+    reputation: state.reputation,
+    battle: battleResult,
+  });
+  if (actions) ctx.applyActions(actions);
 }

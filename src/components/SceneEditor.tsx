@@ -200,7 +200,7 @@ function SceneFormContent({
         readOnly={!editable || !onUpdate}
         label="规则"
       />
-      <FieldRow label="条件" value={scene.conditions ?? ''} editable={editable && !!onUpdate}>
+      <FieldRow label="条件表达式" value={scene.conditions ?? ''} editable={editable && !!onUpdate}>
         <input
           value={scene.conditions ?? ''}
           onChange={(e) => onUpdate!((s) => ({...s, conditions: e.target.value || undefined}))}

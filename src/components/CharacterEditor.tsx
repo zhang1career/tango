@@ -4,7 +4,7 @@
 
 import React, {useCallback, useEffect, useState} from 'react';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
-import {getAIGCApiKey, getAIGCApiUrl} from '../config';
+import {getAIGCApiKey, getAIGCApiUrl} from '@/config';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
@@ -13,6 +13,7 @@ import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {AttributesEditorCard} from './cards/AttributesEditorCard';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {formatJsonCompact} from '../utils/json-format';
+import {assignBehaviorIds} from '../utils/behavior-ids';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 
@@ -205,40 +206,17 @@ async function generateBehaviorsFromAI(
     }));
 }
 
-/** 获取下一批行为 id：<charId>.b_100, .b_200, ...（以点分隔级联 id） */
-function assignBehaviorIds(
-  charId: string,
-  existing: GameBehavior[],
-  count: number
-): string[] {
-  const reDot = new RegExp(`^${escapeRegExp(charId)}\\.b_(\\d+)$`);
-  const reUnderscore = new RegExp(`^${escapeRegExp(charId)}_b_(\\d+)$`);
-  let max = 0;
-  for (const b of existing) {
-    const m = b.id.match(reDot) ?? b.id.match(reUnderscore);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  const ids: string[] = [];
-  for (let i = 0; i < count; i++) {
-    max += 100;
-    ids.push(`${charId}.b_${max}`);
-  }
-  return ids;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function uuid(): string {
   return crypto.randomUUID?.() ?? `b_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function DialogueLibrarySection({
+  ownerId,
   lib,
   editable,
   onUpdate,
 }: {
+  ownerId: string;
   lib: GameBehavior[];
   editable: boolean;
   onUpdate?: (lib: GameBehavior[]) => void;
@@ -263,7 +241,8 @@ function DialogueLibrarySection({
     );
   }
   const add = () => {
-    onUpdate([...lib, {id: uuid(), q: '', a: '', t: 'dialog'}]);
+    const [id] = assignBehaviorIds(ownerId, lib, 1);
+    onUpdate([...lib, {id, q: '', a: '', t: 'dialog'}]);
   };
   const remove = (i: number) => {
     onUpdate(lib.filter((_, idx) => idx !== i));
@@ -310,6 +289,24 @@ function DialogueLibrarySection({
               <option value="action">动作</option>
             </select>
           </div>
+          {(b.t ?? 'dialog') === 'action' && (
+            <div style={styles.row}>
+              <label style={styles.label}>动作类型</label>
+              <select
+                value={b.actionKind ?? ''}
+                onChange={(e) =>
+                  update(i, (x) => ({
+                    ...x,
+                    actionKind: (e.target.value || undefined) as import('../schema/game-behavior').ActionKind | undefined,
+                  }))
+                }
+                style={styles.input}
+              >
+                <option value="">—</option>
+                <option value="battle">战斗</option>
+              </select>
+            </div>
+          )}
           <div style={styles.row}>
             <label style={styles.label}>准入条件 judgeExpr</label>
             <input
@@ -503,6 +500,7 @@ function CharacterFormContent({
         }
       >
         <DialogueLibrarySection
+          ownerId={char.id}
           lib={char.behaviorLibrary ?? []}
           editable={editable && !!onUpdate}
           onUpdate={onUpdate ? (lib) => onUpdate((c) => ({...c, behaviorLibrary: lib.length ? lib : undefined})) : undefined}

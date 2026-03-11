@@ -7,13 +7,19 @@ import {
   type FetchContent,
   GameEngine,
   loadStory,
-  getAvailableBehaviors,
   executeBehavior,
   toBehaviorFullId,
+  shouldOpenBattle,
+  executeBattleWriteback,
+  checkEventAdmission,
+  executeEvent,
+  resumeEventExecution,
   type BehaviorInteractionContext,
+  type PendingEventBattle,
 } from '@/engine';
 import type {GameCharacter} from '@/schema/game-character';
 import type {GameRule} from '@/schema/game-rule';
+import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
 import {resolveMediaUrl} from '@/config';
 import {sanitizePassageContent} from '@/utils/sanitize';
@@ -21,6 +27,8 @@ import {
   BehaviorInteractionModal,
   type BehaviorHistoryEntry,
 } from './BehaviorInteractionModal';
+import {BattleModal, type BattleResult} from './BattleModal';
+import {BattleSettlementModal} from './BattleSettlementModal';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -35,11 +43,26 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [, forceUpdate] = useState(0);
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
-  const [behaviorList, setBehaviorList] = useState<GameBehavior[]>([]);
-  const [lastResponse, setLastResponse] = useState<string | null>(null);
+  const [, setBehaviorList] = useState<GameBehavior[]>([]);
+  const [, setLastResponse] = useState<string | null>(null);
   const [introVisible, setIntroVisible] = useState(false);
   const [behaviorHistory, setBehaviorHistory] = useState<BehaviorHistoryEntry[]>([]);
   const behaviorSeqRef = useRef(0);
+  const [battleOpen, setBattleOpen] = useState(false);
+  const [settlementOpen, setSettlementOpen] = useState(false);
+  const [battleResult, setBattleResult] = useState<BattleResult | null>(null);
+  const [battleSubjectChar, setBattleSubjectChar] = useState<GameCharacter | null>(null);
+  const [battleObjectChar, setBattleObjectChar] = useState<GameCharacter | null>(null);
+  const [pendingBattleBehavior, setPendingBattleBehavior] = useState<{ charId: string; b: GameBehavior } | null>(null);
+  const pendingBattleRef = useRef<{ charId: string; b: GameBehavior } | null>(null);
+  const [featuresConfig, setFeaturesConfig] = useState<{ battle?: { backgroundMusic?: string } } | null>(null);
+  const [events, setEvents] = useState<GameEvent[]>([]);
+  const [eventPhaseReady, setEventPhaseReady] = useState(false);
+  const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
+  const eventPhaseRunRef = useRef<string | null>(null);
+  const [eventMediaOverlay, setEventMediaOverlay] = useState<{ type: 'opening' | 'ending'; url: string; event: GameEvent } | null>(null);
+  const eventBgmRef = useRef<HTMLAudioElement | null>(null);
+  const runEventPhaseRef = useRef<() => void>(() => {});
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const passageContentRef = useRef<HTMLDivElement>(null);
@@ -70,6 +93,24 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     };
   }, [fetchContent]);
 
+  // 加载事件
+  useEffect(() => {
+    const url = import.meta.env.DEV ? '/api/story-events' : '/assets/story-events.json';
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((d: unknown) => setEvents(Array.isArray(d) ? d : []))
+      .catch(() => setEvents([]));
+  }, []);
+
+  // 加载功能板块配置（战斗背景音乐等）
+  useEffect(() => {
+    const url = import.meta.env.DEV ? '/api/story-features' : '/assets/story-features.json';
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((d: { battle?: { backgroundMusic?: string } } | null) => setFeaturesConfig(d ?? null))
+      .catch(() => setFeaturesConfig(null));
+  }, []);
+
   useEffect(() => {
     const el = passageContentRef.current;
     if (!el) return;
@@ -96,12 +137,15 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     return () => intervals.forEach(clearInterval);
   }, [engine?.getState()?.currentPassage?.id]);
 
-  // BGM: play when passage has backgroundMusic and not showing intro overlay
+  // BGM: play when passage has backgroundMusic, intro done, and event phase done (event phase uses event's BGM)
   useEffect(() => {
     const passage = engine?.getState()?.currentPassage;
     const url = passage?.metadata?.backgroundMusic as string | undefined;
     const opening = passage?.metadata?.openingAnimation as string | undefined;
-    const shouldPlay = url && (!opening || introPlayedRef.current.has(passage?.id ?? ''));
+    const shouldPlay =
+      url &&
+      (!opening || introPlayedRef.current.has(passage?.id ?? '')) &&
+      eventPhaseReady;
     const audio = bgmRef.current;
     if (audio) {
       audio.pause();
@@ -115,7 +159,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         audio.play().catch(() => {});
       }
     }
-  }, [engine?.getState()?.currentPassage?.id, introVisible]);
+  }, [engine?.getState()?.currentPassage?.id, introVisible, eventPhaseReady]);
 
   // Set introVisible when entering passage with openingAnimation (first time)
   useEffect(() => {
@@ -134,6 +178,125 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     setIntroVisible(false);
     refresh();
   }, [engine, refresh]);
+
+  const state = engine?.getState();
+  const passage = state?.currentPassage ?? null;
+  const passageId = passage?.id ?? '';
+
+  const buildEvtCtx = useCallback(
+    () => ({
+      events,
+      characters,
+      ruleMap: new Map(rules.map((r) => [r.id, r])),
+      features: featuresConfig,
+      getState: () => {
+        const s = engine!.getState();
+        return { variables: s.variables, inventory: s.inventory, reputation: s.reputation };
+      },
+      applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine!.applyActions(a),
+      usedEventIds: engine!.usedEventIds,
+      usedBehaviorIds: engine!.usedBehaviorIds,
+    }),
+    [engine, events, characters, rules, featuresConfig]
+  );
+
+  const doExecuteEventAndMaybeEnding = useCallback(
+    (evt: GameEvent) => {
+      if (!engine || !passage) return;
+      if (evt.backgroundMusic && eventBgmRef.current) {
+        eventBgmRef.current.src = resolveMediaUrl(evt.backgroundMusic);
+        eventBgmRef.current.loop = true;
+        eventBgmRef.current.play().catch(() => {});
+      }
+      const evtCtx = buildEvtCtx();
+      const result = executeEvent(evt, evtCtx);
+      if (!result.completed && result.pendingBattle) {
+        const { item, behavior } = result.pendingBattle;
+        const subjChar = characters.find((c) => c.id === item.subject);
+        const objChar = characters.find((c) => c.id === (item.object ?? ''));
+        pendingEventBattleRef.current = result.pendingBattle;
+        setBattleSubjectChar(subjChar ?? null);
+        setBattleObjectChar(objChar ?? null);
+        setPendingBattleBehavior({ charId: item.object ?? item.subject, b: behavior });
+        setBattleOpen(true);
+        return;
+      }
+      if (evt.endingAnimation) {
+        setEventMediaOverlay({ type: 'ending', url: evt.endingAnimation, event: evt });
+        return;
+      }
+      runEventPhaseRef.current();
+    },
+    [engine, passage, buildEvtCtx, characters]
+  );
+
+  const runEventPhase = useCallback(() => {
+    if (!engine || !passage || events.length === 0) {
+      if (eventBgmRef.current) {
+        eventBgmRef.current.pause();
+        eventBgmRef.current.src = '';
+      }
+      setEventPhaseReady(true);
+      return;
+    }
+    const eventIds = (passage.metadata?.eventIds as string[] | undefined) ?? [];
+    if (eventIds.length === 0) {
+      if (eventBgmRef.current) {
+        eventBgmRef.current.pause();
+        eventBgmRef.current.src = '';
+      }
+      setEventPhaseReady(true);
+      return;
+    }
+    const evtCtx = buildEvtCtx();
+    for (const eid of eventIds) {
+      const evt = events.find((e) => e.id === eid);
+      if (!evt || !checkEventAdmission(evt, evtCtx)) continue;
+      if (evt.openingAnimation) {
+        setEventMediaOverlay({ type: 'opening', url: evt.openingAnimation, event: evt });
+        return;
+      }
+      doExecuteEventAndMaybeEnding(evt);
+      return;
+    }
+    if (eventBgmRef.current) {
+      eventBgmRef.current.pause();
+      eventBgmRef.current.src = '';
+    }
+    setEventPhaseReady(true);
+  }, [engine, passage, events, buildEvtCtx, doExecuteEventAndMaybeEnding]);
+
+  useEffect(() => {
+    runEventPhaseRef.current = runEventPhase;
+  }, [runEventPhase]);
+
+  const handleEventMediaEnded = useCallback(
+    (overlay: { type: 'opening' | 'ending'; url: string; event: GameEvent }) => {
+      setEventMediaOverlay(null);
+      if (overlay.type === 'opening') {
+      doExecuteEventAndMaybeEnding(overlay.event);
+    } else {
+      if (eventBgmRef.current) {
+        eventBgmRef.current.pause();
+        eventBgmRef.current.src = '';
+      }
+      runEventPhaseRef.current();
+    }
+    refresh();
+  },
+    [doExecuteEventAndMaybeEnding, refresh]
+  );
+
+  useEffect(() => {
+    setEventPhaseReady(false);
+  }, [passageId]);
+
+  useEffect(() => {
+    if (!passage || introVisible) return;
+    if (eventPhaseRunRef.current === passageId) return;
+    eventPhaseRunRef.current = passageId;
+    runEventPhase();
+  }, [passageId, introVisible, runEventPhase]);
 
   if (loading) {
     return (
@@ -158,10 +321,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
 
   if (!engine) return null;
 
-  const state = engine.getState();
   if (!state?.story) return null;
 
-  const passage = state.currentPassage;
   const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
   const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u)).filter(Boolean);
@@ -225,6 +386,21 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   };
 
   const handleExecuteBehavior = (charId: string, b: GameBehavior) => {
+    if (shouldOpenBattle(b, featuresConfig)) {
+      const playerId = (state?.story?.metadata as { playerCharacterId?: string })?.playerCharacterId
+        ?? characters[0]?.id
+        ?? 'player';
+      const playerChar = characters.find((c) => c.id === playerId) ?? characters[0];
+      const enemyChar = characters.find((c) => c.id === charId) ?? null;
+      setBattleSubjectChar(playerChar ?? null);
+      setBattleObjectChar(enemyChar);
+      const pending = { charId, b };
+      setPendingBattleBehavior(pending);
+      pendingBattleRef.current = pending;
+      setBattleOpen(true);
+      setSelectedCharId(null);
+      return;
+    }
     const bid = toBehaviorFullId(charId, b.id);
     const result = executeBehavior(bid, behaviorCtx);
     const seq = behaviorSeqRef.current++;
@@ -234,6 +410,81 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     ]);
     setLastResponse(result.response);
     setBehaviorList([]);
+    refresh();
+  };
+
+  const handleBattleEnd = (result: BattleResult) => {
+    setBattleOpen(false);
+    setBattleResult(result);
+    const pendingEvt = pendingEventBattleRef.current;
+    if (pendingEvt && engine) {
+      pendingEventBattleRef.current = null;
+      setPendingBattleBehavior(null);
+      const evtCtx = {
+        events,
+        characters,
+        ruleMap: new Map(rules.map((r) => [r.id, r])),
+        features: featuresConfig,
+        getState: () => {
+          const s = engine.getState();
+          return { variables: s.variables, inventory: s.inventory, reputation: s.reputation };
+        },
+        applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine.applyActions(a),
+        usedEventIds: engine.usedEventIds,
+        usedBehaviorIds: engine.usedBehaviorIds,
+      };
+      const resumeResult = resumeEventExecution(pendingEvt, result, evtCtx);
+      if (!resumeResult.completed && resumeResult.pendingBattle) {
+        const { item, behavior } = resumeResult.pendingBattle;
+        const subjChar = characters.find((c) => c.id === item.subject);
+        const objChar = characters.find((c) => c.id === (item.object ?? ''));
+        pendingEventBattleRef.current = resumeResult.pendingBattle;
+        setBattleSubjectChar(subjChar ?? null);
+        setBattleObjectChar(objChar ?? null);
+        setPendingBattleBehavior({ charId: item.object ?? item.subject, b: behavior });
+        setBattleOpen(true);
+      } else {
+        const evt = pendingEvt.event;
+        if (evt.endingAnimation) {
+          setEventMediaOverlay({ type: 'ending', url: evt.endingAnimation, event: evt });
+        } else {
+          if (eventBgmRef.current) {
+            eventBgmRef.current.pause();
+            eventBgmRef.current.src = '';
+          }
+          runEventPhaseRef.current();
+        }
+      }
+      refresh();
+      setSettlementOpen(true);
+      return;
+    }
+    const pending = pendingBattleRef.current;
+    pendingBattleRef.current = null;
+    setPendingBattleBehavior(null);
+    if (pending && engine) {
+      const bid = toBehaviorFullId(pending.charId, pending.b.id);
+      const ctx: BehaviorInteractionContext = {
+        characters,
+        ruleMap: new Map(rules.map((r) => [r.id, r])),
+        getState: () => {
+          const s = engine.getState();
+          return { variables: s.variables, inventory: s.inventory, reputation: s.reputation };
+        },
+        applyActions: (actions) => engine.applyActions(actions),
+        usedBehaviorIds: engine.usedBehaviorIds,
+      };
+      executeBattleWriteback(bid, pending.b, result, ctx);
+      refresh();
+    }
+    setSettlementOpen(true);
+  };
+
+  const handleSettlementClose = () => {
+    setSettlementOpen(false);
+    setBattleResult(null);
+    setBattleSubjectChar(null);
+    setBattleObjectChar(null);
     refresh();
   };
 
@@ -264,6 +515,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         </aside>
       )}
 
+      <audio ref={eventBgmRef} loop style={{display: 'none'}} />
       <main style={styles.scroll}>
         {passage && (
           <>
@@ -279,7 +531,19 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                 />
               </div>
             )}
-            {!introVisible && (
+            {eventMediaOverlay && (
+              <div style={overlayStyles.overlay}>
+                <video
+                  src={resolveMediaUrl(eventMediaOverlay.url)}
+                  autoPlay
+                  muted
+                  playsInline
+                  onEnded={() => handleEventMediaEnded(eventMediaOverlay)}
+                  style={overlayStyles.video}
+                />
+              </div>
+            )}
+            {!introVisible && eventPhaseReady && (
               <>
                 <p style={styles.passageName}>{passage.name}</p>
                 <div ref={passageContentRef} className="passage-content">
@@ -374,6 +638,29 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         history={behaviorHistory}
         onExecute={handleExecuteBehavior}
         onClose={handleCloseBehaviorModal}
+      />
+
+      <BattleModal
+        open={battleOpen}
+        subjectChar={battleSubjectChar}
+        objectChar={battleObjectChar}
+        behavior={pendingBattleBehavior?.b ?? null}
+        battleBgm={featuresConfig?.battle?.backgroundMusic}
+        onBattleEnd={handleBattleEnd}
+        onClose={() => {
+          setBattleOpen(false);
+          pendingBattleRef.current = null;
+          setPendingBattleBehavior(null);
+          refresh();
+        }}
+      />
+
+      <BattleSettlementModal
+        open={settlementOpen}
+        result={battleResult}
+        playerName={battleSubjectChar?.name ?? '玩家'}
+        enemyName={battleObjectChar?.name ?? '敌人'}
+        onClose={handleSettlementClose}
       />
     </div>
   );
