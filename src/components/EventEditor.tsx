@@ -9,6 +9,7 @@ import {AttributesEditorCard} from './cards/AttributesEditorCard';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
+import {MediaUrlField} from './ui/MediaFields';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -120,6 +121,15 @@ function EventFormContent({evt, editable, attributeDefs, items, onUpdate}: Event
         {evt.trigger === 'conditional' && evt.condition && (
           <p style={{margin: '0 0 8px'}}><strong>触发条件：</strong>{evt.condition}</p>
         )}
+        {evt.openingAnimation && (
+          <p style={{margin: '0 0 8px'}}><strong>开场动画：</strong>{evt.openingAnimation}</p>
+        )}
+        {evt.endingAnimation && (
+          <p style={{margin: '0 0 8px'}}><strong>终场动画：</strong>{evt.endingAnimation}</p>
+        )}
+        {evt.backgroundMusic && (
+          <p style={{margin: '0 0 8px'}}><strong>背景音乐：</strong>{evt.backgroundMusic}</p>
+        )}
         {evt.actions && (Object.keys(evt.actions).length > 0 || evt.actions.give || evt.actions.take) && (
           <p style={{margin: '0 0 8px'}}><strong>计算规则：</strong>{JSON.stringify(evt.actions)}</p>
         )}
@@ -169,6 +179,24 @@ function EventFormContent({evt, editable, attributeDefs, items, onUpdate}: Event
           />
         </div>
       )}
+      <MediaUrlField
+        label="开场动画"
+        value={evt.openingAnimation}
+        onChange={(v) => onUpdate((c) => ({...c, openingAnimation: v}))}
+        editable={editable && !!onUpdate}
+      />
+      <MediaUrlField
+        label="终场动画"
+        value={evt.endingAnimation}
+        onChange={(v) => onUpdate((c) => ({...c, endingAnimation: v}))}
+        editable={editable && !!onUpdate}
+      />
+      <MediaUrlField
+        label="背景音乐"
+        value={evt.backgroundMusic}
+        onChange={(v) => onUpdate((c) => ({...c, backgroundMusic: v}))}
+        editable={editable && !!onUpdate}
+      />
       <AttributesEditorCard
         attributeDefs={attributeDefs}
         actions={evt.actions}

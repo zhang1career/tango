@@ -19,4 +19,10 @@ export interface GameEvent {
   actions?: FrameworkStateActions;
   /** 是否已使用（通用字段） */
   is_used?: boolean;
+  /** 开场动画 URL */
+  openingAnimation?: string;
+  /** 终场动画 URL */
+  endingAnimation?: string;
+  /** 背景音乐 URL */
+  backgroundMusic?: string;
 }

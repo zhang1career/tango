@@ -37,4 +37,10 @@ export interface GameScene {
   conditions?: string;
   /** 是否已使用（通用字段，用于 only_once 等规则） */
   is_used?: boolean;
+  /** 开场动画 URL（视频） */
+  openingAnimation?: string;
+  /** 配图列表（支持轮播） */
+  images?: string[];
+  /** 背景音乐 URL */
+  backgroundMusic?: string;
 }

@@ -2,8 +2,10 @@
  * Twee 3 格式解析器 - 兼容 Twine
  * 参考: https://github.com/iftechfoundation/twine-specs/blob/master/twee-3-specification.md
  * 扩展: 条件链接、StoryData、passage metadata、Sugarcube 语法（<<if>>、<<set>>、[[link][setter]]）
+ * 多媒体: <<image>>、<<audio>>、<<video>> 宏展开，及 HTML <img>/<audio>/<video> 的 src 解析
  */
 
+import {resolveMediaUrl} from '@/config';
 import type {Passage, PassageLink, PassageStateActions, Story} from '@/types';
 
 const PASSAGE_HEADER_RE = /^::\s*(.+?)(?:\s+\[([^\]]*)])?(?:\s*(\{.*}))?$/;
@@ -61,13 +63,82 @@ function parseSetterValue(s: string): string | number | boolean | undefined {
   return s;
 }
 
+/** 展开 SugarCube 媒体宏为 HTML，并解析媒体 URL */
+function expandMediaMacros(text: string): string {
+  let out = text;
+  // <<image "path">> 或 <<image "path" "alt">> 或 <<image "path" alt="x" width="400">>
+  out = out.replace(/<<image\s+([^>]+)>>/gi, (_, args) => {
+    const pathMatch = args.match(/["']([^"']+)["']/);
+    const path = pathMatch ? pathMatch[1] : args.trim().split(/\s+/)[0] || '';
+    const resolved = resolveMediaUrl(path);
+    const altMatch = args.match(/(?:alt|title)\s*=\s*["']([^"']*)["']/i) || args.match(/["']([^"']+)["']\s*["']([^"']*)["']/);
+    const alt = altMatch ? (altMatch[2] ?? altMatch[1]) : '';
+    const widthMatch = args.match(/(?:width|w)\s*=\s*["']?([^\s"'>]+)["']?/i);
+    const heightMatch = args.match(/(?:height|h)\s*=\s*["']?([^\s"'>]+)["']?/i);
+    const attrs = [`src="${resolved}"`];
+    if (alt) attrs.push(`alt="${alt.replace(/"/g, '&quot;')}"`);
+    if (widthMatch) attrs.push(`width="${widthMatch[1]}"`);
+    if (heightMatch) attrs.push(`height="${heightMatch[1]}"`);
+    return `<img ${attrs.join(' ')}>`;
+  });
+  // <<audio "path" play [loop] [muted]>>
+  out = out.replace(/<<audio\s+([^>]+)>>/gi, (_, args) => {
+    const pathMatch = args.match(/["']([^"']+)["']/);
+    const path = pathMatch ? pathMatch[1] : '';
+    const resolved = resolveMediaUrl(path);
+    const rest = args.slice(pathMatch ? pathMatch[0].length : 0).toLowerCase();
+    const attrs = ['src="' + resolved + '"'];
+    if (/\bplay\b/.test(rest)) attrs.push('autoplay');
+    if (/\bloop\b/.test(rest)) attrs.push('loop');
+    if (/\bmuted\b/.test(rest)) attrs.push('muted');
+    if (/\bcontrols\b/.test(rest)) attrs.push('controls');
+    return `<audio ${attrs.join(' ')}>`;
+  });
+  // <<carousel "url1" "url2" ...>> - TA 轮播，多图切换
+  out = out.replace(/<<carousel\s+([^>]+)>>/gi, (_, args) => {
+    const urls: string[] = [];
+    const re = /["']([^"']+)["']/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(args)) !== null) urls.push(resolveMediaUrl(m[1]));
+    if (urls.length === 0) return '';
+    const json = JSON.stringify(urls);
+    return `<div class="media-carousel" data-images="${json.replace(/"/g, '&quot;')}"><img src="${urls[0]}" alt=""></div>`;
+  });
+
+  // <<video "path" [autoplay] [loop] [muted] [controls]>>
+  out = out.replace(/<<video\s+([^>]+)>>/gi, (_, args) => {
+    const pathMatch = args.match(/["']([^"']+)["']/);
+    const path = pathMatch ? pathMatch[1] : '';
+    const resolved = resolveMediaUrl(path);
+    const rest = args.slice(pathMatch ? pathMatch[0].length : 0).toLowerCase();
+    const attrs = ['src="' + resolved + '"'];
+    if (/\bautoplay\b/.test(rest)) attrs.push('autoplay');
+    if (/\bloop\b/.test(rest)) attrs.push('loop');
+    if (/\bmuted\b/.test(rest)) attrs.push('muted');
+    if (/\bcontrols\b/.test(rest)) attrs.push('controls');
+    return `<video ${attrs.join(' ')}>`;
+  });
+  return out;
+}
+
+/** 将 HTML 中 img/audio/video 的 src 相对路径解析为带 base 的 URL */
+function resolveMediaSrcInHtml(text: string): string {
+  return text.replace(
+    /<(img|audio|video)([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi,
+    (_, tag, before, src, after) => {
+      const resolved = resolveMediaUrl(src);
+      return `<${tag}${before} src="${resolved}"${after}>`;
+    }
+  );
+}
+
 /** Sugarcube 段落内容解析：提取链接（含 setter、<<if>>）、<<set>>/<<run>> 等宏 */
 function parseSugarcubeContent(rawContent: string): {
   text: string;
   links: Array<{ displayText: string; passageName: string; condition?: string; linkActions?: PassageStateActions }>;
   metadataMerge: Partial<PassageStateActions>;
 } {
-  let text = rawContent;
+  let text = expandMediaMacros(rawContent);
   const links: Array<{
     displayText: string;
     passageName: string;
@@ -188,6 +259,7 @@ function parseSugarcubeContent(rawContent: string): {
   if (takeItems.length) metadataMerge.take = takeItems.length === 1 ? takeItems[0] : takeItems;
   if (Object.keys(repDeltas).length) metadataMerge.rep = repDeltas;
 
+  text = resolveMediaSrcInHtml(text);
   return {text, links, metadataMerge};
 }
 

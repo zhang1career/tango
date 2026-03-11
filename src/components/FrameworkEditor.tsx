@@ -49,6 +49,21 @@ function migrateFramework(parsed: StoryFramework): void {
   parsed.scenes = scenes;
 }
 
+/**
+ * 从当前场景构建 passage 的权威元数据（与 characterIds 逻辑一致：始终以场景当前值为准，删除则覆盖掉旧值）
+ * openingAnimation、images、backgroundMusic、characterIds 等由场景决定的字段，空时设为 undefined 以移除
+ */
+function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Record<string, unknown> {
+  const m: Record<string, unknown> = {};
+  const ids = scene.characterIds?.filter((id) => id !== fw.playerCharacterId);
+  m.characterIds = ids?.length ? ids : undefined;
+  m.openingAnimation = scene.openingAnimation || undefined;
+  const validImages = scene.images?.filter((u) => u?.trim());
+  m.images = validImages?.length ? validImages.map((u) => u.trim()) : undefined;
+  m.backgroundMusic = scene.backgroundMusic || undefined;
+  return m;
+}
+
 function truncatePathForDisplay(name: string, maxLen = 28): string {
   if (!name) return '';
   if (name.length <= maxLen) return name;
@@ -465,7 +480,12 @@ export function FrameworkEditor({
             if (newText != null) p.text = newText;
             const canon = fullStory.passages.get(pid);
             if (canon?.links?.length) p.links = canon.links;
-            if (canon?.metadata) p.metadata = { ...p.metadata, ...canon.metadata };
+            const baseMeta = { ...(p.metadata ?? {}) } as Record<string, unknown>;
+            if (canon?.metadata) Object.assign(baseMeta, canon.metadata);
+            const entry = ch.sceneEntries.find((e) => toPassageId(chi, e.sceneId) === pid);
+            const scene = entry ? sceneMapLocal.get(entry.sceneId) : undefined;
+            if (scene) Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
+            p.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
           }
         }
         story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
@@ -549,11 +569,17 @@ export function FrameworkEditor({
         if (existing) {
           existing.text = text;
           existing.links = template?.links ?? existing.links;
-          if (template?.metadata) existing.metadata = { ...existing.metadata, ...template.metadata };
+          const baseMeta = { ...existing.metadata } as Record<string, unknown>;
+          if (template?.metadata) Object.assign(baseMeta, template.metadata);
+          Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
+          existing.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
           story.passages.set(pid, existing);
           if (nameId !== pid) story.passages.delete(nameId);
         } else if (template) {
           template.text = text;
+          const baseMeta = { ...(template.metadata ?? {}) } as Record<string, unknown>;
+          Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
+          template.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
           story.passages.set(pid, template);
         }
         story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
