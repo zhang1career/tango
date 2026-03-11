@@ -28,6 +28,17 @@ export function getBehaviorListLimit(): number {
   return Number.isNaN(n) || n < 1 ? 10 : n;
 }
 
+/** 行为交互历史：弹窗打开时初始显示条数（与 VITE_BEHAVIOR_LIST_LIMIT 一致） */
+export function getBehaviorHistoryInitialCount(): number {
+  return getBehaviorListLimit();
+}
+
+/** 行为交互历史：向上滚动加载更多时，每页加载条数 */
+export function getBehaviorHistoryPageSize(): number {
+  const n = Number(env.VITE_BEHAVIOR_HISTORY_PAGE_SIZE);
+  return Number.isNaN(n) || n < 1 ? getBehaviorListLimit() : n;
+}
+
 /** 人物数据请求 URL（dev 走 api，prod 走静态资源） */
 export function getCharactersFetchUrl(): string {
   return import.meta.env.DEV ? '/api/story-characters' : (env.VITE_CHARACTERS_PATH ?? 'assets/story-characters.json');

@@ -17,6 +17,10 @@ import type {GameRule} from '@/schema/game-rule';
 import type {GameBehavior} from '@/schema/game-behavior';
 import {resolveMediaUrl} from '@/config';
 import {sanitizePassageContent} from '@/utils/sanitize';
+import {
+  BehaviorInteractionModal,
+  type BehaviorHistoryEntry,
+} from './BehaviorInteractionModal';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -34,6 +38,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [behaviorList, setBehaviorList] = useState<GameBehavior[]>([]);
   const [lastResponse, setLastResponse] = useState<string | null>(null);
   const [introVisible, setIntroVisible] = useState(false);
+  const [behaviorHistory, setBehaviorHistory] = useState<BehaviorHistoryEntry[]>([]);
+  const behaviorSeqRef = useRef(0);
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const passageContentRef = useRef<HTMLDivElement>(null);
@@ -197,15 +203,23 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     setSelectedCharId(null);
     setBehaviorList([]);
     setLastResponse(null);
+    setBehaviorHistory([]);
+    behaviorSeqRef.current = 0;
     introPlayedRef.current.clear();
     engine.restart();
     refresh();
   };
 
   const handleSelectCharacter = (charId: string) => {
-    const list = getAvailableBehaviors(charId, behaviorCtx);
     setSelectedCharId(charId);
-    setBehaviorList(list);
+    setBehaviorList([]);
+    setLastResponse(null);
+    refresh();
+  };
+
+  const handleCloseBehaviorModal = () => {
+    setSelectedCharId(null);
+    setBehaviorList([]);
     setLastResponse(null);
     refresh();
   };
@@ -213,17 +227,13 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const handleExecuteBehavior = (charId: string, b: GameBehavior) => {
     const bid = toBehaviorFullId(charId, b.id);
     const result = executeBehavior(bid, behaviorCtx);
+    const seq = behaviorSeqRef.current++;
+    setBehaviorHistory((prev) => [
+      ...prev,
+      {charId, behaviorId: b.id, q: b.q, response: result.response, seq},
+    ]);
     setLastResponse(result.response);
     setBehaviorList([]);
-    refresh();
-  };
-
-  const handleClickResponse = () => {
-    if (selectedCharId) {
-      const list = getAvailableBehaviors(selectedCharId, behaviorCtx);
-      setBehaviorList(list);
-      setLastResponse(null);
-    }
     refresh();
   };
 
@@ -318,35 +328,6 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                     );
                   })}
                 </div>
-                {selectedCharId && (
-                  lastResponse ? (
-                    <p
-                      style={styles.responseText}
-                      onClick={handleClickResponse}
-                      onKeyDown={(e) => e.key === 'Enter' && handleClickResponse()}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      {lastResponse}
-                    </p>
-                  ) : behaviorList.length > 0 ? (
-                    <ul style={styles.behaviorList}>
-                      {behaviorList.map((b) => (
-                        <li key={b.id}>
-                          <button
-                            type="button"
-                            style={styles.behaviorButton}
-                            onClick={() => handleExecuteBehavior(selectedCharId, b)}
-                          >
-                            {b.t === 'action' ? `(${b.q})` : b.q}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p style={styles.emptyHint}>暂无可用行为</p>
-                  )
-                )}
               </section>
             )}
 
@@ -384,6 +365,16 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
           重新开始
         </button>
       </footer>
+
+      <BehaviorInteractionModal
+        open={!!selectedCharId}
+        character={selectedCharId ? characters.find((c) => c.id === selectedCharId) ?? null : null}
+        characters={characters}
+        behaviorCtx={behaviorCtx}
+        history={behaviorHistory}
+        onExecute={handleExecuteBehavior}
+        onClose={handleCloseBehaviorModal}
+      />
     </div>
   );
 }
