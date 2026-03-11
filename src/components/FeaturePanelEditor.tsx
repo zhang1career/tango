@@ -62,13 +62,11 @@ export function FeaturePanelEditor() {
     setFeatures((prev) => fn(prev));
   }, []);
 
-  const handleSave = useCallback(async () => {
+  const handleSaveBattle = useCallback(async () => {
     setSaving(true);
     const result = await saveFeatures(features);
     setSaving(false);
-    if (result.ok) {
-      alert('已保存');
-    } else {
+    if (!result.ok) {
       alert(`保存失败: ${result.error}`);
     }
   }, [features]);
@@ -85,13 +83,15 @@ export function FeaturePanelEditor() {
     <div style={styles.container}>
       <div style={styles.header}>
         <h1 style={styles.title}>功能板块</h1>
-        <button type="button" style={styles.btn} onClick={handleSave} disabled={saving}>
-          {saving ? '保存中...' : '保存'}
-        </button>
       </div>
 
       <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 16, color: '#a78bfa', marginBottom: 16 }}>战斗</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>战斗</h2>
+          <button type="button" style={styles.btn} onClick={handleSaveBattle} disabled={saving}>
+            {saving ? '保存中...' : '保存'}
+          </button>
+        </div>
         <div
           style={{
             padding: 20,

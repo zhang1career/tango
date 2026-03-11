@@ -9,12 +9,14 @@ import type {GameRule} from '../schema/game-rule';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {RuntimeState} from '@/types';
 import {admissionCalc} from './AdmissionCalculator';
-import {isAttackBehavior, executeBattleWriteback} from './BehaviorInteraction';
+import {shouldOpenBattle, executeBattleWriteback} from './BehaviorInteraction';
 
 export interface EventExecutionContext {
   events: GameEvent[];
   characters: GameCharacter[];
   ruleMap: Map<string, GameRule>;
+  /** 功能模块配置，用于动作类型与功能的映射 */
+  features?: { battle?: unknown } | null;
   getState: () => RuntimeState;
   applyActions: (actions: {
     set?: Record<string, string | number | boolean>;
@@ -78,7 +80,7 @@ export function executeEvent(
     const contents = item.contents ?? [];
     for (let ci = 0; ci < contents.length; ci++) {
       const behavior = contents[ci];
-      if (isAttackBehavior(behavior)) {
+      if (shouldOpenBattle(behavior, ctx.features ?? null)) {
         return {
           ok: true,
           completed: false,
@@ -158,7 +160,7 @@ export function resumeEventExecution(
   const contents = item.contents ?? [];
   for (let ci = pending.contentIndex + 1; ci < contents.length; ci++) {
     const b = contents[ci];
-    if (isAttackBehavior(b)) {
+    if (shouldOpenBattle(b, ctx.features ?? null)) {
       return { ok: true, completed: false, pendingBattle: { ...pending, contentIndex: ci, behavior: b } };
     }
     if (!runNonAttackBehavior(b, item, ctx)) break;
@@ -169,7 +171,7 @@ export function resumeEventExecution(
     const nextContents = nextItem.contents ?? [];
     for (let ci = 0; ci < nextContents.length; ci++) {
       const b = nextContents[ci];
-      if (isAttackBehavior(b)) {
+      if (shouldOpenBattle(b, ctx.features ?? null)) {
         return {
           ok: true,
           completed: false,

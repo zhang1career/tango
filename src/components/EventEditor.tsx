@@ -213,7 +213,7 @@ function EventBehaviorContentsEditor({
                 style={styles.input}
               >
                 <option value="">—</option>
-                <option value="attack">攻击（触发战斗）</option>
+                <option value="battle">战斗</option>
               </select>
             </div>
           )}

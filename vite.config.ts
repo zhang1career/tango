@@ -103,8 +103,8 @@ export default defineConfig(({ mode }) => {
             try {
               const outPath = resolve(process.cwd(), 'assets/story-items.json');
               if (!existsSync(outPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'not found' }));
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end('[]');
                 return;
               }
               const data = readFileSync(outPath, 'utf-8');

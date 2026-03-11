@@ -2,8 +2,8 @@
  * 行为 Schema - 对话/动作的基本交互单元
  */
 
-/** 动作类型：t=action 时的具体动作种类 */
-export type ActionKind = 'attack';
+/** 动作类型：t=action 时使用，对应功能模块(story-features.json)中的 key，如 battle=战斗 */
+export type ActionKind = string;
 
 /** 行为定义 */
 export interface GameBehavior {

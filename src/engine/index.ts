@@ -8,6 +8,7 @@ export {
   getAvailableBehaviors,
   executeBehavior,
   toBehaviorFullId,
+  shouldOpenBattle,
   isAttackBehavior,
   executeBattleWriteback,
   type BehaviorInteractionContext,

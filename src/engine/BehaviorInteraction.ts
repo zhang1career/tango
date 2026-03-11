@@ -124,12 +124,27 @@ export function executeBehavior(
   return { ok: true, response: b.a };
 }
 
-/** 判定行为是否为攻击动作（触发战斗） */
-export function isAttackBehavior(b: GameBehavior): boolean {
+/** 获取动作标识：t=action 时，取 actionKind 或 q */
+function getActionId(b: GameBehavior): string {
+  const id = (b.actionKind ?? b.q ?? '').trim().toLowerCase();
+  if (id === 'attack' || id === '攻击') return 'battle';
+  return id;
+}
+
+/** 判定行为是否应触发战斗：t=action 且功能模块中存在 key 匹配 actionId，且 key=battle 映射战斗 */
+export function shouldOpenBattle(
+  b: GameBehavior,
+  features: { battle?: unknown } | null
+): boolean {
   if (b.t !== 'action') return false;
-  if (b.actionKind === 'attack') return true;
-  const q = (b.q || '').trim().toLowerCase();
-  return q === 'attack' || q === '攻击';
+  const actionId = getActionId(b);
+  if (actionId !== 'battle') return false;
+  return features != null && 'battle' in features && features.battle != null;
+}
+
+/** @deprecated 使用 shouldOpenBattle(b, features)，兼容旧调用 */
+export function isAttackBehavior(b: GameBehavior): boolean {
+  return shouldOpenBattle(b, { battle: {} });
 }
 
 /** 战斗结束后执行回写（使用累计数值），并标记行为已用 */

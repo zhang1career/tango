@@ -38,7 +38,9 @@ export function formatJsonCompact(data: unknown): string {
     }
 
     if (typeof val === 'object') {
-      const entries = Object.entries(val as Record<string, unknown>);
+      const entries = Object.entries(val as Record<string, unknown>).filter(
+        ([, v]) => v !== undefined
+      );
       if (entries.length === 0) return '{}';
       const pad = indent(depth + 1);
       const lines = entries.map(([k, v]) => pad + JSON.stringify(k) + ': ' + fmt(v, depth + 1));

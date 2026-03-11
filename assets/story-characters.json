@@ -4,7 +4,7 @@
     "name": "费穆",
     "behaviorLibrary": [
       {"id":"feimu_d1","q":"费公对当前朝局有何看法？","a":"朝局纷乱，唯有整肃吏治，方能还百姓一个清明。","t":"dialog"},
-      {"id":"feimu.b_100","q":"攻击","a":"","t":"action","actionKind":"attack","writebackExpr":"$entity.is_used = true"}
+      {"id":"feimu.b_100","q":"攻击","a":"","t":"action","actionKind":"battle","writebackExpr":"$entity.is_used = true"}
     ],
     "description": "字朗兴，代人。性情刚烈贞烈，有勇壮气概，涉猎经史，崇尚功业名声。费穆作为镇守陕州的守将，在尔朱荣大军东下时不仅选择投降，更协助清理沿途障碍，因此迅速融入了以尔朱世隆为核心的尔朱氏政治集团。费穆作为河阴之变策划者之一，与尔朱荣关系密切。",
     "attributes": {
