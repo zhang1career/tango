@@ -8,6 +8,16 @@ export {
   getAvailableBehaviors,
   executeBehavior,
   toBehaviorFullId,
+  isAttackBehavior,
+  executeBattleWriteback,
   type BehaviorInteractionContext,
 } from './BehaviorInteraction';
+export {
+  checkEventAdmission,
+  executeEvent,
+  resumeEventExecution,
+  type EventExecutionContext,
+  type EventExecuteResult,
+  type PendingEventBattle,
+} from './EventExecutor';
 export {parseCascadedId} from '../utils/cascadedId';

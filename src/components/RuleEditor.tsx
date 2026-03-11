@@ -78,7 +78,7 @@ function RuleFormContent({rule, editable, onUpdate}: RuleFormProps) {
           placeholder="仅一次"
         />
       </FieldRow>
-      <FieldRow label="准入表达式" value={rule.judgeExpr} editable={editable && !!onUpdate}>
+      <FieldRow label="条件表达式" value={rule.judgeExpr} editable={editable && !!onUpdate}>
         <textarea
           value={rule.judgeExpr}
           onChange={(e) => onUpdate!((r) => ({...r, judgeExpr: e.target.value}))}

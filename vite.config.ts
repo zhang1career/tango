@@ -287,6 +287,44 @@ export default defineConfig(({ mode }) => {
       },
     },
     {
+      name: 'story-features',
+      configureServer(server) {
+        server.middlewares.use('/api/story-features', (req, res, next) => {
+          const outPath = resolve(process.cwd(), 'assets/story-features.json');
+          if (req.method === 'GET') {
+            try {
+              if (!existsSync(outPath)) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ battle: {} }));
+                return;
+              }
+              const data = readFileSync(outPath, 'utf-8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(data);
+            } catch (e) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String(e) }));
+            }
+            return;
+          }
+          if (req.method !== 'POST') return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const features = JSON.parse(body);
+              writeFileSync(outPath, formatJsonCompact(features), 'utf-8');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true }));
+            } catch (e) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String(e) }));
+            }
+          });
+        });
+      },
+    },
+    {
       name: 'game-content',
       configureServer(server) {
         server.middlewares.use('/api/game-content', (req, res, next) => {
@@ -314,7 +352,7 @@ export default defineConfig(({ mode }) => {
         const distAssets = resolve(outDir, 'assets');
         if (existsSync(assetsDir)) {
           mkdirSync(distAssets, { recursive: true });
-          for (const f of ['story.tw', 'story-characters.json', 'story-rules.json']) {
+          for (const f of ['story.tw', 'story-characters.json', 'story-rules.json', 'story-features.json', 'story-events.json']) {
             const src = resolve(assetsDir, f);
             if (existsSync(src)) copyFileSync(src, resolve(distAssets, f));
           }

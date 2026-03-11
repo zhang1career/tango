@@ -44,7 +44,7 @@ export function MediaUrlField({
         value={value ?? ''}
         onChange={(e) => onChange?.(e.target.value === '' ? undefined : e.target.value)}
         style={styles.input}
-        placeholder={placeholder ?? '相对路径或完整 URL'}
+        placeholder={placeholder ?? '相对路径或 URL'}
       />
     </FieldRow>
   );

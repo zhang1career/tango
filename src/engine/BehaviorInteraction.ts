@@ -10,6 +10,7 @@ import type {GameRule} from '../schema/game-rule';
 import {admissionCalc} from './AdmissionCalculator';
 import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
+import {parseWritebackToActions, hasEntityIsUsedWriteback} from './WritebackExecutor';
 
 const UNAVAILABLE_RESPONSE = '（喔…当前不可用）';
 
@@ -121,4 +122,32 @@ export function executeBehavior(
 
   if (!passed) return { ok: false, response: UNAVAILABLE_RESPONSE };
   return { ok: true, response: b.a };
+}
+
+/** 判定行为是否为攻击动作（触发战斗） */
+export function isAttackBehavior(b: GameBehavior): boolean {
+  if (b.t !== 'action') return false;
+  if (b.actionKind === 'attack') return true;
+  const q = (b.q || '').trim().toLowerCase();
+  return q === 'attack' || q === '攻击';
+}
+
+/** 战斗结束后执行回写（使用累计数值），并标记行为已用 */
+export function executeBattleWriteback(
+  behaviorId: string,
+  behavior: GameBehavior,
+  battleResult: { rounds: number; damageDealt: number; damageTaken: number; won: boolean },
+  ctx: BehaviorInteractionContext
+): void {
+  ctx.usedBehaviorIds.add(behaviorId);
+  if (hasEntityIsUsedWriteback(behavior.writebackExpr ?? '')) {
+    ctx.usedBehaviorIds.add(behaviorId);
+  }
+  const state = ctx.getState();
+  const actions = parseWritebackToActions(behavior.writebackExpr ?? '', {
+    variables: state.variables,
+    reputation: state.reputation,
+    battle: battleResult,
+  });
+  if (actions) ctx.applyActions(actions);
 }

@@ -1,11 +1,24 @@
 /**
  * 回写表达式执行器
- * 支持: $entity.is_used = true, $var.xxx = v, $rep.xxx = n, give("x"), take("x")
+ * 支持: $entity.is_used = true, $var.xxx = v, $rep.xxx = n, $battle.xxx, give("x"), take("x")
  */
 
 import type {PassageStateActions} from '@/types';
 
-function parseValue(s: string, ctx: { variables: Record<string, unknown>; reputation: Record<string, number> }): string | number | boolean | undefined {
+export interface BattleContext {
+  rounds: number;
+  damageDealt: number;
+  damageTaken: number;
+  won: boolean;
+}
+
+type WritebackCtx = {
+  variables: Record<string, unknown>;
+  reputation: Record<string, number>;
+  battle?: BattleContext;
+};
+
+function parseValue(s: string, ctx: WritebackCtx): string | number | boolean | undefined {
   const t = s.trim();
   if (t === 'true') return true;
   if (t === 'false') return false;
@@ -21,13 +34,22 @@ function parseValue(s: string, ctx: { variables: Record<string, unknown>; reputa
     const delta = Number(repAdd[3]);
     return (ctx.reputation[entity] ?? 0) + delta;
   }
+  // $battle.rounds, $battle.damageDealt, $battle.damageTaken, $battle.won
+  const battleMatch = t.match(/^\$battle\.(rounds|damageDealt|damageTaken|won)$/);
+  if (battleMatch && ctx.battle) {
+    const key = battleMatch[1];
+    if (key === 'rounds') return ctx.battle.rounds;
+    if (key === 'damageDealt') return ctx.battle.damageDealt;
+    if (key === 'damageTaken') return ctx.battle.damageTaken;
+    if (key === 'won') return ctx.battle.won;
+  }
   return undefined;
 }
 
-/** 将 writebackExpr 解析为 PassageStateActions */
+/** 将 writebackExpr 解析为 PassageStateActions，可选传入 battle 上下文 */
 export function parseWritebackToActions(
   expr: string,
-  ctx: { variables: Record<string, unknown>; reputation: Record<string, number> }
+  ctx: WritebackCtx
 ): PassageStateActions | null {
   const actions: PassageStateActions = {};
   const statements = expr.split(/[;\n]/).map((s) => s.trim()).filter(Boolean);
