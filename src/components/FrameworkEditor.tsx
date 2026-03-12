@@ -4,50 +4,22 @@
 
 import React, {useCallback, useEffect, useState} from 'react';
 import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
-import {flattenSceneEntries, fromPersistedFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
+import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
+import {useNotification} from '@/context/NotificationContext';
+import {useAuth} from '@/context/AuthContext';
 import {frameworkToStory, parseTwee, serializeStorySugarcube} from '@/engine';
 
 import {formatJsonCompact} from '../utils/json-format';
+import {paginatePassageText, removeSceneSubPassages} from '../utils/paginate-passage';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
-
-function migrateFramework(parsed: StoryFramework): void {
-  const chapters = parsed.chapters ?? [];
-  const scenes = parsed.scenes ?? [];
-  const sceneMap = new Map(scenes.map((s) => [s.id, s]));
-  for (const ch of chapters) {
-    const old = ch as unknown as { scenes?: Array<{ id: string; summary?: string; name?: string }> };
-    if (Array.isArray(old.scenes) && !ch.sceneEntries) {
-      ch.sceneEntries = old.scenes.map((s) => ({sceneId: s.id}));
-      for (const s of old.scenes) {
-        if (!sceneMap.has(s.id)) {
-          scenes.push({
-            id: s.id,
-            name: s.name ?? s.id,
-            summary: s.summary ?? '',
-          });
-          sceneMap.set(s.id, scenes[scenes.length - 1]);
-        }
-      }
-      delete old.scenes;
-    }
-    if (!ch.sceneEntries) ch.sceneEntries = [];
-    // 一个章节与一个场景只能有唯一关系，去重（保留首次出现）
-    const seen = new Set<string>();
-    ch.sceneEntries = ch.sceneEntries.filter((e) => {
-      if (seen.has(e.sceneId)) return false;
-      seen.add(e.sceneId);
-      return true;
-    });
-  }
-  parsed.scenes = scenes;
-}
 
 /**
  * 从当前场景构建 passage 的权威元数据（与 characterIds 逻辑一致：始终以场景当前值为准，删除则覆盖掉旧值）
@@ -92,22 +64,23 @@ function FileHandleButton({
 }
 
 async function preloadListData(
-  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
+  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void,
+  gameId: string
 ): Promise<void> {
   const updates: Array<(d: StoryFramework) => StoryFramework> = [];
   const apis = [
-    {url: '/api/story-characters', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[]},
-    {url: '/api/story-scenes', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameScene[]},
-    {url: '/api/save-story-maps', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameMap[]},
-    {url: '/api/story-events', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameEvent[]},
-    {url: '/api/story-items', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameItem[]},
+    {url: getCharactersFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[]},
+    {url: getScenesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameScene[]},
+    {url: getMapsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameMap[]},
+    {url: getEventsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameEvent[]},
+    {url: getItemsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameItem[]},
     {
-      url: '/api/story-metadata', parse: (d: unknown) => {
+      url: getMetadataFetchUrl(gameId), parse: (d: unknown) => {
         const m = d as { characterAttributes?: unknown };
         return m?.characterAttributes ? ({characterAttributes: m.characterAttributes} as GameMetadata) : undefined;
       }
     },
-    {url: '/api/story-rules', parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
+    {url: getRulesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
   ];
   const keys: (keyof StoryFramework)[] = ['characters', 'scenes', 'maps', 'events', 'items', 'metadata', 'gameRules'];
   for (let i = 0; i < apis.length; i++) {
@@ -172,7 +145,7 @@ function buildChapterContext(
   if (events.length > 0) {
     parts.push(
       '当前事件：',
-      ...events.map((ev) => `  - ${ev.id}：${ev.name}`)
+      ...events.map((ev) => `  - ${ev.id}：${ev.name}${ev.description ? '；描述：' + ev.description : ''}`)
     );
   }
   return parts.join('\n');
@@ -185,7 +158,8 @@ async function generateScenePassageText(
   sceneIndex: number,
   sceneMap: Map<string, GameScene>,
   apiKey: string,
-  apiUrl: string
+  apiUrl: string,
+  wordCount?: number
 ): Promise<string> {
   const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
   const system = `你是一名文字冒险游戏编剧。根据「剧情概要」与上下文生成一段可读的剧情正文。
@@ -208,6 +182,7 @@ async function generateScenePassageText(
 场景：${scene.id}（${scene.name}）
 概要：${scene.summary}
 ${scene.hints ? `写作提示：${scene.hints}` : ''}
+${wordCount != null && wordCount > 0 ? `字数要求：约${wordCount}字` : ''}
 
 请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字）：`;
 
@@ -245,20 +220,26 @@ export function FrameworkEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
+  const {gameId, setGameId, refetchGameIds} = useGameId();
+  const {addNotification} = useNotification();
+  const {checkAuthForSave} = useAuth();
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [expandedCh, setExpandedCh] = useState<Set<string>>(new Set());
   const [expandedScene, setExpandedScene] = useState<Set<string>>(new Set());
+  const [newGameModalOpen, setNewGameModalOpen] = useState(false);
+  const [newGameIdInput, setNewGameIdInput] = useState('');
+  const [newGameError, setNewGameError] = useState<string | null>(null);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [importPendingData, setImportPendingData] = useState<Record<string, unknown> | null>(null);
+  const importFileInputRef = React.useRef<HTMLInputElement>(null);
   const apiKey = getAIGCApiKey();
-  const [_, setGeneratingCh] = useState<string | null>(null);
   const [generatingSceneKey, setGeneratingSceneKey] = useState<string | null>(null);
-  const [generatingAll, setGeneratingAll] = useState(false);
   const apiUrl = getAIGCApiUrl();
-  const [twFileHandle, setTwFileHandle] = useState<FileSystemFileHandle | null>(null);
-  const [frameworkFileHandle, setFrameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
+  const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
 
   useEffect(() => {
-    preloadListData(updateFw);
-  }, [updateFw]);
+    preloadListData(updateFw, gameId);
+  }, [updateFw, gameId]);
 
   const updateFwWithErrorReset = useCallback(
     (fn: (d: StoryFramework) => StoryFramework) => {
@@ -295,223 +276,155 @@ export function FrameworkEditor({
   }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
   const eventIds = (fw.events ?? []).map((e) => ({id: e.id, name: e.name}));
-  const attributeDefs = fw.metadata?.characterAttributes ?? [];
   const items = fw.items ?? [];
   const {valid, errors} = validateFramework(fw);
-
-  const getFilePicker = () =>
-    (window as unknown as {
-      showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]>;
-      showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle>
-    });
-
   const handleNew = useCallback(() => {
-    updateFw(() => ({
-      title: '未命名故事',
-      chapters: [{id: 'ch0', title: '第一章', sceneEntries: []}],
-    }));
-    setFrameworkFileHandle(null);
-    setJsonError(null);
-  }, [updateFw]);
+    setNewGameModalOpen(true);
+    setNewGameIdInput('');
+    setNewGameError(null);
+  }, []);
 
-  const handleOpen = useCallback(async () => {
-    try {
-      const [handle] = (await getFilePicker().showOpenFilePicker?.({
-        types: [{accept: {'application/json': ['.json']}, description: 'JSON 文件'}],
-        multiple: false,
-      }) ?? []) as FileSystemFileHandle[];
-      if (!handle) return;
-      const file = await handle.getFile();
-      const text = await file.text();
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      if (!parsed.title) parsed.title = '未命名故事';
-      if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
-        parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
-      }
-      migrateFramework(parsed as unknown as StoryFramework);
-      updateFw(() => fromPersistedFramework(parsed));
-      setFrameworkFileHandle(handle);
-      setJsonError(null);
-      await preloadListData(updateFw);
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+  const handleNewGameSave = useCallback(async () => {
+    const id = newGameIdInput.trim();
+    if (!id) {
+      setNewGameError('请输入游戏ID');
+      return;
     }
-  }, [updateFw]);
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+      setNewGameError('游戏ID只能包含字母、数字、下划线、横线');
+      return;
+    }
+    setNewGameError(null);
+    try {
+      const res = await fetch('/api/games/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId: id }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setNewGameError(data.error || '创建失败');
+        return;
+      }
+      setGameId(id);
+      await refetchGameIds();
+      setNewGameModalOpen(false);
+    } catch (e) {
+      setNewGameError((e as Error).message || '创建失败');
+    }
+  }, [newGameIdInput, setGameId, refetchGameIds]);
+
+  const handleNewGameCancel = useCallback(() => {
+    setNewGameModalOpen(false);
+    setNewGameIdInput('');
+    setNewGameError(null);
+  }, []);
 
   const handleSave = useCallback(async () => {
     try {
-      let handle = frameworkFileHandle;
-      if (!handle) {
-        const h = await getFilePicker().showSaveFilePicker?.({
-          suggestedName: 'story-framework.json',
-          types: [{accept: {'application/json': ['.json']}, description: 'JSON 文件'}],
-        });
-        if (!h) return;
-        handle = h as FileSystemFileHandle;
-        setFrameworkFileHandle(handle);
+      const url = getStoryFmFetchUrl(gameId);
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: formatJsonCompact(toPersistedFramework(fw)),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setJsonError(data.error || `保存失败: ${res.status}`);
+        return;
       }
-      const w = await handle.createWritable();
-      await w.write(formatJsonCompact(toPersistedFramework(fw)));
-      await w.close();
       setJsonError(null);
+      addNotification('info', '保存成功');
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
     }
-  }, [fw, frameworkFileHandle]);
+  }, [fw, gameId, addNotification]);
 
-  const handleGenerateAllChapters = useCallback(async () => {
-    const key = apiKey?.trim();
-    if (!key) {
-      alert('请配置 VITE_AIGC_API_KEY 或 VITE_OPENAI_API_KEY');
-      return;
-    }
-    const entries = flattenSceneEntries(fw);
-    if (!entries.length) {
-      alert('当前没有任何场景');
-      return;
-    }
-    let handle = twFileHandle;
-    if (!handle) {
-      try {
-        const [h] = (await (window as unknown as {
-          showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]>
-        }).showOpenFilePicker?.({
-          types: [{accept: {'text/plain': ['.tw', '.twee']}, description: 'Twee 故事文件'}],
-          multiple: false,
-          mode: 'readwrite',
-        }) ?? []) as FileSystemFileHandle[];
-        if (!h) {
-          alert('请选择要写入的 .tw 文件');
-          return;
+  const handleImportClick = useCallback(() => {
+    importFileInputRef.current?.click();
+  }, []);
+
+  const handleImportFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = reader.result as string;
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          if (!parsed || typeof parsed !== 'object') throw new Error('无效的 JSON');
+          setImportPendingData(parsed);
+          setImportConfirmOpen(true);
+        } catch (err) {
+          setJsonError((err as Error).message ?? '解析文件失败');
         }
-        handle = h;
-        setTwFileHandle(h);
-      } catch {
-        setJsonError('无法选择文件（需要支持 File System Access API 的浏览器）');
+      };
+      reader.onerror = () => setJsonError('读取文件失败');
+      reader.readAsText(file);
+    },
+    []
+  );
+
+  const handleImportConfirm = useCallback(async () => {
+    if (!importPendingData) return;
+    try {
+      const url = getStoryFmFetchUrl(gameId);
+      const body = formatJsonCompact(importPendingData);
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body,
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setJsonError(data.error || `导入失败: ${res.status}`);
         return;
       }
-    }
-    setGeneratingAll(true);
-    setJsonError(null);
-    try {
-      const textMap = new Map<string, string>();
-      const sceneMapLocal = new Map<string, GameScene>();
-      for (const s of fw.scenes ?? []) sceneMapLocal.set(s.id, s);
-      for (let ci = 0; ci < (fw.chapters ?? []).length; ci++) {
-        const ch = fw.chapters![ci];
-        for (let si = 0; si < (ch.sceneEntries ?? []).length; si++) {
-          const entry = ch.sceneEntries![si];
-          const scene = sceneMapLocal.get(entry.sceneId);
-          if (!scene) continue;
-          const text = await generateScenePassageText(fw, scene, ch, si, sceneMapLocal, key, apiUrl);
-          textMap.set(toPassageId(ci, entry.sceneId), text);
-        }
-      }
-      const story = frameworkToStory(fw);
-      for (const [pid, p] of story.passages) {
-        const newText = textMap.get(pid);
-        if (newText != null) p.text = newText;
-      }
-      const twee = serializeStorySugarcube(story);
-      const w = await handle.createWritable();
-      await w.write(twee);
-      await w.close();
+      migrateFramework(importPendingData as unknown as StoryFramework);
+      updateFw((d) => ({...d, ...fromPersistedFramework(importPendingData)}));
       setJsonError(null);
+      setImportConfirmOpen(false);
+      setImportPendingData(null);
+      addNotification('info', '导入成功');
     } catch (e) {
       setJsonError((e as Error).message);
-    } finally {
-      setGeneratingAll(false);
     }
-  }, [fw, apiKey, apiUrl, twFileHandle]);
-  useCallback(
-    async (chi: number) => {
-      const ch = fw.chapters[chi];
-      if (!ch?.sceneEntries?.length) {
-        alert('该章节没有场景');
-        return;
-      }
-      const key = apiKey?.trim();
-      if (!key) {
-        alert('请配置 VITE_AIGC_API_KEY 或 VITE_OPENAI_API_KEY');
-        return;
-      }
-      let handle = twFileHandle;
-      if (!handle) {
-        try {
-          const [h] = await (window as unknown as {
-            showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]>
-          }).showOpenFilePicker?.({
-            types: [{accept: {'text/plain': ['.tw', '.twee']}, description: 'Twee 故事文件'}],
-            multiple: false,
-            mode: 'readwrite',
-          }) ?? [];
-          if (!h) {
-            alert('请选择要覆盖的 .tw 文件');
-            return;
-          }
-          handle = h;
-          setTwFileHandle(h);
-        } catch {
-          alert('请先选择要覆盖的 .tw 文件（需支持 File System Access API 的浏览器）');
-          return;
-        }
-      }
-      setGeneratingCh(ch.id);
-      setJsonError(null);
-      try {
-        const textMap = new Map<string, string>();
-        const sceneMapLocal = new Map<string, GameScene>();
-        for (const s of fw.scenes ?? []) sceneMapLocal.set(s.id, s);
-        for (let si = 0; si < ch.sceneEntries.length; si++) {
-          const entry = ch.sceneEntries[si];
-          const scene = sceneMapLocal.get(entry.sceneId);
-          if (!scene) continue;
-          const text = await generateScenePassageText(fw, scene, ch, si, sceneMapLocal, key, apiUrl);
-          textMap.set(toPassageId(chi, entry.sceneId), text);
-        }
-        const fullStory = frameworkToStory(fw);
-        const file = await handle.getFile();
-        const raw = await file.text();
-        const story = parseTwee(raw);
-        const passageIds = new Set(ch.sceneEntries.map((e) => toPassageId(chi, e.sceneId)));
-        for (const [pid, p] of story.passages) {
-          if (passageIds.has(pid)) {
-            const newText = textMap.get(pid);
-            if (newText != null) p.text = newText;
-            const canon = fullStory.passages.get(pid);
-            if (canon?.links?.length) p.links = canon.links;
-            const baseMeta = { ...(p.metadata ?? {}) } as Record<string, unknown>;
-            if (canon?.metadata) Object.assign(baseMeta, canon.metadata);
-            const entry = ch.sceneEntries.find((e) => toPassageId(chi, e.sceneId) === pid);
-            const scene = entry ? sceneMapLocal.get(entry.sceneId) : undefined;
-            if (scene) Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
-            p.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
-          }
-        }
-        story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
-        for (const entry of ch.sceneEntries) {
-          const pid = toPassageId(chi, entry.sceneId);
-          if (!story.passages.has(pid)) {
-            const newP = fullStory.passages.get(pid);
-            const scene = sceneMapLocal.get(entry.sceneId);
-            if (newP) {
-              newP.text = textMap.get(pid) ?? scene?.summary ?? '';
-              story.passages.set(pid, newP);
-            }
-          }
-        }
-        const twee = serializeStorySugarcube(story);
+  }, [gameId, importPendingData, updateFw, addNotification]);
+
+  const handleImportCancel = useCallback(() => {
+    setImportConfirmOpen(false);
+    setImportPendingData(null);
+  }, []);
+
+  const handleExport = useCallback(async () => {
+    try {
+      const url = getStoryFmFetchUrl(gameId);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`导出失败: ${res.status}`);
+      const json = await res.json();
+      const text = typeof json === 'string' ? json : formatJsonCompact(json);
+      const blob = new Blob([text], {type: 'application/json'});
+      const filename = `story-fm.json`;
+      if ('showSaveFilePicker' in window) {
+        const handle = await (window as Window & { showSaveFilePicker?: (opts?: { suggestedName?: string }) => Promise<FileSystemFileHandle> }).showSaveFilePicker!({suggestedName: filename});
         const w = await handle.createWritable();
-        await w.write(twee);
+        await w.write(blob);
         await w.close();
-      } catch (e) {
-        setJsonError((e as Error).message);
-      } finally {
-        setGeneratingCh(null);
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
       }
-    },
-    [fw, apiKey, apiUrl, twFileHandle]
-  );
+      addNotification('info', '导出成功');
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+    }
+  }, [gameId, addNotification]);
+
   const handleGenerateScene = useCallback(
     async (chi: number, si: number) => {
       const ch = fw.chapters[chi];
@@ -530,57 +443,47 @@ export function FrameworkEditor({
         alert('请配置 VITE_AIGC_API_KEY 或 VITE_OPENAI_API_KEY');
         return;
       }
-      let handle = twFileHandle;
-      if (!handle) {
-        try {
-          const [h] = await (window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]> })
-            .showOpenFilePicker?.({
-            types: [{accept: {'text/plain': ['.tw', '.twee']}, description: 'Twee 故事文件'}],
-            multiple: false,
-            mode: 'readwrite',
-          }) ?? [];
-          if (!h) {
-            alert('未选择 .tw 文件，生成场景剧情需要指定要写入的故事文件。');
-            return;
-          }
-          handle = h;
-          setTwFileHandle(h);
-        } catch {
-          alert('请先选择要写入的 .tw 文件');
-          return;
-        }
+      if (!import.meta.env.DEV) {
+        alert('生成游戏需要开发模式，当前为生产环境。');
+        return;
       }
       const sk = `${chi}-${si}`;
       setGeneratingSceneKey(sk);
       setJsonError(null);
+      const contentUrl = getGameContentUrl(gameId);
       try {
-        // createWritable 必须在用户激活期内调用，故提前至异步操作之前
-        const w = await handle.createWritable();
-        const file = await handle.getFile();
-        const raw = await file.text();
-        const text = await generateScenePassageText(fw, scene, ch, si, sceneMap, key, apiUrl);
+        const res = await fetch(contentUrl);
+        const raw = res.ok ? await res.text() : '';
+        const text = await generateScenePassageText(fw, scene, ch, si, sceneMap, key, apiUrl, entry.wordCount);
         const fullStory = frameworkToStory(fw);
         const story = parseTwee(raw);
         const pid = toPassageId(chi, entry.sceneId);
+        const oldPid = `ch${chi}_${entry.sceneId}`;
+        removeSceneSubPassages(story, pid);
+        removeSceneSubPassages(story, oldPid);
         const template = fullStory.passages.get(pid);
-        // 查找已存在的 passage：可能以 pid 或 scene 名称（.tw 文件常用）为 key
         const nameId = scene.name.trim().replace(/\s+/g, '_');
-        let existing = story.passages.get(pid) ?? story.passages.get(nameId);
+        const minC = getPassagePageCharsMin();
+        const maxC = getPassagePageCharsMax();
+        let existing = story.passages.get(pid) ?? story.passages.get(oldPid) ?? story.passages.get(nameId);
         if (existing) {
-          existing.text = text;
           existing.links = template?.links ?? existing.links;
           const baseMeta = { ...existing.metadata } as Record<string, unknown>;
           if (template?.metadata) Object.assign(baseMeta, template.metadata);
           Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
           existing.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
+          existing = { ...existing, id: pid, name: template?.name ?? scene.name ?? pid };
           story.passages.set(pid, existing);
+          story.passages.delete(oldPid);
           if (nameId !== pid) story.passages.delete(nameId);
+          paginatePassageText(story, pid, text, minC, maxC);
         } else if (template) {
           template.text = text;
           const baseMeta = { ...(template.metadata ?? {}) } as Record<string, unknown>;
           Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
           template.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
           story.passages.set(pid, template);
+          paginatePassageText(story, pid, text, minC, maxC);
         }
         story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
         // StoryData start：本章「起点（地图节点）」对应的场景名称
@@ -595,44 +498,99 @@ export function FrameworkEditor({
           }
         }
         const twee = serializeStorySugarcube(story);
-        await w.write(twee);
-        await w.close();
+        const putRes = await fetch(contentUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          body: twee,
+        });
+        if (!putRes.ok) {
+          const err = await putRes.json().catch(() => ({ error: putRes.statusText }));
+          throw new Error((err as { error?: string }).error ?? '保存失败');
+        }
       } catch (e) {
         setJsonError((e as Error).message);
       } finally {
         setGeneratingSceneKey(null);
       }
     },
-    [fw, apiKey, apiUrl, twFileHandle, sceneMap]
+    [fw, apiKey, apiUrl, gameId, sceneMap]
   );
 
   return (
     <div style={styles.container}>
+      {newGameModalOpen && (
+        <div style={styles.modalOverlay as React.CSSProperties} onClick={handleNewGameCancel}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>新建游戏</h2>
+            </div>
+            <div style={styles.section}>
+              <label style={styles.label}>游戏ID</label>
+              <input
+                type="text"
+                value={newGameIdInput}
+                onChange={(e) => setNewGameIdInput(e.target.value)}
+                placeholder="仅限字母、数字、下划线、横线"
+                style={styles.input}
+                autoFocus
+              />
+              {newGameError && (
+                <div style={{ marginTop: 8, fontSize: 13, color: '#e57373' }}>{newGameError}</div>
+              )}
+            </div>
+            <div style={styles.modalActions}>
+              <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleNewGameSave)}>
+                确定
+              </button>
+              <button type="button" style={styles.btn} onClick={handleNewGameCancel}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header style={styles.header}>
         <h1 style={styles.title}>剧情</h1>
         <div style={styles.actions}>
           <button type="button" style={styles.btn} onClick={handleNew}>
             新建
           </button>
-          <FileHandleButton label="打开" fileHandle={frameworkFileHandle} onClick={handleOpen}/>
-          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={handleSave}/>
-          <button
-            type="button"
-            style={{
-              ...styles.btnGenerate,
-              ...(generatingAll || !flattenSceneEntries(fw).length ? {opacity: 0.6, cursor: 'not-allowed'} : {}),
-            }}
-            onClick={handleGenerateAllChapters}
-            disabled={generatingAll || !flattenSceneEntries(fw).length}
-            title="AI 生成全部章节的剧情正文并写入 .tw 文件"
-          >
-            {generatingAll ? '生成中...' : '生成全部剧情'}
+          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={() => checkAuthForSave(handleSave)}/>
+          <button type="button" style={styles.btn} onClick={handleImportClick}>
+            导入
           </button>
-          {twFileHandle && (
-            <span style={styles.fileHandleBtnPath}>{truncatePathForDisplay(twFileHandle.name)}</span>
-          )}
+          <button type="button" style={styles.btn} onClick={handleExport}>
+            导出
+          </button>
         </div>
       </header>
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".json,application/json"
+        style={{display: 'none'}}
+        onChange={handleImportFileChange}
+      />
+      {importConfirmOpen && (
+        <div style={styles.modalOverlay as React.CSSProperties} onClick={handleImportCancel}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>确认导入</h2>
+            </div>
+            <p style={{margin: '0 0 16px', fontSize: 14, color: '#e8e8e8'}}>
+              确认覆盖已有游戏{gameId}吗？
+            </p>
+            <div style={styles.modalActions}>
+              <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleImportConfirm)}>
+                确认
+              </button>
+              <button type="button" style={styles.btn} onClick={handleImportCancel}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(!valid || jsonError) && (
         <div style={styles.errors}>
@@ -938,7 +896,7 @@ function ChapterBlock({
                       disabled={isGenerating}
                       title="生成该场景的剧情正文"
                     >
-                      {isGenerating ? '生成中...' : '生成场景剧情'}
+                      {isGenerating ? '生成中...' : '生成游戏'}
                     </button>
                     <button
                       type="button"
@@ -952,6 +910,23 @@ function ChapterBlock({
                 </div>
                 {isEntryExpanded && (
                   <div style={styles.sceneBody}>
+                    <div style={styles.row}>
+                      <label style={styles.label}>字数</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={entry.wordCount ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.valueAsNumber;
+                          updateEntry(si, (e0) => ({
+                            ...e0,
+                            wordCount: Number.isFinite(v) && v > 0 ? v : undefined,
+                          }));
+                        }}
+                        placeholder="如：500（留空则不限制）"
+                        style={{...styles.input, flex: 1}}
+                      />
+                    </div>
                     <RuleIdsSelector
                       ruleList={ruleList}
                       value={entry.ruleIds ?? []}
@@ -997,15 +972,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #444',
     borderRadius: 6,
     color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  btnGenerate: {
-    padding: '8px 16px',
-    backgroundColor: '#3d2d64',
-    border: '1px solid #6c5ce7',
-    borderRadius: 6,
-    color: '#c4b5fd',
     cursor: 'pointer',
     fontSize: 14,
   },

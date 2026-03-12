@@ -3,6 +3,9 @@
  */
 
 import React, {useEffect, useState} from 'react';
+import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameBehavior} from '../schema/game-behavior';
@@ -379,6 +382,9 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
+        {evt.description && (
+          <p style={{margin: '0 0 8px'}}><strong>描述：</strong>{evt.description}</p>
+        )}
         {evt.openingAnimation && (
           <p style={{margin: '0 0 8px'}}><strong>开场动画：</strong>{evt.openingAnimation}</p>
         )}
@@ -418,6 +424,15 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
           placeholder="进入军营"
         />
       </div>
+      <div style={styles.row}>
+        <label style={styles.label}>描述</label>
+        <textarea
+          value={evt.description ?? ''}
+          onChange={(e) => onUpdate((c) => ({...c, description: e.target.value || undefined}))}
+          style={{...styles.input, minHeight: 60}}
+          placeholder="事件背景与要点，用于 AI 生成剧情时的上下文"
+        />
+      </div>
       <MediaUrlField
         label="开场动画"
         value={evt.openingAnimation}
@@ -447,11 +462,11 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
   );
 }
 
-/** 保存事件到预设路径 assets/story-events.json */
-async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 保存事件到预设路径 assets/games/{gameId}/story-events.json */
+async function saveEventsToPreset(events: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-events', {
+      const res = await fetch(getEventsFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(events),
@@ -473,11 +488,11 @@ async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error
   return {ok: true};
 }
 
-async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void) {
+async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
   const apis: Array<{url: string; key: keyof StoryFramework}> = [
-    {url: '/api/story-events', key: 'events'},
-    {url: '/api/story-characters', key: 'characters'},
-    {url: '/api/story-rules', key: 'gameRules'},
+    {url: getEventsFetchUrl(gameId), key: 'events'},
+    {url: getCharactersFetchUrl(gameId), key: 'characters'},
+    {url: getRulesFetchUrl(gameId), key: 'gameRules'},
   ];
   for (const {url, key} of apis) {
     try {
@@ -497,9 +512,11 @@ export function EventEditor({fw, updateFw}: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
+  const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
-    preloadForEvents(updateFw);
-  }, [updateFw]);
+    preloadForEvents(updateFw, gameId);
+  }, [updateFw, gameId]);
 
   const events = fw.events ?? [];
   const setEvents = (fn: (e: GameEvent[]) => GameEvent[]) =>
@@ -526,7 +543,7 @@ export function EventEditor({fw, updateFw}: {
   const confirmAddEvent = async () => {
     const next = [...events, newEvent];
     setEvents(() => next);
-    const result = await saveEventsToPreset(next);
+    const result = await saveEventsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -537,12 +554,13 @@ export function EventEditor({fw, updateFw}: {
   const removeEvent = async (index: number) => {
     const next = events.filter((_, i) => i !== index);
     setEvents(() => next);
-    const result = await saveEventsToPreset(next);
+    const result = await saveEventsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeEventWithAuth = (index: number) => checkAuthForSave(() => removeEvent(index));
 
   const saveEvents = async () => {
-    const result = await saveEventsToPreset(events);
+    const result = await saveEventsToPreset(events, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
@@ -582,7 +600,7 @@ export function EventEditor({fw, updateFw}: {
                 <button
                   type="button"
                   style={styles.btnIcon}
-                  onClick={() => removeEvent(ei)}
+                  onClick={() => removeEventWithAuth(ei)}
                   title="删除"
                 >
                   ×
@@ -615,7 +633,7 @@ export function EventEditor({fw, updateFw}: {
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveEvents}
+          onSave={() => checkAuthForSave(saveEvents)}
         >
           <EventFormContent
             evt={events[editIndex]}
@@ -633,7 +651,7 @@ export function EventEditor({fw, updateFw}: {
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddEvent}
+          onSave={() => checkAuthForSave(confirmAddEvent)}
         >
           <EventFormContent
             evt={newEvent}

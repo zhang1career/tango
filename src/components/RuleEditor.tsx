@@ -3,16 +3,19 @@
  */
 
 import React, {useEffect, useState} from 'react';
+import {getRulesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameRule} from '../schema/game-rule';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {editorStyles as styles} from '../styles/editorStyles';
 
-async function saveRulesToPreset(rules: unknown): Promise<{ ok: boolean; error?: string }> {
+async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-rules', {
+      const res = await fetch(getRulesFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(rules),
@@ -105,8 +108,10 @@ export function RuleEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
+  const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
-    fetch('/api/story-rules')
+    fetch(getRulesFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
@@ -114,7 +119,7 @@ export function RuleEditor({
       })
       .catch(() => {
       });
-  }, [updateFw]);
+  }, [updateFw, gameId]);
 
   const rules = fw.gameRules ?? [];
   const setRules = (fn: (r: GameRule[]) => GameRule[]) =>
@@ -143,7 +148,7 @@ export function RuleEditor({
   const confirmAddRule = async () => {
     const next = [...rules, newRule];
     setRules(() => next);
-    const result = await saveRulesToPreset(next);
+    const result = await saveRulesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -154,12 +159,13 @@ export function RuleEditor({
   const removeRule = async (index: number) => {
     const next = rules.filter((_, i) => i !== index);
     setRules(() => next);
-    const result = await saveRulesToPreset(next);
+    const result = await saveRulesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeRuleWithAuth = (index: number) => checkAuthForSave(() => removeRule(index));
 
   const saveRules = async () => {
-    const result = await saveRulesToPreset(rules);
+    const result = await saveRulesToPreset(rules, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
@@ -194,7 +200,7 @@ export function RuleEditor({
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ri)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeRule(ri)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeRuleWithAuth(ri)} title="删除">
                   ×
                 </button>
               </div>
@@ -221,7 +227,7 @@ export function RuleEditor({
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveRules}>
+          onSave={() => checkAuthForSave(saveRules)}>
           <RuleFormContent
             rule={rules[editIndex]}
             editable={true}
@@ -235,7 +241,7 @@ export function RuleEditor({
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddRule}
+          onSave={() => checkAuthForSave(confirmAddRule)}
         >
           <RuleFormContent
             rule={newRule}

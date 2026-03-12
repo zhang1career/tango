@@ -166,7 +166,7 @@ export function RuleIdsSelector({
         })}
       </div>
       {available.length > 0 && (
-        <div style={styles.addRow}>
+        <div key={value.join(',')} style={styles.addRow}>
           <select
             style={styles.select}
             value={addId}

@@ -21,7 +21,8 @@ import type {GameCharacter} from '@/schema/game-character';
 import type {GameRule} from '@/schema/game-rule';
 import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
-import {resolveMediaUrl} from '@/config';
+import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {
   BehaviorInteractionModal,
@@ -36,6 +37,7 @@ interface GameScreenProps {
 }
 
 export function GameScreen({fetchContent, className}: GameScreenProps) {
+  const {gameId} = useGameId();
   const [engine, setEngine] = useState<GameEngine | null>(null);
   const [characters, setCharacters] = useState<GameCharacter[]>([]);
   const [rules, setRules] = useState<GameRule[]>([]);
@@ -95,21 +97,21 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
 
   // 加载事件
   useEffect(() => {
-    const url = import.meta.env.DEV ? '/api/story-events' : '/assets/story-events.json';
+    const url = getEventsFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((d: unknown) => setEvents(Array.isArray(d) ? d : []))
       .catch(() => setEvents([]));
-  }, []);
+  }, [gameId]);
 
   // 加载功能板块配置（战斗背景音乐等）
   useEffect(() => {
-    const url = import.meta.env.DEV ? '/api/story-features' : '/assets/story-features.json';
+    const url = getFeaturesFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : {}))
       .then((d: { battle?: { backgroundMusic?: string } } | null) => setFeaturesConfig(d ?? null))
       .catch(() => setFeaturesConfig(null));
-  }, []);
+  }, [gameId]);
 
   useEffect(() => {
     const el = passageContentRef.current;
@@ -603,7 +605,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   style={styles.linkButton}
                   onClick={() => handleLink(link.passageName, link)}
                 >
-                  {link.displayText.startsWith('前往') ? link.displayText : `前往 ${link.displayText}`}
+                  {link.displayText.startsWith('前往') || link.displayText === '继续' ? link.displayText : `前往 ${link.displayText}`}
                 </button>
               ))}
             </nav>

@@ -26,7 +26,6 @@ npm run dev
 `.env`：
 
 ```env
-GAME_CONTENT_PATH=assets/story.tw
 VITE_AIGC_API_KEY=xxx   # 可选，用于 AI 生成剧情
 ```
 
@@ -39,12 +38,12 @@ src/
   components/   # 游戏 UI 与编辑器
   schema/       # 数据结构定义
   data/         # 内嵌示例故事
-assets/         # 故事源文件（.tw、story-*.json）
+{VITE_GAMES_BASE_PATH}/   # 游戏数据，按 gameId 隔离（默认 assets/games）
 ```
 
 ## 扩展
 
-- **远程内容**：`GAME_CONTENT_PATH` 设为 URL，`fetchContent` 会通过 `fetch` 加载
+- **远程内容**：游戏数据位于 `GAMES_BASE_PATH/{gameId}/`（默认 assets/games），支持多游戏
 - **多媒体**：支持 HTML `<img>`、`<audio>`、`<video>`，以及 SugarCube 宏 `<<image>>`、`<<audio>>`、`<<video>>`。配置 `VITE_MEDIA_BASE_URL` 可将相对路径解析为 CDN 地址
 
 ## 参考资料

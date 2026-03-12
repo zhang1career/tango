@@ -3,6 +3,9 @@
  */
 
 import React, {useState} from 'react';
+import {getItemsFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameItem} from '../schema/game-item';
 import {formatJsonCompact} from '../utils/json-format';
@@ -73,11 +76,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-/** 保存物品到预设路径 assets/story-items.json */
-async function saveItemsToPreset(items: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 保存物品到预设路径 assets/games/{gameId}/story-items.json */
+async function saveItemsToPreset(items: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-items', {
+      const res = await fetch(getItemsFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(items),
@@ -151,6 +154,8 @@ export function ItemsEditorPage({fw, updateFw}: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
+  const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   const items = fw.items ?? [];
   const setItems = (fn: (i: GameItem[]) => GameItem[]) =>
     updateFw((d) => ({...d, items: fn(d.items ?? [])}));
@@ -168,7 +173,7 @@ export function ItemsEditorPage({fw, updateFw}: {
   const confirmAddItem = async () => {
     const next = [...items, newItem];
     setItems(() => next);
-    const result = await saveItemsToPreset(next);
+    const result = await saveItemsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -179,12 +184,13 @@ export function ItemsEditorPage({fw, updateFw}: {
   const removeItem = async (index: number) => {
     const next = items.filter((_, j) => j !== index);
     setItems(() => next);
-    const result = await saveItemsToPreset(next);
+    const result = await saveItemsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeItemWithAuth = (index: number) => checkAuthForSave(() => removeItem(index));
 
   const saveItems = async () => {
-    const result = await saveItemsToPreset(items);
+    const result = await saveItemsToPreset(items, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
@@ -216,7 +222,7 @@ export function ItemsEditorPage({fw, updateFw}: {
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeItem(i)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeItemWithAuth(i)} title="删除">
                   ×
                 </button>
               </div>
@@ -242,7 +248,7 @@ export function ItemsEditorPage({fw, updateFw}: {
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveItems}
+          onSave={() => checkAuthForSave(saveItems)}
         >
           <ItemFormContent
             item={items[editIndex]}
@@ -258,7 +264,7 @@ export function ItemsEditorPage({fw, updateFw}: {
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddItem}
+          onSave={() => checkAuthForSave(confirmAddItem)}
         >
           <ItemFormContent
             item={newItem}

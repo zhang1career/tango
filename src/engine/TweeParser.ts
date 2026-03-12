@@ -1,7 +1,7 @@
 /**
  * Twee 3 格式解析器 - 兼容 Twine
  * 参考: https://github.com/iftechfoundation/twine-specs/blob/master/twee-3-specification.md
- * 扩展: 条件链接、StoryData、passage metadata、Sugarcube 语法（<<if>>、<<set>>、[[link][setter]]）
+ * 扩展: 条件链接、StoryData、passage metadata、Sugarcube 语法（<<if>>、<<set>>、<<include>>、[[link][setter]]）
  * 多媒体: <<image>>、<<audio>>、<<video>> 宏展开，及 HTML <img>/<audio>/<video> 的 src 解析
  */
 
@@ -309,11 +309,33 @@ function normalizeId(name: string): string {
   return name.trim().replace(/\s+/g, '_');
 }
 
+/** 递归展开 <<include "PassageName">>，将引用替换为被引用 passage 的内容 */
+function resolveInclude(
+  raw: string,
+  rawByNormalizedName: Map<string, string>,
+  visited: Set<string>
+): string {
+  const INCLUDE_RE = /<<include\s+["']([^"']+)["']\s*>>/gi;
+  return raw.replace(INCLUDE_RE, (_, ref: string) => {
+    const refId = normalizeId(ref.trim());
+    if (visited.has(refId)) return ''; // 循环引用：跳过
+    const included = rawByNormalizedName.get(refId);
+    if (included == null) return ''; // 引用的 passage 不存在
+    visited.add(refId);
+    const resolved = resolveInclude(included, rawByNormalizedName, visited);
+    visited.delete(refId);
+    return resolved;
+  });
+}
+
+type RawPassage = { name: string; tags: string[]; metadata: Record<string, unknown>; rawContent: string };
+
 export function parseTwee(source: string): Story {
   const passages = new Map<string, Passage>();
   let startPassageId = 'Start';
   let title = 'Untitled Story';
   let storyMetadata: Record<string, unknown> = {};
+  const rawPassages: RawPassage[] = [];
 
   const lines = source.split(/\r?\n/);
   let i = 0;
@@ -362,7 +384,17 @@ export function parseTwee(source: string): Story {
       continue;
     }
 
-    const sugarcube = parseSugarcubeContent(rawContent);
+    rawPassages.push({ name, tags, metadata, rawContent });
+  }
+
+  const rawByNormalizedName = new Map<string, string>();
+  for (const { name, rawContent } of rawPassages) {
+    rawByNormalizedName.set(normalizeId(name), rawContent);
+  }
+
+  for (const { name, tags, metadata, rawContent } of rawPassages) {
+    const resolvedContent = resolveInclude(rawContent, rawByNormalizedName, new Set());
+    const sugarcube = parseSugarcubeContent(resolvedContent);
     const mergedMeta: Record<string, unknown> = {...metadata};
     if (sugarcube.metadataMerge.set) {
       mergedMeta.set = {...((mergedMeta.set as Record<string, unknown>) ?? {}), ...sugarcube.metadataMerge.set};

@@ -26,6 +26,8 @@ export interface SceneEntry {
   sceneId: string;
   /** 本章节采用该场景时的规则 id 列表（有序，准入时按顺序嵌套执行） */
   ruleIds?: string[];
+  /** 生成内容字数要求（约多少字），非空时加入 AI 提示词 */
+  wordCount?: number;
 }
 
 /** 章节：可选的逻辑分组 */
@@ -88,6 +90,38 @@ export interface StoryFramework {
   gameRules?: GameRule[];
 }
 
+/** 迁移旧版剧情框架结构（如 scenes 数组改为 sceneEntries） */
+export function migrateFramework(parsed: StoryFramework): void {
+  const chapters = parsed.chapters ?? [];
+  const scenes = parsed.scenes ?? [];
+  const sceneMap = new Map(scenes.map((s) => [s.id, s]));
+  for (const ch of chapters) {
+    const old = ch as unknown as { scenes?: Array<{ id: string; summary?: string; name?: string }> };
+    if (Array.isArray(old.scenes) && !ch.sceneEntries) {
+      ch.sceneEntries = old.scenes.map((s) => ({sceneId: s.id}));
+      for (const s of old.scenes) {
+        if (!sceneMap.has(s.id)) {
+          scenes.push({
+            id: s.id,
+            name: s.name ?? s.id,
+            summary: s.summary ?? '',
+          });
+          sceneMap.set(s.id, scenes[scenes.length - 1]);
+        }
+      }
+      delete old.scenes;
+    }
+    if (!ch.sceneEntries) ch.sceneEntries = [];
+    const seen = new Set<string>();
+    ch.sceneEntries = ch.sceneEntries.filter((e) => {
+      if (seen.has(e.sceneId)) return false;
+      seen.add(e.sceneId);
+      return true;
+    });
+  }
+  parsed.scenes = scenes;
+}
+
 /** 从完整框架中取出仅用于持久化的部分（保存剧情文件时使用） */
 export function toPersistedFramework(fw: StoryFramework): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -127,9 +161,9 @@ export function flattenSceneEntries(
   return result;
 }
 
-/** 获取 passage 名：章节 index + 场景 id */
+/** 获取 passage 基 ID：级联格式 ch{N}.{sceneId} */
 export function toPassageId(chapterIndex: number, sceneId: string): string {
-  return `ch${chapterIndex}_${sceneId}`.trim().replace(/\s+/g, '_');
+  return `ch${chapterIndex}.${sceneId}`.trim().replace(/\s+/g, '_');
 }
 
 /** 校验框架：检查 sceneEntries 中的 sceneId 是否都存在 */

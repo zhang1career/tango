@@ -3,6 +3,9 @@
  */
 
 import React, {useState} from 'react';
+import {getMetadataFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
 import type {StoryFramework} from '../schema/story-framework';
 import type {AttributeType, CharacterAttributeDef, GameMetadata} from '../schema/metadata';
@@ -65,11 +68,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-/** 保存元信息到预设路径 assets/story-metadata.json */
-async function saveMetadataToPreset(metadata: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 保存元信息到预设路径 assets/games/{gameId}/story-metadata.json */
+async function saveMetadataToPreset(metadata: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-metadata', {
+      const res = await fetch(getMetadataFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(metadata),
@@ -179,6 +182,8 @@ export function MetadataEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
+  const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useStoryMetadata(updateFw);
 
   const metadata = fw.metadata ?? {characterAttributes: []};
@@ -205,12 +210,13 @@ export function MetadataEditor({
     const nextAttrs = attrs.filter((_, j) => j !== i);
     const nextMeta: GameMetadata = {...metadata, characterAttributes: nextAttrs};
     setMetadata(() => nextMeta);
-    const result = await saveMetadataToPreset(nextMeta);
+    const result = await saveMetadataToPreset(nextMeta, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeAttrWithAuth = (i: number) => checkAuthForSave(() => removeAttr(i));
 
   const saveMetadata = async () => {
-    const result = await saveMetadataToPreset(fw.metadata ?? {characterAttributes: []});
+    const result = await saveMetadataToPreset(fw.metadata ?? {characterAttributes: []}, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
@@ -224,7 +230,7 @@ export function MetadataEditor({
     const nextAttrs = [...attrs, newAttr];
     const nextMeta: GameMetadata = {...metadata, characterAttributes: nextAttrs};
     setMetadata(() => nextMeta);
-    const result = await saveMetadataToPreset(nextMeta);
+    const result = await saveMetadataToPreset(nextMeta, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -263,7 +269,7 @@ export function MetadataEditor({
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeAttr(i)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeAttrWithAuth(i)} title="删除">
                   ×
                 </button>
               </div>
@@ -289,7 +295,7 @@ export function MetadataEditor({
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveMetadata}
+          onSave={() => checkAuthForSave(saveMetadata)}
         >
           <AttrFormContent
             attr={attrs[editIndex]}
@@ -305,7 +311,7 @@ export function MetadataEditor({
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAdd}
+          onSave={() => checkAuthForSave(confirmAdd)}
         >
           <AttrFormContent
             attr={newAttr}

@@ -4,7 +4,9 @@
 
 import React, {useCallback, useEffect, useState} from 'react';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
-import {getAIGCApiKey, getAIGCApiUrl} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
@@ -124,11 +126,11 @@ function CollapsibleSection({
   );
 }
 
-/** 保存人物到预设路径 assets/story-characters.json */
-async function saveCharactersToPreset(characters: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 保存人物到预设路径 assets/games/{gameId}/story-characters.json */
+async function saveCharactersToPreset(characters: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-characters', {
+      const res = await fetch(getCharactersFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(characters),
@@ -543,8 +545,10 @@ export function CharacterEditor({fw, updateFw}: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
+  const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
-    fetch('/api/story-characters')
+    fetch(getCharactersFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
@@ -552,7 +556,7 @@ export function CharacterEditor({fw, updateFw}: {
       })
       .catch(() => {
       });
-  }, [updateFw]);
+  }, [updateFw, gameId]);
 
   useStoryMetadata(updateFw);
 
@@ -575,7 +579,7 @@ export function CharacterEditor({fw, updateFw}: {
   const confirmAddChar = async () => {
     const next = [...characters, newChar];
     setCharacters(() => next);
-    const result = await saveCharactersToPreset(next);
+    const result = await saveCharactersToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -586,12 +590,13 @@ export function CharacterEditor({fw, updateFw}: {
   const removeCharacter = async (index: number) => {
     const next = characters.filter((_, i) => i !== index);
     setCharacters(() => next);
-    const result = await saveCharactersToPreset(next);
+    const result = await saveCharactersToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeCharacterWithAuth = (index: number) => checkAuthForSave(() => removeCharacter(index));
 
   const saveChars = async () => {
-    const result = await saveCharactersToPreset(characters);
+    const result = await saveCharactersToPreset(characters, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
@@ -629,7 +634,7 @@ export function CharacterEditor({fw, updateFw}: {
                 <button
                   type="button"
                   style={styles.btnIcon}
-                  onClick={() => removeCharacter(ci)}
+                  onClick={() => removeCharacterWithAuth(ci)}
                   title="删除"
                 >
                   ×
@@ -663,7 +668,7 @@ export function CharacterEditor({fw, updateFw}: {
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveChars}
+          onSave={() => checkAuthForSave(saveChars)}
         >
           <CharacterFormContent
             char={characters[editIndex]}
@@ -681,7 +686,7 @@ export function CharacterEditor({fw, updateFw}: {
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddChar}
+          onSave={() => checkAuthForSave(confirmAddChar)}
         >
           <CharacterFormContent
             char={newChar}
