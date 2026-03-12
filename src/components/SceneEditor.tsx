@@ -5,6 +5,7 @@
 import React, {useEffect, useState} from 'react';
 import {getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
@@ -287,6 +288,7 @@ export function SceneEditor({
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
     preloadForScenes(updateFw, gameId);
   }, [updateFw, gameId]);
@@ -346,6 +348,7 @@ export function SceneEditor({
     const result = await saveScenesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeSceneWithAuth = (index: number) => checkAuthForSave(() => removeScene(index));
 
   const saveScenes = async () => {
     const result = await saveScenesToPreset(scenes, gameId);
@@ -383,7 +386,7 @@ export function SceneEditor({
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ci)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeScene(ci)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeSceneWithAuth(ci)} title="删除">
                   ×
                 </button>
               </div>
@@ -417,7 +420,7 @@ export function SceneEditor({
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveScenes}>
+          onSave={() => checkAuthForSave(saveScenes)}>
           <SceneFormContent
             scene={scenes[editIndex]}
             editable={true}
@@ -437,7 +440,7 @@ export function SceneEditor({
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddScene}
+          onSave={() => checkAuthForSave(confirmAddScene)}
         >
           <SceneFormContent
             scene={newScene}

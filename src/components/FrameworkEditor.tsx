@@ -11,44 +11,14 @@ import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useNotification} from '@/context/NotificationContext';
+import {useAuth} from '@/context/AuthContext';
 import {frameworkToStory, parseTwee, serializeStorySugarcube} from '@/engine';
 
 import {formatJsonCompact} from '../utils/json-format';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
-
-function migrateFramework(parsed: StoryFramework): void {
-  const chapters = parsed.chapters ?? [];
-  const scenes = parsed.scenes ?? [];
-  const sceneMap = new Map(scenes.map((s) => [s.id, s]));
-  for (const ch of chapters) {
-    const old = ch as unknown as { scenes?: Array<{ id: string; summary?: string; name?: string }> };
-    if (Array.isArray(old.scenes) && !ch.sceneEntries) {
-      ch.sceneEntries = old.scenes.map((s) => ({sceneId: s.id}));
-      for (const s of old.scenes) {
-        if (!sceneMap.has(s.id)) {
-          scenes.push({
-            id: s.id,
-            name: s.name ?? s.id,
-            summary: s.summary ?? '',
-          });
-          sceneMap.set(s.id, scenes[scenes.length - 1]);
-        }
-      }
-      delete old.scenes;
-    }
-    if (!ch.sceneEntries) ch.sceneEntries = [];
-    // 一个章节与一个场景只能有唯一关系，去重（保留首次出现）
-    const seen = new Set<string>();
-    ch.sceneEntries = ch.sceneEntries.filter((e) => {
-      if (seen.has(e.sceneId)) return false;
-      seen.add(e.sceneId);
-      return true;
-    });
-  }
-  parsed.scenes = scenes;
-}
 
 /**
  * 从当前场景构建 passage 的权威元数据（与 characterIds 逻辑一致：始终以场景当前值为准，删除则覆盖掉旧值）
@@ -247,10 +217,15 @@ export function FrameworkEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
-  const {gameId} = useGameId();
+  const {gameId, setGameId, refetchGameIds} = useGameId();
+  const {addNotification} = useNotification();
+  const {checkAuthForSave} = useAuth();
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [expandedCh, setExpandedCh] = useState<Set<string>>(new Set());
   const [expandedScene, setExpandedScene] = useState<Set<string>>(new Set());
+  const [newGameModalOpen, setNewGameModalOpen] = useState(false);
+  const [newGameIdInput, setNewGameIdInput] = useState('');
+  const [newGameError, setNewGameError] = useState<string | null>(null);
   const apiKey = getAIGCApiKey();
   const [_, setGeneratingCh] = useState<string | null>(null);
   const [generatingSceneKey, setGeneratingSceneKey] = useState<string | null>(null);
@@ -309,58 +284,66 @@ export function FrameworkEditor({
     });
 
   const handleNew = useCallback(() => {
-    updateFw(() => ({
-      title: '未命名故事',
-      chapters: [{id: 'ch0', title: '第一章', sceneEntries: []}],
-    }));
-    setFrameworkFileHandle(null);
-    setJsonError(null);
-  }, [updateFw]);
+    setNewGameModalOpen(true);
+    setNewGameIdInput('');
+    setNewGameError(null);
+  }, []);
 
-  const handleOpen = useCallback(async () => {
-    try {
-      const [handle] = (await getFilePicker().showOpenFilePicker?.({
-        types: [{accept: {'application/json': ['.json']}, description: 'JSON 文件'}],
-        multiple: false,
-      }) ?? []) as FileSystemFileHandle[];
-      if (!handle) return;
-      const file = await handle.getFile();
-      const text = await file.text();
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      if (!parsed.title) parsed.title = '未命名故事';
-      if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
-        parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
-      }
-      migrateFramework(parsed as unknown as StoryFramework);
-      updateFw(() => fromPersistedFramework(parsed));
-      setFrameworkFileHandle(handle);
-      setJsonError(null);
-      await preloadListData(updateFw, gameId);
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+  const handleNewGameSave = useCallback(async () => {
+    const id = newGameIdInput.trim();
+    if (!id) {
+      setNewGameError('请输入游戏ID');
+      return;
     }
-  }, [updateFw, gameId]);
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+      setNewGameError('游戏ID只能包含字母、数字、下划线、横线');
+      return;
+    }
+    setNewGameError(null);
+    try {
+      const res = await fetch('/api/games/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId: id }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setNewGameError(data.error || '创建失败');
+        return;
+      }
+      setGameId(id);
+      await refetchGameIds();
+      setNewGameModalOpen(false);
+    } catch (e) {
+      setNewGameError((e as Error).message || '创建失败');
+    }
+  }, [newGameIdInput, setGameId, refetchGameIds]);
+
+  const handleNewGameCancel = useCallback(() => {
+    setNewGameModalOpen(false);
+    setNewGameIdInput('');
+    setNewGameError(null);
+  }, []);
 
   const handleSave = useCallback(async () => {
     try {
-      let handle = frameworkFileHandle;
-      if (!handle) {
-        const h = await getFilePicker().showSaveFilePicker?.({
-          suggestedName: 'story-framework.json',
-          types: [{accept: {'application/json': ['.json']}, description: 'JSON 文件'}],
-        });
-        if (!h) return;
-        handle = h as FileSystemFileHandle;
-        setFrameworkFileHandle(handle);
+      const url = getStoryFmFetchUrl(gameId);
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: formatJsonCompact(toPersistedFramework(fw)),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setJsonError(data.error || `保存失败: ${res.status}`);
+        return;
       }
-      const w = await handle.createWritable();
-      await w.write(formatJsonCompact(toPersistedFramework(fw)));
-      await w.close();
       setJsonError(null);
+      addNotification('info', '保存成功');
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
     }
-  }, [fw, frameworkFileHandle]);
+  }, [fw, gameId, addNotification]);
 
   const handleGenerateAllChapters = useCallback(async () => {
     const key = apiKey?.trim();
@@ -611,14 +594,44 @@ export function FrameworkEditor({
 
   return (
     <div style={styles.container}>
+      {newGameModalOpen && (
+        <div style={styles.modalOverlay as React.CSSProperties} onClick={handleNewGameCancel}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>新建游戏</h2>
+            </div>
+            <div style={styles.section}>
+              <label style={styles.label}>游戏ID</label>
+              <input
+                type="text"
+                value={newGameIdInput}
+                onChange={(e) => setNewGameIdInput(e.target.value)}
+                placeholder="仅限字母、数字、下划线、横线"
+                style={styles.input}
+                autoFocus
+              />
+              {newGameError && (
+                <div style={{ marginTop: 8, fontSize: 13, color: '#e57373' }}>{newGameError}</div>
+              )}
+            </div>
+            <div style={styles.modalActions}>
+              <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleNewGameSave)}>
+                保存
+              </button>
+              <button type="button" style={styles.btn} onClick={handleNewGameCancel}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header style={styles.header}>
         <h1 style={styles.title}>剧情</h1>
         <div style={styles.actions}>
           <button type="button" style={styles.btn} onClick={handleNew}>
             新建
           </button>
-          <FileHandleButton label="打开" fileHandle={frameworkFileHandle} onClick={handleOpen}/>
-          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={handleSave}/>
+          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={() => checkAuthForSave(handleSave)}/>
           <button
             type="button"
             style={{

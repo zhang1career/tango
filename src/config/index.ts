@@ -7,15 +7,21 @@ const env = import.meta.env;
 
 export const DEFAULT_GAME_ID = 'default';
 
-/** 获取游戏数据路径前缀：assets/games/{gameId}/，prod 静态资源用 */
+/** 游戏数据根路径（如 assets/games），可从 VITE_GAMES_BASE_PATH 或 GAMES_BASE_PATH 配置 */
+export function getGamesBasePath(): string {
+  const v = (import.meta.env.VITE_GAMES_BASE_PATH ?? import.meta.env.GAMES_BASE_PATH ?? 'assets/games') as string;
+  return v.endsWith('/') ? v.slice(0, -1) : v;
+}
+
+/** 获取游戏数据路径前缀：{gamesBasePath}/{gameId}/，prod 静态资源用 */
 export function getGameAssetsPrefix(gameId?: string): string {
   const id = gameId || DEFAULT_GAME_ID;
-  return `assets/games/${id}`;
+  return `${getGamesBasePath()}/${id}`;
 }
 
 export function getContentPath(gameId?: string): string {
   const id = gameId || DEFAULT_GAME_ID;
-  return `assets/games/${id}/story.tw`;
+  return `${getGamesBasePath()}/${id}/story.tw`;
 }
 
 export function getAIGCApiKey(): string {
@@ -113,6 +119,13 @@ export function getFeaturesFetchUrl(gameId?: string): string {
 export function getGameContentUrl(gameId?: string): string {
   const id = gameId || DEFAULT_GAME_ID;
   const path = import.meta.env.DEV ? `/api/games/${id}/game-content` : `${getGameAssetsPrefix(id)}/story.tw`;
+  return import.meta.env.DEV ? path : toFetchUrl(path);
+}
+
+/** 剧情框架请求 URL（story-fm.json）*/
+export function getStoryFmFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  const path = import.meta.env.DEV ? `/api/games/${id}/story-fm` : `${getGameAssetsPrefix(id)}/story-fm.json`;
   return import.meta.env.DEV ? path : toFetchUrl(path);
 }
 

@@ -5,6 +5,7 @@
 import React, {useState} from 'react';
 import {getMetadataFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
 import type {StoryFramework} from '../schema/story-framework';
 import type {AttributeType, CharacterAttributeDef, GameMetadata} from '../schema/metadata';
@@ -182,6 +183,7 @@ export function MetadataEditor({
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useStoryMetadata(updateFw);
 
   const metadata = fw.metadata ?? {characterAttributes: []};
@@ -211,6 +213,7 @@ export function MetadataEditor({
     const result = await saveMetadataToPreset(nextMeta, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeAttrWithAuth = (i: number) => checkAuthForSave(() => removeAttr(i));
 
   const saveMetadata = async () => {
     const result = await saveMetadataToPreset(fw.metadata ?? {characterAttributes: []}, gameId);
@@ -266,7 +269,7 @@ export function MetadataEditor({
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeAttr(i)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeAttrWithAuth(i)} title="删除">
                   ×
                 </button>
               </div>
@@ -292,7 +295,7 @@ export function MetadataEditor({
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveMetadata}
+          onSave={() => checkAuthForSave(saveMetadata)}
         >
           <AttrFormContent
             attr={attrs[editIndex]}
@@ -308,7 +311,7 @@ export function MetadataEditor({
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAdd}
+          onSave={() => checkAuthForSave(confirmAdd)}
         >
           <AttrFormContent
             attr={newAttr}

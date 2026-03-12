@@ -6,6 +6,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
 import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
@@ -545,6 +546,7 @@ export function CharacterEditor({fw, updateFw}: {
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
     fetch(getCharactersFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
@@ -591,6 +593,7 @@ export function CharacterEditor({fw, updateFw}: {
     const result = await saveCharactersToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeCharacterWithAuth = (index: number) => checkAuthForSave(() => removeCharacter(index));
 
   const saveChars = async () => {
     const result = await saveCharactersToPreset(characters, gameId);
@@ -631,7 +634,7 @@ export function CharacterEditor({fw, updateFw}: {
                 <button
                   type="button"
                   style={styles.btnIcon}
-                  onClick={() => removeCharacter(ci)}
+                  onClick={() => removeCharacterWithAuth(ci)}
                   title="删除"
                 >
                   ×
@@ -665,7 +668,7 @@ export function CharacterEditor({fw, updateFw}: {
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveChars}
+          onSave={() => checkAuthForSave(saveChars)}
         >
           <CharacterFormContent
             char={characters[editIndex]}
@@ -683,7 +686,7 @@ export function CharacterEditor({fw, updateFw}: {
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddChar}
+          onSave={() => checkAuthForSave(confirmAddChar)}
         >
           <CharacterFormContent
             char={newChar}

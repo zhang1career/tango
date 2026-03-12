@@ -5,6 +5,7 @@
 import React, {useState} from 'react';
 import {getItemsFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameItem} from '../schema/game-item';
 import {formatJsonCompact} from '../utils/json-format';
@@ -154,6 +155,7 @@ export function ItemsEditorPage({fw, updateFw}: {
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   const items = fw.items ?? [];
   const setItems = (fn: (i: GameItem[]) => GameItem[]) =>
     updateFw((d) => ({...d, items: fn(d.items ?? [])}));
@@ -185,6 +187,7 @@ export function ItemsEditorPage({fw, updateFw}: {
     const result = await saveItemsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeItemWithAuth = (index: number) => checkAuthForSave(() => removeItem(index));
 
   const saveItems = async () => {
     const result = await saveItemsToPreset(items, gameId);
@@ -219,7 +222,7 @@ export function ItemsEditorPage({fw, updateFw}: {
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeItem(i)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeItemWithAuth(i)} title="删除">
                   ×
                 </button>
               </div>
@@ -245,7 +248,7 @@ export function ItemsEditorPage({fw, updateFw}: {
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveItems}
+          onSave={() => checkAuthForSave(saveItems)}
         >
           <ItemFormContent
             item={items[editIndex]}
@@ -261,7 +264,7 @@ export function ItemsEditorPage({fw, updateFw}: {
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddItem}
+          onSave={() => checkAuthForSave(confirmAddItem)}
         >
           <ItemFormContent
             item={newItem}

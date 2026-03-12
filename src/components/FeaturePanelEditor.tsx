@@ -5,6 +5,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {getFeaturesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {FeaturesConfig} from '../schema/features';
 import {MediaUrlField} from './ui/MediaFields';
 import {formatJsonCompact} from '../utils/json-format';
@@ -50,6 +51,7 @@ async function saveFeatures(features: FeaturesConfig, gameId: string): Promise<{
 
 export function FeaturePanelEditor() {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   const [features, setFeatures] = useState<FeaturesConfig>(DEFAULT_FEATURES);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -91,7 +93,7 @@ export function FeaturePanelEditor() {
       <section style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>战斗</h2>
-          <button type="button" style={styles.btn} onClick={handleSaveBattle} disabled={saving}>
+          <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleSaveBattle)} disabled={saving}>
             {saving ? '保存中...' : '保存'}
           </button>
         </div>

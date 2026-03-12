@@ -5,6 +5,7 @@
 import React, {useCallback, useEffect, useMemo, useRef} from 'react';
 import {getMapsFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import {
   addEdge,
   Background,
@@ -622,6 +623,7 @@ export function MapEditor({
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
     fetch(getMapsFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
@@ -658,6 +660,7 @@ export function MapEditor({
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
+  const confirmAddMapWithAuth = () => checkAuthForSave(confirmAddMap);
 
   const updateMap = (index: number, fn: (m: GameMap) => GameMap) =>
     setMaps((m) => m.map((x, i) => (i === index ? fn(x) : x)));
@@ -669,6 +672,7 @@ export function MapEditor({
     const result = await saveMapsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeMapWithAuth = (index: number) => checkAuthForSave(() => removeMap(index));
 
   const activeMap = activeMapIndex !== null ? maps[activeMapIndex] : null;
 
@@ -681,11 +685,13 @@ export function MapEditor({
           onUpdate={(fn) => updateMap(activeMapIndex, fn)}
           onClose={() => setActiveMapIndex(null)}
           onSave={async (currentMap) => {
-            const nextMaps = [...(fw.maps ?? [])];
-            nextMaps[activeMapIndex] = currentMap;
-            updateFw((d) => ({...d, maps: nextMaps}));
-            const result = await saveMapsToPreset(nextMaps, gameId);
-            if (!result.ok) alert(`保存失败: ${result.error}`);
+            await checkAuthForSave(async () => {
+              const nextMaps = [...(fw.maps ?? [])];
+              nextMaps[activeMapIndex] = currentMap;
+              updateFw((d) => ({...d, maps: nextMaps}));
+              const result = await saveMapsToPreset(nextMaps, gameId);
+              if (!result.ok) alert(`保存失败: ${result.error}`);
+            });
           }}
         />
       </div>
@@ -726,7 +732,7 @@ export function MapEditor({
                 <button
                   type="button"
                   style={styles.btnIcon}
-                  onClick={() => removeMap(mi)}
+                  onClick={() => removeMapWithAuth(mi)}
                   title="删除地图"
                 >
                   ×
@@ -747,7 +753,7 @@ export function MapEditor({
             open={true}
             onClose={() => setAddModalOpen(false)}
             editable={true}
-            onSave={confirmAddMap}
+            onSave={confirmAddMapWithAuth}
           >
             <MapFormContent
               map={newMap}

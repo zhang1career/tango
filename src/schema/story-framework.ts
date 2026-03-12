@@ -88,6 +88,38 @@ export interface StoryFramework {
   gameRules?: GameRule[];
 }
 
+/** 迁移旧版剧情框架结构（如 scenes 数组改为 sceneEntries） */
+export function migrateFramework(parsed: StoryFramework): void {
+  const chapters = parsed.chapters ?? [];
+  const scenes = parsed.scenes ?? [];
+  const sceneMap = new Map(scenes.map((s) => [s.id, s]));
+  for (const ch of chapters) {
+    const old = ch as unknown as { scenes?: Array<{ id: string; summary?: string; name?: string }> };
+    if (Array.isArray(old.scenes) && !ch.sceneEntries) {
+      ch.sceneEntries = old.scenes.map((s) => ({sceneId: s.id}));
+      for (const s of old.scenes) {
+        if (!sceneMap.has(s.id)) {
+          scenes.push({
+            id: s.id,
+            name: s.name ?? s.id,
+            summary: s.summary ?? '',
+          });
+          sceneMap.set(s.id, scenes[scenes.length - 1]);
+        }
+      }
+      delete old.scenes;
+    }
+    if (!ch.sceneEntries) ch.sceneEntries = [];
+    const seen = new Set<string>();
+    ch.sceneEntries = ch.sceneEntries.filter((e) => {
+      if (seen.has(e.sceneId)) return false;
+      seen.add(e.sceneId);
+      return true;
+    });
+  }
+  parsed.scenes = scenes;
+}
+
 /** 从完整框架中取出仅用于持久化的部分（保存剧情文件时使用） */
 export function toPersistedFramework(fw: StoryFramework): Record<string, unknown> {
   const out: Record<string, unknown> = {};

@@ -5,6 +5,7 @@
 import React, {useEffect, useState} from 'react';
 import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameBehavior} from '../schema/game-behavior';
@@ -500,6 +501,7 @@ export function EventEditor({fw, updateFw}: {
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
     preloadForEvents(updateFw, gameId);
   }, [updateFw, gameId]);
@@ -543,6 +545,7 @@ export function EventEditor({fw, updateFw}: {
     const result = await saveEventsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeEventWithAuth = (index: number) => checkAuthForSave(() => removeEvent(index));
 
   const saveEvents = async () => {
     const result = await saveEventsToPreset(events, gameId);
@@ -585,7 +588,7 @@ export function EventEditor({fw, updateFw}: {
                 <button
                   type="button"
                   style={styles.btnIcon}
-                  onClick={() => removeEvent(ei)}
+                  onClick={() => removeEventWithAuth(ei)}
                   title="删除"
                 >
                   ×
@@ -618,7 +621,7 @@ export function EventEditor({fw, updateFw}: {
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveEvents}
+          onSave={() => checkAuthForSave(saveEvents)}
         >
           <EventFormContent
             evt={events[editIndex]}
@@ -636,7 +639,7 @@ export function EventEditor({fw, updateFw}: {
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddEvent}
+          onSave={() => checkAuthForSave(confirmAddEvent)}
         >
           <EventFormContent
             evt={newEvent}

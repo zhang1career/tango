@@ -5,6 +5,7 @@
 import React, {useEffect, useState} from 'react';
 import {getRulesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
+import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameRule} from '../schema/game-rule';
 import {formatJsonCompact} from '../utils/json-format';
@@ -108,6 +109,7 @@ export function RuleEditor({
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
   const {gameId} = useGameId();
+  const {checkAuthForSave} = useAuth();
   useEffect(() => {
     fetch(getRulesFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
@@ -160,6 +162,7 @@ export function RuleEditor({
     const result = await saveRulesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
+  const removeRuleWithAuth = (index: number) => checkAuthForSave(() => removeRule(index));
 
   const saveRules = async () => {
     const result = await saveRulesToPreset(rules, gameId);
@@ -197,7 +200,7 @@ export function RuleEditor({
                 <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ri)} title="编辑">
                   ✎
                 </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeRule(ri)} title="删除">
+                <button type="button" style={styles.btnIcon} onClick={() => removeRuleWithAuth(ri)} title="删除">
                   ×
                 </button>
               </div>
@@ -224,7 +227,7 @@ export function RuleEditor({
           open={true}
           onClose={() => setEditIndex(null)}
           editable={true}
-          onSave={saveRules}>
+          onSave={() => checkAuthForSave(saveRules)}>
           <RuleFormContent
             rule={rules[editIndex]}
             editable={true}
@@ -238,7 +241,7 @@ export function RuleEditor({
           open={true}
           onClose={() => setAddModalOpen(false)}
           editable={true}
-          onSave={confirmAddRule}
+          onSave={() => checkAuthForSave(confirmAddRule)}
         >
           <RuleFormContent
             rule={newRule}
