@@ -7,9 +7,10 @@
         "subject": "yuanyong",
         "object": "feimu",
         "contents": [
-          {"id":"evt_1773220540755.b_100100","q":"攻击","a":"","t":"action","actionKind":"battle","ruleIds":["rule_0001"],"writebackExpr":"$entity.is_used = true"}
+          {"id":"evt_1773220540755.b_100100","q":"攻击","a":"","t":"action","actionKind":"battle","ruleIds":["rule_0001"]}
         ]
       }
-    ]
+    ],
+    "description": "商贩与玩家发生纠纷，以至于二人互殴。"
   }
 ]

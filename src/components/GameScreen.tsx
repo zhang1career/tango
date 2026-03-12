@@ -605,7 +605,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   style={styles.linkButton}
                   onClick={() => handleLink(link.passageName, link)}
                 >
-                  {link.displayText.startsWith('前往') ? link.displayText : `前往 ${link.displayText}`}
+                  {link.displayText.startsWith('前往') || link.displayText === '继续' ? link.displayText : `前往 ${link.displayText}`}
                 </button>
               ))}
             </nav>

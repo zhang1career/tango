@@ -26,6 +26,8 @@ export interface SceneEntry {
   sceneId: string;
   /** 本章节采用该场景时的规则 id 列表（有序，准入时按顺序嵌套执行） */
   ruleIds?: string[];
+  /** 生成内容字数要求（约多少字），非空时加入 AI 提示词 */
+  wordCount?: number;
 }
 
 /** 章节：可选的逻辑分组 */
@@ -159,9 +161,9 @@ export function flattenSceneEntries(
   return result;
 }
 
-/** 获取 passage 名：章节 index + 场景 id */
+/** 获取 passage 基 ID：级联格式 ch{N}.{sceneId} */
 export function toPassageId(chapterIndex: number, sceneId: string): string {
-  return `ch${chapterIndex}_${sceneId}`.trim().replace(/\s+/g, '_');
+  return `ch${chapterIndex}.${sceneId}`.trim().replace(/\s+/g, '_');
 }
 
 /** 校验框架：检查 sceneEntries 中的 sceneId 是否都存在 */

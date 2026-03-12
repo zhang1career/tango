@@ -4,6 +4,7 @@
  */
 
 import type {GameBehavior} from '../schema/game-behavior';
+import {toCascadedSubId} from './cascadedId';
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -25,7 +26,7 @@ export function assignBehaviorIds(
   const ids: string[] = [];
   for (let i = 0; i < count; i++) {
     max += 100;
-    ids.push(`${ownerId}.b_${max}`);
+    ids.push(toCascadedSubId(ownerId, 'b', max));
   }
   return ids;
 }

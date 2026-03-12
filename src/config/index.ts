@@ -32,6 +32,19 @@ export function getAIGCApiUrl(): string {
   return env.AIGC_API_URL ?? env.VITE_AIGC_API_URL ?? '';
 }
 
+/** 剧情生成自动分页：每页最少字数 */
+export function getPassagePageCharsMin(): number {
+  const n = Number(env.VITE_PASSAGE_PAGE_CHARS_MIN);
+  return Number.isNaN(n) || n < 1 ? 300 : n;
+}
+
+/** 剧情生成自动分页：每页最多字数 */
+export function getPassagePageCharsMax(): number {
+  const n = Number(env.VITE_PASSAGE_PAGE_CHARS_MAX);
+  const min = getPassagePageCharsMin();
+  return Number.isNaN(n) || n < min ? min + 200 : n;
+}
+
 /** dev: 显示编辑菜单；prod: 仅提供游戏，不提供时间线/地图/人物/事件/物品/元信息。配置 VITE_APP_MODE 或 APP_MODE */
 export function getAppMode(): 'dev' | 'prod' {
   const v = (env.VITE_APP_MODE ?? env.APP_MODE ?? 'dev') as string;

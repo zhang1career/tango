@@ -122,7 +122,22 @@ export default defineConfig(({ mode }) => {
           };
 
           if (req.method !== 'GET') {
-            if (isGameContent) return next();
+            if (isGameContent) {
+              let body = '';
+              req.on('data', (chunk) => { body += chunk; });
+              req.on('end', () => {
+                try {
+                  mkdirSync(resolve(cwd, gamesBasePath, gameId), { recursive: true });
+                  writeFileSync(outPath, body, 'utf-8');
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ ok: true }));
+                } catch (e) {
+                  res.writeHead(500, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
+                }
+              });
+              return;
+            }
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
             req.on('end', () => {

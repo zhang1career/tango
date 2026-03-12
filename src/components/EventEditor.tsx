@@ -382,6 +382,9 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
+        {evt.description && (
+          <p style={{margin: '0 0 8px'}}><strong>描述：</strong>{evt.description}</p>
+        )}
         {evt.openingAnimation && (
           <p style={{margin: '0 0 8px'}}><strong>开场动画：</strong>{evt.openingAnimation}</p>
         )}
@@ -419,6 +422,15 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
           onChange={(e) => onUpdate((c) => ({...c, name: e.target.value}))}
           style={styles.input}
           placeholder="进入军营"
+        />
+      </div>
+      <div style={styles.row}>
+        <label style={styles.label}>描述</label>
+        <textarea
+          value={evt.description ?? ''}
+          onChange={(e) => onUpdate((c) => ({...c, description: e.target.value || undefined}))}
+          style={{...styles.input, minHeight: 60}}
+          placeholder="事件背景与要点，用于 AI 生成剧情时的上下文"
         />
       </div>
       <MediaUrlField

@@ -18,6 +18,8 @@ export interface EventBehaviorSequenceItem {
 export interface GameEvent {
   id: string;
   name: string;
+  /** 描述：传给 AI 生成剧情时的上下文 */
+  description?: string;
   /** 行为序列：按时间顺序执行 */
   behaviorSequence?: EventBehaviorSequenceItem[];
   /** 是否已使用（通用字段） */
