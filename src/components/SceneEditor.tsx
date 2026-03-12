@@ -3,6 +3,8 @@
  */
 
 import React, {useEffect, useState} from 'react';
+import {getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
@@ -31,10 +33,10 @@ function FieldRow({
   );
 }
 
-async function saveScenesToPreset(scenes: unknown): Promise<{ ok: boolean; error?: string }> {
+async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-scenes', {
+      const res = await fetch(getScenesFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(scenes),
@@ -252,14 +254,14 @@ function SceneFormContent({
   );
 }
 
-async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void) {
+async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
   const apis: Array<{ url: string; key: keyof StoryFramework }> = [
-    {url: '/api/save-story-maps', key: 'maps'},
-    {url: '/api/story-characters', key: 'characters'},
-    {url: '/api/story-events', key: 'events'},
-    {url: '/api/story-items', key: 'items'},
-    {url: '/api/story-metadata', key: 'metadata'},
-    {url: '/api/story-rules', key: 'gameRules'},
+    {url: getMapsFetchUrl(gameId), key: 'maps'},
+    {url: getCharactersFetchUrl(gameId), key: 'characters'},
+    {url: getEventsFetchUrl(gameId), key: 'events'},
+    {url: getItemsFetchUrl(gameId), key: 'items'},
+    {url: getMetadataFetchUrl(gameId), key: 'metadata'},
+    {url: getRulesFetchUrl(gameId), key: 'gameRules'},
   ];
   for (const {url, key} of apis) {
     try {
@@ -284,12 +286,13 @@ export function SceneEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
+  const {gameId} = useGameId();
   useEffect(() => {
-    preloadForScenes(updateFw);
-  }, [updateFw]);
+    preloadForScenes(updateFw, gameId);
+  }, [updateFw, gameId]);
 
   useEffect(() => {
-    fetch('/api/story-scenes')
+    fetch(getScenesFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
@@ -297,7 +300,7 @@ export function SceneEditor({
       })
       .catch(() => {
       });
-  }, [updateFw]);
+  }, [updateFw, gameId]);
 
   const scenes = fw.scenes ?? [];
   const setScenes = (fn: (s: GameScene[]) => GameScene[]) =>
@@ -329,7 +332,7 @@ export function SceneEditor({
   const confirmAddScene = async () => {
     const next = [...scenes, newScene];
     setScenes(() => next);
-    const result = await saveScenesToPreset(next);
+    const result = await saveScenesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -340,12 +343,12 @@ export function SceneEditor({
   const removeScene = async (index: number) => {
     const next = scenes.filter((_, i) => i !== index);
     setScenes(() => next);
-    const result = await saveScenesToPreset(next);
+    const result = await saveScenesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
 
   const saveScenes = async () => {
-    const result = await saveScenesToPreset(scenes);
+    const result = await saveScenesToPreset(scenes, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };

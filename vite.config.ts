@@ -1,360 +1,108 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { formatJsonCompact } from './src/utils/json-format';
+
+function gameAssetPath(cwd: string, gameId: string, name: string): string {
+  const fileName = name === 'game-content' ? 'story.tw' : `${name}.json`;
+  return resolve(cwd, 'assets', 'games', gameId, fileName);
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const gameContentPath = env.VITE_GAME_CONTENT_PATH ?? env.GAME_CONTENT_PATH ?? 'assets/story.tw';
   const portRaw = env.PORT ?? env.VITE_PORT;
   const port = portRaw ? (parseInt(portRaw, 10) || undefined) : undefined;
+  const cwd = process.cwd();
 
   return {
   resolve: {
-    alias: { '@': resolve(process.cwd(), 'src') },
+    alias: { '@': resolve(cwd, 'src') },
   },
   server: port ? { port } : undefined,
   plugins: [
     react(),
     {
-      name: 'save-story-maps',
+      name: 'api-games',
       configureServer(server) {
-        server.middlewares.use('/api/save-story-maps', (req, res, next) => {
-          if (req.method === 'GET') {
+        server.middlewares.use('/api/games', (req, res, next) => {
+          const match = req.url?.match(/^\/([^/]+)\/(story-[a-z]+|game-content)(?:\?|$)/);
+          if (!match) return next();
+          const [, gameId, resource] = match;
+          if (!gameId || !resource) return next();
+
+          const isGameContent = resource === 'game-content';
+          const outPath = gameAssetPath(cwd, gameId, isGameContent ? 'game-content' : resource);
+
+          const handleGet = () => {
             try {
-              const outPath = resolve(process.cwd(), 'assets/story-maps.json');
               if (!existsSync(outPath)) {
+                if (resource === 'story-items') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end('[]');
+                  return;
+                }
+                if (resource === 'story-features') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ battle: {} }));
+                  return;
+                }
                 res.writeHead(404, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'not found' }));
                 return;
               }
               const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.writeHead(200, {
+                'Content-Type': isGameContent ? 'text/plain; charset=utf-8' : 'application/json',
+              });
               res.end(data);
             } catch (e) {
               res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
+              res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
             }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const maps = JSON.parse(body);
-              const outPath = resolve(process.cwd(), 'assets/story-maps.json');
-              writeFileSync(outPath, formatJsonCompact(maps), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'save-story-events',
-      configureServer(server) {
-        server.middlewares.use('/api/story-events', (req, res, next) => {
-          if (req.method === 'GET') {
-            try {
-              const outPath = resolve(process.cwd(), 'assets/story-events.json');
-              if (!existsSync(outPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'not found' }));
-                return;
-              }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const events = JSON.parse(body);
-              const outPath = resolve(process.cwd(), 'assets/story-events.json');
-              writeFileSync(outPath, formatJsonCompact(events), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'save-story-items',
-      configureServer(server) {
-        server.middlewares.use('/api/story-items', (req, res, next) => {
-          if (req.method === 'GET') {
-            try {
-              const outPath = resolve(process.cwd(), 'assets/story-items.json');
-              if (!existsSync(outPath)) {
+          };
+
+          if (req.method !== 'GET') {
+            if (isGameContent) return next();
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const parsed = JSON.parse(body);
+                mkdirSync(resolve(cwd, 'assets', 'games', gameId), { recursive: true });
+                const writePath = resolve(cwd, 'assets', 'games', gameId, `${resource}.json`);
+                writeFileSync(writePath, formatJsonCompact(parsed), 'utf-8');
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end('[]');
-                return;
+                res.end(JSON.stringify({ ok: true }));
+              } catch (e) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
               }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
+            });
             return;
           }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const items = JSON.parse(body);
-              const outPath = resolve(process.cwd(), 'assets/story-items.json');
-              writeFileSync(outPath, formatJsonCompact(items), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'story-metadata',
-      configureServer(server) {
-        server.middlewares.use('/api/story-metadata', (req, res, next) => {
-          const outPath = resolve(process.cwd(), 'assets/story-metadata.json');
-          if (req.method === 'GET') {
-            try {
-              if (!existsSync(outPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'not found' }));
-                return;
-              }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const metadata = JSON.parse(body);
-              writeFileSync(outPath, formatJsonCompact(metadata), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'save-story-scenes',
-      configureServer(server) {
-        server.middlewares.use('/api/story-scenes', (req, res, next) => {
-          const outPath = resolve(process.cwd(), 'assets/story-scenes.json');
-          if (req.method === 'GET') {
-            try {
-              if (!existsSync(outPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'not found' }));
-                return;
-              }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const scenes = JSON.parse(body);
-              writeFileSync(outPath, formatJsonCompact(scenes), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'save-story-rules',
-      configureServer(server) {
-        server.middlewares.use('/api/story-rules', (req, res, next) => {
-          const outPath = resolve(process.cwd(), 'assets/story-rules.json');
-          if (req.method === 'GET') {
-            try {
-              if (!existsSync(outPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'not found' }));
-                return;
-              }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const rules = JSON.parse(body);
-              writeFileSync(outPath, formatJsonCompact(rules), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'save-story-characters',
-      configureServer(server) {
-        server.middlewares.use('/api/story-characters', (req, res, next) => {
-          const outPath = resolve(process.cwd(), 'assets/story-characters.json');
-          if (req.method === 'GET') {
-            try {
-              if (!existsSync(outPath)) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'not found' }));
-                return;
-              }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const characters = JSON.parse(body);
-              writeFileSync(outPath, formatJsonCompact(characters), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
-        });
-      },
-    },
-    {
-      name: 'story-features',
-      configureServer(server) {
-        server.middlewares.use('/api/story-features', (req, res, next) => {
-          const outPath = resolve(process.cwd(), 'assets/story-features.json');
-          if (req.method === 'GET') {
-            try {
-              if (!existsSync(outPath)) {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ battle: {} }));
-                return;
-              }
-              const data = readFileSync(outPath, 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(data);
-            } catch (e) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-            return;
-          }
-          if (req.method !== 'POST') return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const features = JSON.parse(body);
-              writeFileSync(outPath, formatJsonCompact(features), 'utf-8');
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String(e) }));
-            }
-          });
+          handleGet();
         });
       },
     },
     {
       name: 'game-content',
-      configureServer(server) {
-        server.middlewares.use('/api/game-content', (req, res, next) => {
-          if (req.method !== 'GET') return next();
-          const path = gameContentPath;
-          const absPath = resolve(process.cwd(), path);
-          try {
-            if (!existsSync(absPath)) {
-              res.writeHead(404, { 'Content-Type': 'text/plain' });
-              res.end(`故事文件不存在: ${path}`);
-              return;
-            }
-            const data = readFileSync(absPath, 'utf-8');
-            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-            res.end(data);
-          } catch (e) {
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end(String((e as Error).message));
-          }
-        });
-      },
       closeBundle() {
-        const outDir = resolve(process.cwd(), 'dist');
-        const assetsDir = resolve(process.cwd(), 'assets');
+        const outDir = resolve(cwd, 'dist');
+        const assetsDir = resolve(cwd, 'assets');
         const distAssets = resolve(outDir, 'assets');
-        if (existsSync(assetsDir)) {
-          mkdirSync(distAssets, { recursive: true });
-          for (const f of ['story.tw', 'story-characters.json', 'story-rules.json', 'story-features.json', 'story-events.json']) {
-            const src = resolve(assetsDir, f);
-            if (existsSync(src)) copyFileSync(src, resolve(distAssets, f));
+        const gamesDir = resolve(assetsDir, 'games');
+        mkdirSync(distAssets, { recursive: true });
+        const files = ['story.tw', 'story-characters.json', 'story-rules.json', 'story-features.json', 'story-events.json', 'story-scenes.json', 'story-maps.json', 'story-items.json', 'story-metadata.json'];
+        if (existsSync(gamesDir)) {
+          for (const gameId of readdirSync(gamesDir, { withFileTypes: true }).filter((d: { isDirectory: () => boolean }) => d.isDirectory()).map((d: { name: string }) => d.name)) {
+            const gameSrc = resolve(gamesDir, gameId);
+            const gameDst = resolve(distAssets, 'games', gameId);
+            mkdirSync(gameDst, { recursive: true });
+            for (const f of files) {
+              const src = resolve(gameSrc, f);
+              if (existsSync(src)) copyFileSync(src, resolve(gameDst, f));
+            }
           }
         }
       },

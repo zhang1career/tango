@@ -3,6 +3,8 @@
  */
 
 import React, {useEffect, useState} from 'react';
+import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameBehavior} from '../schema/game-behavior';
@@ -447,11 +449,11 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
   );
 }
 
-/** 保存事件到预设路径 assets/story-events.json */
-async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 保存事件到预设路径 assets/games/{gameId}/story-events.json */
+async function saveEventsToPreset(events: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-events', {
+      const res = await fetch(getEventsFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(events),
@@ -473,11 +475,11 @@ async function saveEventsToPreset(events: unknown): Promise<{ ok: boolean; error
   return {ok: true};
 }
 
-async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void) {
+async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
   const apis: Array<{url: string; key: keyof StoryFramework}> = [
-    {url: '/api/story-events', key: 'events'},
-    {url: '/api/story-characters', key: 'characters'},
-    {url: '/api/story-rules', key: 'gameRules'},
+    {url: getEventsFetchUrl(gameId), key: 'events'},
+    {url: getCharactersFetchUrl(gameId), key: 'characters'},
+    {url: getRulesFetchUrl(gameId), key: 'gameRules'},
   ];
   for (const {url, key} of apis) {
     try {
@@ -497,9 +499,10 @@ export function EventEditor({fw, updateFw}: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
 }) {
+  const {gameId} = useGameId();
   useEffect(() => {
-    preloadForEvents(updateFw);
-  }, [updateFw]);
+    preloadForEvents(updateFw, gameId);
+  }, [updateFw, gameId]);
 
   const events = fw.events ?? [];
   const setEvents = (fn: (e: GameEvent[]) => GameEvent[]) =>
@@ -526,7 +529,7 @@ export function EventEditor({fw, updateFw}: {
   const confirmAddEvent = async () => {
     const next = [...events, newEvent];
     setEvents(() => next);
-    const result = await saveEventsToPreset(next);
+    const result = await saveEventsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -537,12 +540,12 @@ export function EventEditor({fw, updateFw}: {
   const removeEvent = async (index: number) => {
     const next = events.filter((_, i) => i !== index);
     setEvents(() => next);
-    const result = await saveEventsToPreset(next);
+    const result = await saveEventsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
 
   const saveEvents = async () => {
-    const result = await saveEventsToPreset(events);
+    const result = await saveEventsToPreset(events, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };

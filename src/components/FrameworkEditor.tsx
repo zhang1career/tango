@@ -11,7 +11,8 @@ import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
 import {frameworkToStory, parseTwee, serializeStorySugarcube} from '@/engine';
 
 import {formatJsonCompact} from '../utils/json-format';
@@ -92,22 +93,23 @@ function FileHandleButton({
 }
 
 async function preloadListData(
-  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void
+  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void,
+  gameId: string
 ): Promise<void> {
   const updates: Array<(d: StoryFramework) => StoryFramework> = [];
   const apis = [
-    {url: '/api/story-characters', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[]},
-    {url: '/api/story-scenes', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameScene[]},
-    {url: '/api/save-story-maps', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameMap[]},
-    {url: '/api/story-events', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameEvent[]},
-    {url: '/api/story-items', parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameItem[]},
+    {url: getCharactersFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[]},
+    {url: getScenesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameScene[]},
+    {url: getMapsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameMap[]},
+    {url: getEventsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameEvent[]},
+    {url: getItemsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameItem[]},
     {
-      url: '/api/story-metadata', parse: (d: unknown) => {
+      url: getMetadataFetchUrl(gameId), parse: (d: unknown) => {
         const m = d as { characterAttributes?: unknown };
         return m?.characterAttributes ? ({characterAttributes: m.characterAttributes} as GameMetadata) : undefined;
       }
     },
-    {url: '/api/story-rules', parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
+    {url: getRulesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
   ];
   const keys: (keyof StoryFramework)[] = ['characters', 'scenes', 'maps', 'events', 'items', 'metadata', 'gameRules'];
   for (let i = 0; i < apis.length; i++) {
@@ -245,6 +247,7 @@ export function FrameworkEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
+  const {gameId} = useGameId();
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [expandedCh, setExpandedCh] = useState<Set<string>>(new Set());
   const [expandedScene, setExpandedScene] = useState<Set<string>>(new Set());
@@ -257,8 +260,8 @@ export function FrameworkEditor({
   const [frameworkFileHandle, setFrameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
 
   useEffect(() => {
-    preloadListData(updateFw);
-  }, [updateFw]);
+    preloadListData(updateFw, gameId);
+  }, [updateFw, gameId]);
 
   const updateFwWithErrorReset = useCallback(
     (fn: (d: StoryFramework) => StoryFramework) => {
@@ -332,11 +335,11 @@ export function FrameworkEditor({
       updateFw(() => fromPersistedFramework(parsed));
       setFrameworkFileHandle(handle);
       setJsonError(null);
-      await preloadListData(updateFw);
+      await preloadListData(updateFw, gameId);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
     }
-  }, [updateFw]);
+  }, [updateFw, gameId]);
 
   const handleSave = useCallback(async () => {
     try {

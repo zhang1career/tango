@@ -1,7 +1,7 @@
 /**
  * 文字冒险游戏 - 入口
- * 支持 Twee 格式
- * 配置 GAME_CONTENT_PATH 或 VITE_GAME_CONTENT_PATH（如 assets/story.tw）
+ * 支持 Twee 格式、多游戏（gameId 隔离）
+ * 游戏数据位于 assets/games/{gameId}/
  */
 
 import React, {useCallback, useState} from 'react';
@@ -15,25 +15,10 @@ import {ItemsEditorPage} from './components/ItemsEditorPage';
 import {SceneEditor} from './components/SceneEditor';
 import {RuleEditor} from './components/RuleEditor';
 import {FeaturePanelEditor} from './components/FeaturePanelEditor';
-import {getAppMode, getContentPath} from './config';
+import {RightDrawer} from './components/RightDrawer';
+import {useGameId} from './context/GameIdContext';
+import {getAppMode, getContentPath, getGameContentUrl} from './config';
 import type {StoryFramework} from './schema/story-framework';
-
-async function fetchContent(path: string): Promise<string> {
-  const p = path || getContentPath();
-  if (!p) {
-    throw new Error('请配置 GAME_CONTENT_PATH 或 VITE_GAME_CONTENT_PATH（如 assets/story.tw）');
-  }
-  if (p.startsWith('http://') || p.startsWith('https://')) {
-    const res = await fetch(p);
-    if (!res.ok) throw new Error(`加载失败: ${res.status}`);
-    return res.text();
-  }
-  // 开发环境：通过 API 读取项目内文件；生产环境：fetch 静态资源
-  const url = import.meta.env.DEV ? '/api/game-content' : (p.startsWith('/') ? p : `/${p}`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`加载失败: ${res.status} ${p}`);
-  return res.text();
-}
 
 const DEFAULT_FRAMEWORK: StoryFramework = {
   title: '未命名故事',
@@ -42,15 +27,53 @@ const DEFAULT_FRAMEWORK: StoryFramework = {
 
 const isProd = getAppMode() === 'prod';
 
+async function fetchContentForGame(gameId: string, pathOverride?: string): Promise<string> {
+  const p = pathOverride || getContentPath(gameId);
+  if (!p) throw new Error('游戏内容路径为空');
+  if (p.startsWith('http://') || p.startsWith('https://')) {
+    const res = await fetch(p);
+    if (!res.ok) throw new Error(`加载失败: ${res.status}`);
+    return res.text();
+  }
+  const url = import.meta.env.DEV ? getGameContentUrl(gameId) : (p.startsWith('/') ? p : `/${p}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`加载失败: ${res.status} ${p}`);
+  return res.text();
+}
+
 export default function App() {
+  const {gameId, setGameId} = useGameId();
   const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata'>('game');
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
     setFw((prev) => fn(prev));
   }, []);
 
+  const fetchContent = useCallback(
+    (path?: string) => fetchContentForGame(gameId, path),
+    [gameId]
+  );
+
   return (
     <div style={{minHeight: '100vh', backgroundColor: '#1a1a2e'}}>
+      <RightDrawer>
+        <div style={{marginBottom: 16, fontSize: 13, color: '#888'}}>选择游戏</div>
+        <select
+          value={gameId}
+          onChange={(e) => setGameId(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '8px 12px',
+            backgroundColor: '#252540',
+            color: '#a78bfa',
+            border: '1px solid #333',
+            borderRadius: 6,
+            fontSize: 14,
+          }}
+        >
+          <option value="default">default</option>
+        </select>
+      </RightDrawer>
       <nav style={navStyles.bar}>
         <button
           type="button"

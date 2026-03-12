@@ -3,6 +3,8 @@
  */
 
 import React, {useCallback, useEffect, useMemo, useRef} from 'react';
+import {getMapsFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
 import {
   addEdge,
   Background,
@@ -292,11 +294,11 @@ function EdgePropsPanel({
   );
 }
 
-/** 保存地图到预设路径 assets/story-maps.json，开发模式下直接写入文件无弹窗 */
-async function saveMapsToPreset(maps: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 保存地图到预设路径 assets/games/{gameId}/story-maps.json，开发模式下直接写入文件无弹窗 */
+async function saveMapsToPreset(maps: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/save-story-maps', {
+      const res = await fetch(getMapsFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: formatJsonCompact(maps),
@@ -619,15 +621,16 @@ export function MapEditor({
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
 }) {
+  const {gameId} = useGameId();
   useEffect(() => {
-    fetch('/api/save-story-maps')
+    fetch(getMapsFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
         updateFw((d) => ({...d, maps: list as GameMap[]}));
       })
       .catch(() => {});
-  }, [updateFw]);
+  }, [updateFw, gameId]);
 
   const maps = fw.maps ?? [];
   const setMaps = (fn: (m: GameMap[]) => GameMap[]) =>
@@ -651,7 +654,7 @@ export function MapEditor({
   const confirmAddMap = async () => {
     const next = [...maps, newMap];
     setMaps(() => next);
-    const result = await saveMapsToPreset(next);
+    const result = await saveMapsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -663,7 +666,7 @@ export function MapEditor({
     const next = maps.filter((_, i) => i !== index);
     setMaps(() => next);
     setActiveMapIndex(null);
-    const result = await saveMapsToPreset(next);
+    const result = await saveMapsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
 
@@ -681,7 +684,7 @@ export function MapEditor({
             const nextMaps = [...(fw.maps ?? [])];
             nextMaps[activeMapIndex] = currentMap;
             updateFw((d) => ({...d, maps: nextMaps}));
-            const result = await saveMapsToPreset(nextMaps);
+            const result = await saveMapsToPreset(nextMaps, gameId);
             if (!result.ok) alert(`保存失败: ${result.error}`);
           }}
         />

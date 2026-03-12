@@ -3,6 +3,8 @@
  */
 
 import React, {useCallback, useEffect, useState} from 'react';
+import {getFeaturesFetchUrl} from '@/config';
+import {useGameId} from '@/context/GameIdContext';
 import type {FeaturesConfig} from '../schema/features';
 import {MediaUrlField} from './ui/MediaFields';
 import {formatJsonCompact} from '../utils/json-format';
@@ -10,9 +12,9 @@ import {editorStyles as styles} from '../styles/editorStyles';
 
 const DEFAULT_FEATURES: FeaturesConfig = { battle: {} };
 
-async function loadFeatures(): Promise<FeaturesConfig> {
+async function loadFeatures(gameId: string): Promise<FeaturesConfig> {
   try {
-    const res = await fetch('/api/story-features');
+    const res = await fetch(getFeaturesFetchUrl(gameId));
     if (!res.ok) return DEFAULT_FEATURES;
     const data = await res.json();
     return data ?? DEFAULT_FEATURES;
@@ -21,10 +23,10 @@ async function loadFeatures(): Promise<FeaturesConfig> {
   }
 }
 
-async function saveFeatures(features: FeaturesConfig): Promise<{ ok: boolean; error?: string }> {
+async function saveFeatures(features: FeaturesConfig, gameId: string): Promise<{ ok: boolean; error?: string }> {
   if (import.meta.env.DEV) {
     try {
-      const res = await fetch('/api/story-features', {
+      const res = await fetch(getFeaturesFetchUrl(gameId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: formatJsonCompact(features),
@@ -47,16 +49,17 @@ async function saveFeatures(features: FeaturesConfig): Promise<{ ok: boolean; er
 }
 
 export function FeaturePanelEditor() {
+  const {gameId} = useGameId();
   const [features, setFeatures] = useState<FeaturesConfig>(DEFAULT_FEATURES);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    loadFeatures().then((d) => {
+    loadFeatures(gameId).then((d) => {
       setFeatures(d);
       setLoading(false);
     });
-  }, []);
+  }, [gameId]);
 
   const updateFeatures = useCallback((fn: (f: FeaturesConfig) => FeaturesConfig) => {
     setFeatures((prev) => fn(prev));
@@ -64,12 +67,12 @@ export function FeaturePanelEditor() {
 
   const handleSaveBattle = useCallback(async () => {
     setSaving(true);
-    const result = await saveFeatures(features);
+    const result = await saveFeatures(features, gameId);
     setSaving(false);
     if (!result.ok) {
       alert(`保存失败: ${result.error}`);
     }
-  }, [features]);
+  }, [features, gameId]);
 
   if (loading) {
     return (
