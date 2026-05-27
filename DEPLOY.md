@@ -1,0 +1,1 @@
+/Users/mini/deployment/ali-qeego.md
