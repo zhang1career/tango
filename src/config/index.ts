@@ -142,6 +142,15 @@ export function getStoryFmFetchUrl(gameId?: string): string {
   return import.meta.env.DEV ? path : toFetchUrl(path);
 }
 
+/** Godot 剧情包请求 URL（story_bundle.json）*/
+export function getStoryBundleFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  const path = import.meta.env.DEV
+    ? `/api/games/${id}/story-bundle`
+    : `${getGameAssetsPrefix(id)}/story_bundle.json`;
+  return import.meta.env.DEV ? path : toFetchUrl(path);
+}
+
 /** 媒体资源基础 URL（如 CDN）。多游戏时 resolveMediaUrl 会追加 /games/{gameId} */
 export function getMediaBaseUrl(): string {
   const base = (env.VITE_MEDIA_BASE_URL ?? env.MEDIA_BASE_URL ?? '') as string;

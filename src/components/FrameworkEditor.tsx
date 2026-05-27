@@ -11,11 +11,11 @@ import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl, getStoryBundleFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
 import {useAuth} from '@/context/AuthContext';
-import {frameworkToStory, parseTwee, serializeStorySugarcube} from '@/engine';
+import {frameworkToStory, parseTwee, serializeStorySugarcube, storyToBundle} from '@/engine';
 
 import {formatJsonCompact} from '../utils/json-format';
 import {paginatePassageText, removeSceneSubPassages} from '../utils/paginate-passage';
@@ -425,6 +425,47 @@ export function FrameworkEditor({
     }
   }, [gameId, addNotification]);
 
+  const handleExportBundle = useCallback(async () => {
+    try {
+      const contentUrl = getGameContentUrl(gameId);
+      const res = await fetch(contentUrl);
+      if (!res.ok) throw new Error(`读取剧情失败: ${res.status}`);
+      const raw = await res.text();
+      const story = parseTwee(raw);
+      const bundle = storyToBundle(story, {storyId: gameId});
+      const text = formatJsonCompact(bundle);
+
+      const putRes = await fetch(getStoryBundleFetchUrl(gameId), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: text,
+      });
+      const putData = (await putRes.json()) as { ok?: boolean; error?: string };
+      if (!putRes.ok || !putData.ok) {
+        throw new Error(putData.error || `保存 Bundle 失败: ${putRes.status}`);
+      }
+
+      const blob = new Blob([text], {type: 'application/json'});
+      const filename = 'story_bundle.json';
+      if ('showSaveFilePicker' in window) {
+        const handle = await (window as Window & { showSaveFilePicker?: (opts?: { suggestedName?: string }) => Promise<FileSystemFileHandle> }).showSaveFilePicker!({suggestedName: filename});
+        const w = await handle.createWritable();
+        await w.write(blob);
+        await w.close();
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+      setJsonError(null);
+      addNotification('info', 'Bundle 导出成功');
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+    }
+  }, [gameId, addNotification]);
+
   const handleGenerateScene = useCallback(
     async (chi: number, si: number) => {
       const ch = fw.chapters[chi];
@@ -561,6 +602,9 @@ export function FrameworkEditor({
           </button>
           <button type="button" style={styles.btn} onClick={handleExport}>
             导出
+          </button>
+          <button type="button" style={styles.btn} onClick={handleExportBundle}>
+            导出 Bundle
           </button>
         </div>
       </header>

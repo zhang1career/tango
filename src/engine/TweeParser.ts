@@ -5,7 +5,7 @@
  * 多媒体: <<image>>、<<audio>>、<<video>> 宏展开，及 HTML <img>/<audio>/<video> 的 src 解析
  */
 
-import {resolveMediaUrl} from '@/config';
+import {resolveMediaUrl} from '../config';
 import type {Passage, PassageLink, PassageStateActions, Story} from '@/types';
 
 const PASSAGE_HEADER_RE = /^::\s*(.+?)(?:\s+\[([^\]]*)])?(?:\s*(\{.*}))?$/;
