@@ -329,6 +329,40 @@ function sceneEntryKey(chapterIndex: number, sceneIndex: number): string {
   return `${chapterIndex}:${sceneIndex}`;
 }
 
+function normalizePassageKey(name: string): string {
+  return name.trim().replace(/\s+/g, '_');
+}
+
+function resolveStoryStartPassageName(fw: StoryFramework): string | null {
+  const chapters = fw.chapters ?? [];
+  if (chapters.length === 0) return null;
+  const first = chapters[0];
+  const firstChapterScenes = (first.sceneEntries ?? [])
+    .map((entry) => (fw.scenes ?? []).find((s) => s.id === entry.sceneId))
+    .filter((s): s is GameScene => !!s);
+  if (firstChapterScenes.length === 0) return null;
+  if (first.startMapNodeId) {
+    const matched = firstChapterScenes.find((s) => s.mapNodeId === first.startMapNodeId);
+    if (matched?.name) return matched.name;
+  }
+  return firstChapterScenes[0].name ?? null;
+}
+
+function getScenePassageLookupKeys(
+  fw: StoryFramework,
+  chapterIndex: number,
+  sceneId: string
+): string[] {
+  const pid = toPassageId(chapterIndex, sceneId);
+  const keys = [pid];
+  const template = frameworkToStory(fw).passages.get(pid);
+  if (template?.name) {
+    const byName = normalizePassageKey(template.name);
+    if (!keys.includes(byName)) keys.push(byName);
+  }
+  return keys;
+}
+
 function getSceneEntryFingerprint(
   fw: StoryFramework,
   ch: FrameworkChapter,
@@ -419,7 +453,6 @@ function applySceneTextToStory(
   story: ReturnType<typeof parseTwee>,
   fullStory: ReturnType<typeof frameworkToStory>,
   fw: StoryFramework,
-  ch: FrameworkChapter,
   scene: GameScene,
   chapterIndex: number,
   sceneText: string
@@ -439,15 +472,8 @@ function applySceneTextToStory(
   paginatePassageText(story, pid, sceneText, getPassagePageCharsMin(), getPassagePageCharsMax());
 
   story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
-  if (ch.startMapNodeId) {
-    for (const e of ch.sceneEntries) {
-      const sc = (fw.scenes ?? []).find((s) => s.id === e.sceneId);
-      if (sc?.mapNodeId === ch.startMapNodeId) {
-        story.startPassageId = sc.name;
-        break;
-      }
-    }
-  }
+  const startName = resolveStoryStartPassageName(fw);
+  if (startName) story.startPassageId = startName;
 }
 
 async function compileSceneEntry(
@@ -468,7 +494,7 @@ async function compileSceneEntry(
   if (!fp) throw new Error('无法计算版本指纹');
 
   const text = await generateScenePassageText(fw, scene, ch, sceneIndex, sceneMap, apiKey, apiUrl, entry.wordCount);
-  applySceneTextToStory(story, frameworkToStory(fw), fw, ch, scene, chapterIndex, text);
+  applySceneTextToStory(story, frameworkToStory(fw), fw, scene, chapterIndex, text);
   return {
     fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => ({...e, compiledFingerprint: fp})),
     story,
@@ -876,14 +902,14 @@ export function FrameworkEditor({
       const entry = ch?.sceneEntries?.[si];
       if (!entry) return;
       const entryKey = `${chi}-${si}`;
-      const pid = toPassageId(chi, entry.sceneId);
+      const lookupKeys = getScenePassageLookupKeys(fw, chi, entry.sceneId);
       setLoadingSceneTextKey(entryKey);
       try {
         const contentUrl = getGameContentUrl(gameId);
         const res = await fetch(contentUrl);
         const raw = res.ok ? await res.text() : '';
         const story = parseTwee(raw);
-        const passage = story.passages.get(pid);
+        const passage = lookupKeys.map((k) => story.passages.get(k)).find((p) => !!p);
         const fallback = sceneMap.get(entry.sceneId)?.summary ?? '';
         setEditingSceneText((prev) => ({
           ...prev,
@@ -908,6 +934,7 @@ export function FrameworkEditor({
       const entryKey = `${chi}-${si}`;
       const text = editingSceneText[entryKey] ?? '';
       const pid = toPassageId(chi, entry.sceneId);
+      const lookupKeys = getScenePassageLookupKeys(fw, chi, entry.sceneId);
       setSavingSceneTextKey(entryKey);
       setJsonError(null);
       try {
@@ -915,15 +942,17 @@ export function FrameworkEditor({
         const res = await fetch(contentUrl);
         const raw = res.ok ? await res.text() : '';
         const story = parseTwee(raw);
-        const existing = story.passages.get(pid);
-        if (existing) {
-          story.passages.set(pid, {...existing, text});
+        const existingKey = lookupKeys.find((k) => story.passages.has(k));
+        const existing = existingKey ? story.passages.get(existingKey) : undefined;
+        if (existing && existingKey) {
+          story.passages.set(existingKey, {...existing, text});
         } else {
           const template = frameworkToStory(fw).passages.get(pid);
           if (!template) throw new Error(`未找到场景 passage 模板: ${pid}`);
-          story.passages.set(pid, {
+          const canonicalKey = normalizePassageKey(template.name || pid);
+          story.passages.set(canonicalKey, {
             ...template,
-            id: pid,
+            id: canonicalKey,
             name: template.name ?? scene?.name ?? pid,
             text,
           });
