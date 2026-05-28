@@ -2,7 +2,7 @@
  * 剧情界面（原时间线）
  */
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import JSZip from 'jszip';
 import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
@@ -27,6 +27,8 @@ type ImportPendingData = {
   sourceGameId: string;
   files: ImportZipFile[];
 };
+
+type SceneCompileTarget = { chapterIndex: number; sceneIndex: number };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -125,11 +127,8 @@ function FileHandleButton({
   );
 }
 
-async function preloadListData(
-  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void,
-  gameId: string
-): Promise<void> {
-  const updates: Array<(d: StoryFramework) => StoryFramework> = [];
+async function fetchListData(gameId: string): Promise<Partial<StoryFramework>> {
+  const merged: Partial<StoryFramework> = {};
   const apis = [
     {url: getCharactersFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[]},
     {url: getScenesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameScene[]},
@@ -154,16 +153,52 @@ async function preloadListData(
         const data = await res.json();
         const parsed = parse(data);
         if (parsed !== undefined && parsed !== null) {
-          updates.push((d) => ({...d, [key]: parsed}));
+          (merged as Record<string, unknown>)[key] = parsed;
         }
       }
     } catch {
       // 忽略加载失败
     }
   }
-  if (updates.length > 0) {
-    updateFw((d) => updates.reduce((acc, fn) => fn(acc), d));
+  return merged;
+}
+
+async function preloadListData(
+  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void,
+  gameId: string
+): Promise<void> {
+  const merged = await fetchListData(gameId);
+  if (Object.keys(merged).length > 0) {
+    updateFw((d) => ({...d, ...merged}));
   }
+}
+
+async function loadFrameworkWithListData(gameId: string): Promise<StoryFramework | null> {
+  const storyRes = await fetch(getStoryFmFetchUrl(gameId));
+  if (!storyRes.ok) {
+    if (storyRes.status === 404) return null;
+    throw new Error(`读取剧情框架失败: ${storyRes.status}`);
+  }
+  const parsed = (await storyRes.json()) as Record<string, unknown>;
+  if (!isRecord(parsed)) throw new Error('剧情框架格式错误');
+  if (!parsed.title) parsed.title = '未命名故事';
+  if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
+    parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
+  }
+  migrateFramework(parsed as unknown as StoryFramework);
+  const fw = fromPersistedFramework(parsed);
+  const listData = await fetchListData(gameId);
+  return {...fw, ...listData};
+}
+
+async function saveFrameworkToStorage(gameId: string, fw: StoryFramework): Promise<void> {
+  const res = await fetch(getStoryFmFetchUrl(gameId), {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: formatJsonCompact(toPersistedFramework(fw)),
+  });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !data.ok) throw new Error(data.error || `保存剧情框架失败: ${res.status}`);
 }
 
 function buildChapterContext(
@@ -224,14 +259,20 @@ async function generateScenePassageText(
   wordCount?: number
 ): Promise<string> {
   const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
-  const system = `你是一名文字冒险游戏编剧。根据「剧情概要」与上下文生成一段可读的剧情正文。
+  const system = `你是一名文字冒险游戏编剧。请基于「场景概要（summary）」做“有限演义”扩写，生成可读的剧情正文。
 
 输出必须包含三类内容：
 1. 人物对话：角色之间的对白，用引号标出
 2. 旁白：叙述者视角的交代与说明
 3. 描写性文字：场景、动作、心理等细节描写
 
-规则：${rules || '- 简洁有力，适合文字冒险'}
+硬性约束（必须遵守）：
+- 以 summary 的事实为主干，只能在其范围内做细节补全，不得改写核心事实。
+- 不得新增 summary 未出现且上下文也未出现的关键设定（新人物、新地点、新组织、新事件主线、新世界观规则）。
+- 允许补充少量过渡句、动作细节、情绪描写，但不得引入会改变剧情走向的新信息。
+- 若 summary 信息不足，优先保守表达，不要臆造。
+
+写作规则：${rules || '- 简洁有力，适合文字冒险'}
 
 输出要求：纯正文，不要包含 [[链接]]，链接由系统自动添加。`;
 
@@ -242,11 +283,11 @@ async function generateScenePassageText(
 ---
 
 场景：${scene.id}（${scene.name}）
-概要：${scene.summary}
+场景概要（最高优先级，必须严格围绕此内容扩写）：${scene.summary}
 ${scene.hints ? `写作提示：${scene.hints}` : ''}
 ${wordCount != null && wordCount > 0 ? `字数要求：约${wordCount}字` : ''}
 
-请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字）：`;
+请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字；且仅做有限演义扩写）：`;
 
   const res = await fetch(`${apiUrl}/chat/completions`, {
     method: 'POST',
@@ -260,7 +301,7 @@ ${wordCount != null && wordCount > 0 ? `字数要求：约${wordCount}字` : ''}
         {role: 'system', content: system},
         {role: 'user', content: user},
       ],
-      temperature: 0.7,
+      temperature: 0.3,
     }),
   });
 
@@ -273,6 +314,177 @@ ${wordCount != null && wordCount > 0 ? `字数要求：约${wordCount}字` : ''}
   const content = json.choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error('API 未返回正文');
   return content;
+}
+
+function hashString(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function sceneEntryKey(chapterIndex: number, sceneIndex: number): string {
+  return `${chapterIndex}:${sceneIndex}`;
+}
+
+function getSceneEntryFingerprint(
+  fw: StoryFramework,
+  ch: FrameworkChapter,
+  sceneIndex: number,
+  sceneMap: Map<string, GameScene>
+): string | null {
+  const entry = ch.sceneEntries[sceneIndex];
+  if (!entry) return null;
+  const scene = sceneMap.get(entry.sceneId);
+  if (!scene) return null;
+  return hashString(JSON.stringify({
+    title: fw.title,
+    background: fw.background ?? '',
+    rules: fw.rules ?? [],
+    chapter: {
+      id: ch.id,
+      title: ch.title,
+      theme: ch.theme ?? '',
+      startMapNodeId: ch.startMapNodeId ?? '',
+      endMapNodeId: ch.endMapNodeId ?? '',
+    },
+    entry: {
+      sceneId: entry.sceneId,
+      ruleIds: entry.ruleIds ?? [],
+      wordCount: entry.wordCount ?? null,
+      sceneIndex,
+    },
+    scene: {
+      id: scene.id,
+      name: scene.name,
+      summary: scene.summary,
+      hints: scene.hints ?? '',
+      mapNodeId: scene.mapNodeId ?? '',
+      characterIds: scene.characterIds ?? [],
+      eventIds: scene.eventIds ?? [],
+      openingAnimation: scene.openingAnimation ?? '',
+      backgroundMusic: scene.backgroundMusic ?? '',
+      images: scene.images ?? [],
+    },
+    chapterContext: buildChapterContext(fw, ch, sceneIndex, sceneMap),
+  }));
+}
+
+function collectSceneFingerprintMap(fw: StoryFramework): Map<string, string> {
+  const map = new Map<string, string>();
+  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+  for (let chi = 0; chi < fw.chapters.length; chi++) {
+    const ch = fw.chapters[chi];
+    for (let si = 0; si < ch.sceneEntries.length; si++) {
+      const fp = getSceneEntryFingerprint(fw, ch, si, sceneMap);
+      if (fp) map.set(sceneEntryKey(chi, si), fp);
+    }
+  }
+  return map;
+}
+
+function patchSceneEntry(
+  fw: StoryFramework,
+  chapterIndex: number,
+  sceneIndex: number,
+  patch: (entry: SceneEntry) => SceneEntry
+): StoryFramework {
+  return {
+    ...fw,
+    chapters: fw.chapters.map((ch, chi) =>
+      chi === chapterIndex
+        ? {...ch, sceneEntries: ch.sceneEntries.map((entry, si) => (si === sceneIndex ? patch(entry) : entry))}
+        : ch
+    ),
+  };
+}
+
+function collectChangedSceneTargets(newFw: StoryFramework, oldFingerprintMap: Map<string, string>): SceneCompileTarget[] {
+  const targets: SceneCompileTarget[] = [];
+  const sceneMap = new Map((newFw.scenes ?? []).map((s) => [s.id, s]));
+  for (let chi = 0; chi < newFw.chapters.length; chi++) {
+    const ch = newFw.chapters[chi];
+    for (let si = 0; si < ch.sceneEntries.length; si++) {
+      const fp = getSceneEntryFingerprint(newFw, ch, si, sceneMap);
+      if (!fp || oldFingerprintMap.get(sceneEntryKey(chi, si)) === fp) continue;
+      targets.push({chapterIndex: chi, sceneIndex: si});
+    }
+  }
+  return targets;
+}
+
+function applySceneTextToStory(
+  story: ReturnType<typeof parseTwee>,
+  fullStory: ReturnType<typeof frameworkToStory>,
+  fw: StoryFramework,
+  ch: FrameworkChapter,
+  scene: GameScene,
+  chapterIndex: number,
+  sceneText: string
+): void {
+  const pid = toPassageId(chapterIndex, scene.id);
+  removeSceneSubPassages(story, pid);
+  const template = fullStory.passages.get(pid);
+  if (!template) throw new Error(`未找到 passage 模板: ${pid}`);
+
+  const meta = {...(template.metadata ?? {}), ...sceneAuthoritativeMetadata(scene, fw)};
+  story.passages.set(pid, {
+    ...template,
+    id: pid,
+    name: template.name ?? scene.name ?? pid,
+    metadata: Object.keys(meta).length ? meta : undefined,
+  });
+  paginatePassageText(story, pid, sceneText, getPassagePageCharsMin(), getPassagePageCharsMax());
+
+  story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
+  if (ch.startMapNodeId) {
+    for (const e of ch.sceneEntries) {
+      const sc = (fw.scenes ?? []).find((s) => s.id === e.sceneId);
+      if (sc?.mapNodeId === ch.startMapNodeId) {
+        story.startPassageId = sc.name;
+        break;
+      }
+    }
+  }
+}
+
+async function compileSceneEntry(
+  fw: StoryFramework,
+  story: ReturnType<typeof parseTwee>,
+  target: SceneCompileTarget,
+  apiKey: string,
+  apiUrl: string
+): Promise<{ fw: StoryFramework; story: ReturnType<typeof parseTwee> }> {
+  const {chapterIndex, sceneIndex} = target;
+  const ch = fw.chapters[chapterIndex];
+  const entry = ch.sceneEntries[sceneIndex];
+  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+  const scene = sceneMap.get(entry.sceneId);
+  if (!scene) throw new Error(`未找到场景 ${entry.sceneId}`);
+
+  const fp = getSceneEntryFingerprint(fw, ch, sceneIndex, sceneMap);
+  if (!fp) throw new Error('无法计算版本指纹');
+
+  const text = await generateScenePassageText(fw, scene, ch, sceneIndex, sceneMap, apiKey, apiUrl, entry.wordCount);
+  applySceneTextToStory(story, frameworkToStory(fw), fw, ch, scene, chapterIndex, text);
+  return {
+    fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => ({...e, compiledFingerprint: fp})),
+    story,
+  };
+}
+
+async function saveStoryTw(gameId: string, story: ReturnType<typeof parseTwee>): Promise<void> {
+  const res = await fetch(getGameContentUrl(gameId), {
+    method: 'PUT',
+    headers: {'Content-Type': 'text/plain; charset=utf-8'},
+    body: serializeStorySugarcube(story),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({error: res.statusText}));
+    throw new Error((err as { error?: string }).error ?? '保存 story.tw 失败');
+  }
 }
 
 export function FrameworkEditor({
@@ -295,9 +507,15 @@ export function FrameworkEditor({
   const [importPendingData, setImportPendingData] = useState<ImportPendingData | null>(null);
   const [importGameIdInput, setImportGameIdInput] = useState('');
   const [importGameIdError, setImportGameIdError] = useState<string | null>(null);
+  const [importCompileEnabled, setImportCompileEnabled] = useState(true);
+  const [isImporting, setIsImporting] = useState(false);
+  const [compileProgress, setCompileProgress] = useState<{ current: number; total: number; scene?: string } | null>(null);
   const importFileInputRef = React.useRef<HTMLInputElement>(null);
   const apiKey = getAIGCApiKey();
   const [generatingSceneKey, setGeneratingSceneKey] = useState<string | null>(null);
+  const [editingSceneText, setEditingSceneText] = useState<Record<string, string>>({});
+  const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
+  const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
   const apiUrl = getAIGCApiUrl();
   const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
 
@@ -333,14 +551,31 @@ export function FrameworkEditor({
 
   const sceneMap = new Map<string, GameScene>();
   for (const s of fw.scenes ?? []) sceneMap.set(s.id, s);
+  const staleSceneEntries = useMemo(() => {
+    const stale: Array<{ chapterTitle: string; sceneName: string; sceneId: string }> = [];
+    for (let chi = 0; chi < fw.chapters.length; chi++) {
+      const ch = fw.chapters[chi];
+      for (let si = 0; si < (ch.sceneEntries ?? []).length; si++) {
+        const entry = ch.sceneEntries[si];
+        const fp = getSceneEntryFingerprint(fw, ch, si, sceneMap);
+        if (!fp) continue;
+        if (entry.compiledFingerprint !== fp) {
+          stale.push({
+            chapterTitle: ch.title || ch.id,
+            sceneName: sceneMap.get(entry.sceneId)?.name ?? entry.sceneId,
+            sceneId: entry.sceneId,
+          });
+        }
+      }
+    }
+    return stale;
+  }, [fw, sceneMap]);
   flattenSceneEntries(fw);
   const mapNodeIds: Array<{ id: string; name: string; mapName: string }> = [];
   for (const map of fw.maps ?? []) {
     for (const n of map.nodes) mapNodeIds.push({id: n.id, name: n.name, mapName: map.name});
   }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
-  const eventIds = (fw.events ?? []).map((e) => ({id: e.id, name: e.name}));
-  const items = fw.items ?? [];
   const {valid, errors} = validateFramework(fw);
   const handleNew = useCallback(() => {
     setNewGameModalOpen(true);
@@ -386,17 +621,7 @@ export function FrameworkEditor({
 
   const handleSave = useCallback(async () => {
     try {
-      const url = getStoryFmFetchUrl(gameId);
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(toPersistedFramework(fw)),
-      });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        setJsonError(data.error || `保存失败: ${res.status}`);
-        return;
-      }
+      await saveFrameworkToStorage(gameId, fw);
       setJsonError(null);
       addNotification('info', '保存成功');
     } catch (e) {
@@ -418,6 +643,8 @@ export function FrameworkEditor({
         setImportPendingData(pending);
         setImportGameIdInput(pending.sourceGameId);
         setImportGameIdError(null);
+        setImportCompileEnabled(true);
+        setCompileProgress(null);
         setImportConfirmOpen(true);
       } catch (err) {
         setJsonError((err as Error).message ?? '解析压缩包失败');
@@ -438,8 +665,15 @@ export function FrameworkEditor({
       return;
     }
     setImportGameIdError(null);
+    setIsImporting(true);
+    setCompileProgress(null);
     try {
       if (!import.meta.env.DEV) throw new Error('导入游戏文件仅支持开发模式');
+      let oldFingerprintMap = new Map<string, string>();
+      if (importCompileEnabled) {
+        const oldFw = await loadFrameworkWithListData(targetGameId);
+        if (oldFw) oldFingerprintMap = collectSceneFingerprintMap(oldFw);
+      }
       const res = await fetch('/api/games/import-zip', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -453,30 +687,77 @@ export function FrameworkEditor({
 
       await refetchGameIds();
       setGameId(targetGameId);
-      const storyRes = await fetch(getStoryFmFetchUrl(targetGameId));
-      if (storyRes.ok) {
-        const parsed = (await storyRes.json()) as Record<string, unknown>;
-        if (isRecord(parsed)) {
-          migrateFramework(parsed as unknown as StoryFramework);
-          updateFw((d) => ({...d, ...fromPersistedFramework(parsed)}));
+      const loadedFw = await loadFrameworkWithListData(targetGameId);
+      if (!loadedFw) throw new Error('导入成功，但未找到 story-fm.json');
+      let nextFw: StoryFramework = loadedFw;
+      const changedTargets = importCompileEnabled
+        ? collectChangedSceneTargets(nextFw, oldFingerprintMap)
+        : [];
+
+      if (importCompileEnabled && changedTargets.length > 0) {
+        const key = apiKey?.trim();
+        if (!key) {
+          setJsonError('导入完成，但未配置 AIGC API Key，变更场景尚未编译。');
+          addNotification('error', `导入成功；待编译 ${changedTargets.length} 个变更场景`);
+        } else {
+          const contentRes = await fetch(getGameContentUrl(targetGameId));
+          const raw = contentRes.ok ? await contentRes.text() : '';
+          let story = parseTwee(raw);
+          const failures: string[] = [];
+          for (let i = 0; i < changedTargets.length; i++) {
+            const t = changedTargets[i];
+            const ch = nextFw.chapters[t.chapterIndex];
+            const entry = ch.sceneEntries[t.sceneIndex];
+            const scene = nextFw.scenes?.find((s) => s.id === entry.sceneId);
+            const sceneLabel = `${ch.title || ch.id} / ${scene?.name ?? entry.sceneId}`;
+            setCompileProgress({current: i + 1, total: changedTargets.length, scene: sceneLabel});
+            try {
+              const result = await compileSceneEntry(nextFw, story, t, key, apiUrl);
+              nextFw = result.fw;
+              story = result.story;
+              await saveStoryTw(targetGameId, story);
+              updateFw(() => nextFw);
+            } catch (err) {
+              failures.push(`${sceneLabel}（${(err as Error).message}）`);
+            }
+          }
+          await saveFrameworkToStorage(targetGameId, nextFw);
+          if (failures.length > 0) {
+            setJsonError(`导入完成，编译失败 ${failures.length}/${changedTargets.length}：${failures.join('；')}`);
+            addNotification('error', `导入成功；编译失败 ${failures.length}/${changedTargets.length}`);
+          } else {
+            setJsonError(null);
+            addNotification('info', `导入成功；已编译 ${changedTargets.length} 个变更场景`);
+          }
         }
+      } else {
+        setJsonError(null);
+        if (importCompileEnabled) addNotification('info', '导入成功；未检测到需要编译的变更场景');
+        else addNotification('info', '导入成功');
       }
-      await preloadListData(updateFw, targetGameId);
-      setJsonError(null);
+
+      updateFw(() => nextFw);
       setImportConfirmOpen(false);
       setImportPendingData(null);
-      addNotification('info', '导入成功');
+      setImportCompileEnabled(true);
+      setCompileProgress(null);
     } catch (e) {
       setJsonError((e as Error).message);
+    } finally {
+      setCompileProgress(null);
+      setIsImporting(false);
     }
-  }, [gameId, importPendingData, importGameIdInput, updateFw, addNotification, refetchGameIds, setGameId]);
+  }, [apiKey, apiUrl, importPendingData, importGameIdInput, importCompileEnabled, updateFw, addNotification, refetchGameIds, setGameId]);
 
   const handleImportCancel = useCallback(() => {
+    if (isImporting) return;
     setImportConfirmOpen(false);
     setImportPendingData(null);
     setImportGameIdInput('');
     setImportGameIdError(null);
-  }, []);
+    setImportCompileEnabled(true);
+    setCompileProgress(null);
+  }, [isImporting]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -575,66 +856,87 @@ export function FrameworkEditor({
       try {
         const res = await fetch(contentUrl);
         const raw = res.ok ? await res.text() : '';
-        const text = await generateScenePassageText(fw, scene, ch, si, sceneMap, key, apiUrl, entry.wordCount);
-        const fullStory = frameworkToStory(fw);
-        const story = parseTwee(raw);
-        const pid = toPassageId(chi, entry.sceneId);
-        const oldPid = `ch${chi}_${entry.sceneId}`;
-        removeSceneSubPassages(story, pid);
-        removeSceneSubPassages(story, oldPid);
-        const template = fullStory.passages.get(pid);
-        const nameId = scene.name.trim().replace(/\s+/g, '_');
-        const minC = getPassagePageCharsMin();
-        const maxC = getPassagePageCharsMax();
-        let existing = story.passages.get(pid) ?? story.passages.get(oldPid) ?? story.passages.get(nameId);
-        if (existing) {
-          existing.links = template?.links ?? existing.links;
-          const baseMeta = { ...existing.metadata } as Record<string, unknown>;
-          if (template?.metadata) Object.assign(baseMeta, template.metadata);
-          Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
-          existing.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
-          existing = { ...existing, id: pid, name: template?.name ?? scene.name ?? pid };
-          story.passages.set(pid, existing);
-          story.passages.delete(oldPid);
-          if (nameId !== pid) story.passages.delete(nameId);
-          paginatePassageText(story, pid, text, minC, maxC);
-        } else if (template) {
-          template.text = text;
-          const baseMeta = { ...(template.metadata ?? {}) } as Record<string, unknown>;
-          Object.assign(baseMeta, sceneAuthoritativeMetadata(scene, fw));
-          template.metadata = Object.keys(baseMeta).length ? baseMeta : undefined;
-          story.passages.set(pid, template);
-          paginatePassageText(story, pid, text, minC, maxC);
-        }
-        story.metadata = { ...(story.metadata ?? {}), ...(fullStory.metadata ?? {}) };
-        // StoryData start：本章「起点（地图节点）」对应的场景名称
-        const startMapNodeId = ch.startMapNodeId;
-        if (startMapNodeId) {
-          for (const e of ch.sceneEntries ?? []) {
-            const sc = sceneMap.get(e.sceneId);
-            if (sc?.mapNodeId === startMapNodeId) {
-              story.startPassageId = sc.name;
-              break;
-            }
-          }
-        }
-        const twee = serializeStorySugarcube(story);
-        const putRes = await fetch(contentUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-          body: twee,
-        });
-        if (!putRes.ok) {
-          const err = await putRes.json().catch(() => ({ error: putRes.statusText }));
-          throw new Error((err as { error?: string }).error ?? '保存失败');
-        }
+        let story = parseTwee(raw);
+        const result = await compileSceneEntry(fw, story, {chapterIndex: chi, sceneIndex: si}, key, apiUrl);
+        await saveStoryTw(gameId, result.story);
+        updateFw(() => result.fw);
+        await saveFrameworkToStorage(gameId, result.fw);
       } catch (e) {
         setJsonError((e as Error).message);
       } finally {
         setGeneratingSceneKey(null);
       }
     },
-    [fw, apiKey, apiUrl, gameId, sceneMap]
+    [fw, apiKey, apiUrl, gameId, sceneMap, updateFw]
+  );
+
+  const handleLoadSceneText = useCallback(
+    async (chi: number, si: number) => {
+      const ch = fw.chapters[chi];
+      const entry = ch?.sceneEntries?.[si];
+      if (!entry) return;
+      const entryKey = `${chi}-${si}`;
+      const pid = toPassageId(chi, entry.sceneId);
+      setLoadingSceneTextKey(entryKey);
+      try {
+        const contentUrl = getGameContentUrl(gameId);
+        const res = await fetch(contentUrl);
+        const raw = res.ok ? await res.text() : '';
+        const story = parseTwee(raw);
+        const passage = story.passages.get(pid);
+        const fallback = sceneMap.get(entry.sceneId)?.summary ?? '';
+        setEditingSceneText((prev) => ({
+          ...prev,
+          [entryKey]: passage?.text ?? fallback,
+        }));
+        if (!passage) addNotification('info', '未找到已有正文，已载入该场景 summary 作为编辑初稿');
+      } catch (e) {
+        setJsonError((e as Error).message || '读取正文失败');
+      } finally {
+        setLoadingSceneTextKey(null);
+      }
+    },
+    [fw, gameId, sceneMap, addNotification]
+  );
+
+  const handleSaveSceneText = useCallback(
+    async (chi: number, si: number) => {
+      const ch = fw.chapters[chi];
+      const entry = ch?.sceneEntries?.[si];
+      if (!entry) return;
+      const scene = sceneMap.get(entry.sceneId);
+      const entryKey = `${chi}-${si}`;
+      const text = editingSceneText[entryKey] ?? '';
+      const pid = toPassageId(chi, entry.sceneId);
+      setSavingSceneTextKey(entryKey);
+      setJsonError(null);
+      try {
+        const contentUrl = getGameContentUrl(gameId);
+        const res = await fetch(contentUrl);
+        const raw = res.ok ? await res.text() : '';
+        const story = parseTwee(raw);
+        const existing = story.passages.get(pid);
+        if (existing) {
+          story.passages.set(pid, {...existing, text});
+        } else {
+          const template = frameworkToStory(fw).passages.get(pid);
+          if (!template) throw new Error(`未找到场景 passage 模板: ${pid}`);
+          story.passages.set(pid, {
+            ...template,
+            id: pid,
+            name: template.name ?? scene?.name ?? pid,
+            text,
+          });
+        }
+        await saveStoryTw(gameId, story);
+        addNotification('info', '场景正文已保存到 story.tw');
+      } catch (e) {
+        setJsonError((e as Error).message || '保存正文失败');
+      } finally {
+        setSavingSceneTextKey(null);
+      }
+    },
+    [fw, gameId, sceneMap, editingSceneText, addNotification]
   );
 
   return (
@@ -718,11 +1020,28 @@ export function FrameworkEditor({
                 <div style={{ marginTop: 8, fontSize: 13, color: '#e57373' }}>{importGameIdError}</div>
               )}
             </div>
+            <div style={styles.row}>
+              <label style={{display: 'flex', alignItems: 'center', gap: 8, cursor: isImporting ? 'not-allowed' : 'pointer'}}>
+                <input
+                  type="checkbox"
+                  checked={importCompileEnabled}
+                  disabled={isImporting}
+                  onChange={(e) => setImportCompileEnabled(e.target.checked)}
+                />
+                <span style={{fontSize: 13, color: '#d0d0d0'}}>导入后编译（仅编译变更场景，生成 story.tw）</span>
+              </label>
+            </div>
+            {compileProgress && (
+              <div style={{marginTop: 4, fontSize: 13, color: '#90caf9'}}>
+                编译进度：{compileProgress.current}/{compileProgress.total}
+                {compileProgress.scene ? ` · ${compileProgress.scene}` : ''}
+              </div>
+            )}
             <div style={styles.modalActions}>
-              <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleImportConfirm)}>
-                确认
+              <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleImportConfirm)} disabled={isImporting}>
+                {isImporting ? '处理中...' : '确认'}
               </button>
-              <button type="button" style={styles.btn} onClick={handleImportCancel}>
+              <button type="button" style={styles.btn} onClick={handleImportCancel} disabled={isImporting}>
                 取消
               </button>
             </div>
@@ -736,6 +1055,21 @@ export function FrameworkEditor({
             <div key={`v-${i}`} style={styles.errorItem}>{e}</div>
           ))}
           {jsonError && <div style={styles.errorItem}>{jsonError}</div>}
+        </div>
+      )}
+      {staleSceneEntries.length > 0 && (
+        <div style={{...styles.errors, backgroundColor: 'rgba(255,193,7,0.12)', color: '#ffd54f'}}>
+          <div style={{fontWeight: 600, marginBottom: 6}}>
+            检测到 {staleSceneEntries.length} 个场景正文过期（story-fm 与 story.tw 版本不一致）
+          </div>
+          {staleSceneEntries.slice(0, 12).map((it, idx) => (
+            <div key={`${it.chapterTitle}-${it.sceneId}-${idx}`} style={styles.errorItem}>
+              {it.chapterTitle} / {it.sceneName}（{it.sceneId}）
+            </div>
+          ))}
+          {staleSceneEntries.length > 12 && (
+            <div style={styles.errorItem}>... 还有 {staleSceneEntries.length - 12} 个</div>
+          )}
         </div>
       )}
 
@@ -827,15 +1161,17 @@ export function FrameworkEditor({
             updateFw={updateFwWithErrorReset}
             onGenerateScene={(si) => handleGenerateScene(chi, si)}
             generatingEntry={generatingSceneKey}
+            sceneTextDrafts={editingSceneText}
+            loadingSceneTextKey={loadingSceneTextKey}
+            savingSceneTextKey={savingSceneTextKey}
+            onSceneTextDraftChange={(entryKey, value) =>
+              setEditingSceneText((prev) => ({...prev, [entryKey]: value}))
+            }
+            onLoadSceneText={(si) => handleLoadSceneText(chi, si)}
+            onSaveSceneText={(si) => handleSaveSceneText(chi, si)}
           />
         ))}
       </section>
-
-      {jsonError && (
-        <div style={styles.errors}>
-          <div style={styles.errorItem}>{jsonError}</div>
-        </div>
-      )}
     </div>
   );
 }
@@ -853,6 +1189,12 @@ function ChapterBlock({
   updateFw,
   onGenerateScene,
   generatingEntry,
+  sceneTextDrafts,
+  loadingSceneTextKey,
+  savingSceneTextKey,
+  onSceneTextDraftChange,
+  onLoadSceneText,
+  onSaveSceneText,
 }: {
   ch: FrameworkChapter;
   chi: number;
@@ -866,6 +1208,12 @@ function ChapterBlock({
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
   onGenerateScene: (si: number) => void;
   generatingEntry: string | null;
+  sceneTextDrafts: Record<string, string>;
+  loadingSceneTextKey: string | null;
+  savingSceneTextKey: string | null;
+  onSceneTextDraftChange: (entryKey: string, value: string) => void;
+  onLoadSceneText: (si: number) => void;
+  onSaveSceneText: (si: number) => void;
 }) {
   const isExpanded = expandedCh.has(ch.id);
   const entries = ch.sceneEntries ?? [];
@@ -899,6 +1247,13 @@ function ChapterBlock({
     updateChapter((c) => ({
       ...c,
       sceneEntries: c.sceneEntries.map((e, j) => (j === si ? fn(e) : e)),
+    }));
+  };
+
+  const updateScene = (sceneId: string, fn: (s: GameScene) => GameScene) => {
+    updateFw((d) => ({
+      ...d,
+      scenes: (d.scenes ?? []).map((s) => (s.id === sceneId ? fn(s) : s)),
     }));
   };
 
@@ -1011,6 +1366,9 @@ function ChapterBlock({
             const entryKey = `${chi}-${si}`;
             const isEntryExpanded = expandedEntry.has(entryKey);
             const isGenerating = generatingEntry === entryKey;
+            const isLoadingText = loadingSceneTextKey === entryKey;
+            const isSavingText = savingSceneTextKey === entryKey;
+            const textDraft = sceneTextDrafts[entryKey] ?? scene?.summary ?? '';
             return (
               <div key={entryKey} style={styles.scene}>
                 <div
@@ -1048,6 +1406,45 @@ function ChapterBlock({
                 </div>
                 {isEntryExpanded && (
                   <div style={styles.sceneBody}>
+                    <div style={styles.row}>
+                      <label style={styles.label}>场景 summary（存于 story-scenes.json）</label>
+                      <textarea
+                        value={scene?.summary ?? ''}
+                        onChange={(e) => {
+                          if (!scene) return;
+                          updateScene(scene.id, (s0) => ({...s0, summary: e.target.value}));
+                        }}
+                        placeholder="该场景的事实性概要（人物、地点、事件、情绪、关键台词）"
+                        style={{...styles.input, ...styles.textarea, minHeight: 90}}
+                      />
+                    </div>
+                    <div style={styles.row}>
+                      <label style={styles.label}>生成正文（story.tw passage，可手动覆盖）</label>
+                      <div style={{display: 'flex', gap: 8, marginBottom: 8}}>
+                        <button
+                          type="button"
+                          style={styles.btnSmall}
+                          onClick={() => onLoadSceneText(si)}
+                          disabled={isLoadingText || isSavingText}
+                        >
+                          {isLoadingText ? '读取中...' : '读取正文'}
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.btnSmall}
+                          onClick={() => onSaveSceneText(si)}
+                          disabled={isLoadingText || isSavingText}
+                        >
+                          {isSavingText ? '保存中...' : '保存正文'}
+                        </button>
+                      </div>
+                      <textarea
+                        value={textDraft}
+                        onChange={(e) => onSceneTextDraftChange(entryKey, e.target.value)}
+                        placeholder="可手动编辑该场景在 story.tw 中的正文内容"
+                        style={{...styles.input, ...styles.textarea, minHeight: 170}}
+                      />
+                    </div>
                     <div style={styles.row}>
                       <label style={styles.label}>字数</label>
                       <input

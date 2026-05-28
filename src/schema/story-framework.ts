@@ -28,6 +28,8 @@ export interface SceneEntry {
   ruleIds?: string[];
   /** 生成内容字数要求（约多少字），非空时加入 AI 提示词 */
   wordCount?: number;
+  /** story.tw 已编译对应的源版本指纹；与当前指纹不一致则表示正文过期 */
+  compiledFingerprint?: string;
 }
 
 /** 章节：可选的逻辑分组 */
