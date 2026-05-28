@@ -3,6 +3,7 @@
  */
 
 import React, {useCallback, useEffect, useState} from 'react';
+import JSZip from 'jszip';
 import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
@@ -20,6 +21,49 @@ import {frameworkToStory, parseTwee, serializeStorySugarcube, storyToBundle} fro
 import {formatJsonCompact} from '../utils/json-format';
 import {paginatePassageText, removeSceneSubPassages} from '../utils/paginate-passage';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
+
+type ImportZipFile = {path: string; contentBase64: string};
+type ImportPendingData = {
+  targetGameId: string;
+  files: ImportZipFile[];
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function normalizeZipPath(input: string): string {
+  const unified = input.replace(/\\/g, '/').replace(/^\/+/, '');
+  const parts = unified.split('/').filter(Boolean);
+  const assetsGamesIndex = parts.findIndex((p, i) => p === 'assets' && parts[i + 1] === 'games');
+  const relativeParts = assetsGamesIndex >= 0 && parts.length > assetsGamesIndex + 3
+    ? parts.slice(assetsGamesIndex + 3)
+    : parts;
+  if (relativeParts.length === 0) throw new Error(`非法路径: ${input}`);
+  if (relativeParts.some((p) => p === '.' || p === '..')) throw new Error(`非法路径: ${input}`);
+  return relativeParts.join('/');
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+async function parseZipImport(file: File, gameId: string): Promise<ImportPendingData> {
+  const id = gameId.trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('当前游戏ID非法');
+  const zip = await JSZip.loadAsync(file);
+  const files: ImportZipFile[] = [];
+  for (const [rawPath, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue;
+    const path = normalizeZipPath(rawPath);
+    const bytes = await entry.async('uint8array');
+    files.push({path, contentBase64: bytesToBase64(bytes)});
+  }
+  if (files.length === 0) throw new Error('压缩包中没有可导入文件');
+  return {targetGameId: id, files};
+}
 
 /**
  * 从当前场景构建 passage 的权威元数据（与 characterIds 逻辑一致：始终以场景当前值为准，删除则覆盖掉旧值）
@@ -230,7 +274,7 @@ export function FrameworkEditor({
   const [newGameIdInput, setNewGameIdInput] = useState('');
   const [newGameError, setNewGameError] = useState<string | null>(null);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
-  const [importPendingData, setImportPendingData] = useState<Record<string, unknown> | null>(null);
+  const [importPendingData, setImportPendingData] = useState<ImportPendingData | null>(null);
   const importFileInputRef = React.useRef<HTMLInputElement>(null);
   const apiKey = getAIGCApiKey();
   const [generatingSceneKey, setGeneratingSceneKey] = useState<string | null>(null);
@@ -345,45 +389,48 @@ export function FrameworkEditor({
   }, []);
 
   const handleImportFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       e.target.value = '';
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const text = reader.result as string;
-          const parsed = JSON.parse(text) as Record<string, unknown>;
-          if (!parsed || typeof parsed !== 'object') throw new Error('无效的 JSON');
-          setImportPendingData(parsed);
-          setImportConfirmOpen(true);
-        } catch (err) {
-          setJsonError((err as Error).message ?? '解析文件失败');
-        }
-      };
-      reader.onerror = () => setJsonError('读取文件失败');
-      reader.readAsText(file);
+      try {
+        const pending = await parseZipImport(file, gameId);
+        setImportPendingData(pending);
+        setImportConfirmOpen(true);
+      } catch (err) {
+        setJsonError((err as Error).message ?? '解析压缩包失败');
+      }
     },
-    []
+    [gameId]
   );
 
   const handleImportConfirm = useCallback(async () => {
     if (!importPendingData) return;
     try {
-      const url = getStoryFmFetchUrl(gameId);
-      const body = formatJsonCompact(importPendingData);
-      const res = await fetch(url, {
-        method: 'PUT',
+      if (!import.meta.env.DEV) throw new Error('导入游戏文件仅支持开发模式');
+      const targetGameId = importPendingData.targetGameId;
+      const res = await fetch('/api/games/import-zip', {
+        method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body,
+        body: formatJsonCompact({
+          gameId: targetGameId,
+          files: importPendingData.files,
+        }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        setJsonError(data.error || `导入失败: ${res.status}`);
-        return;
+      if (!res.ok || !data.ok) throw new Error(data.error || `导入失败: ${res.status}`);
+
+      await refetchGameIds();
+      setGameId(targetGameId);
+      const storyRes = await fetch(getStoryFmFetchUrl(targetGameId));
+      if (storyRes.ok) {
+        const parsed = (await storyRes.json()) as Record<string, unknown>;
+        if (isRecord(parsed)) {
+          migrateFramework(parsed as unknown as StoryFramework);
+          updateFw((d) => ({...d, ...fromPersistedFramework(parsed)}));
+        }
       }
-      migrateFramework(importPendingData as unknown as StoryFramework);
-      updateFw((d) => ({...d, ...fromPersistedFramework(importPendingData)}));
+      await preloadListData(updateFw, targetGameId);
       setJsonError(null);
       setImportConfirmOpen(false);
       setImportPendingData(null);
@@ -391,7 +438,7 @@ export function FrameworkEditor({
     } catch (e) {
       setJsonError((e as Error).message);
     }
-  }, [gameId, importPendingData, updateFw, addNotification]);
+  }, [gameId, importPendingData, updateFw, addNotification, refetchGameIds, setGameId]);
 
   const handleImportCancel = useCallback(() => {
     setImportConfirmOpen(false);
@@ -611,7 +658,7 @@ export function FrameworkEditor({
       <input
         ref={importFileInputRef}
         type="file"
-        accept=".json,application/json"
+        accept=".zip,application/zip,application/x-zip-compressed"
         style={{display: 'none'}}
         onChange={handleImportFileChange}
       />
@@ -622,7 +669,7 @@ export function FrameworkEditor({
               <h2 style={styles.modalTitle}>确认导入</h2>
             </div>
             <p style={{margin: '0 0 16px', fontSize: 14, color: '#e8e8e8'}}>
-              确认覆盖已有游戏{gameId}吗？
+              将压缩包导入到游戏 {importPendingData?.targetGameId}，并重建该目录（共 {importPendingData?.files.length ?? 0} 个文件），确认继续吗？
             </p>
             <div style={styles.modalActions}>
               <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleImportConfirm)}>

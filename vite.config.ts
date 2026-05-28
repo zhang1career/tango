@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'node:path';
-import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { resolve, dirname, normalize } from 'node:path';
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { formatJsonCompact } from './src/utils/json-format';
 import { parseTwee } from './src/engine/TweeParser';
 import { storyToBundle } from './src/engine/StoryToBundle';
@@ -89,6 +89,55 @@ export default defineConfig(({ mode }) => {
                 return;
               }
               mkdirSync(dirPath, { recursive: true });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true }));
+            } catch (e) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
+            }
+          });
+        });
+        server.middlewares.use('/api/games/import-zip', (req, res, next) => {
+          if (req.method !== 'POST') return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const payload = JSON.parse(body) as {
+                gameId?: string;
+                files?: Array<{path?: string; contentBase64?: string}>;
+              };
+              const gameId = String(payload.gameId ?? '').trim();
+              if (!/^[a-zA-Z0-9_-]+$/.test(gameId)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: 'gameId 非法' }));
+                return;
+              }
+              if (!Array.isArray(payload.files) || payload.files.length === 0) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: 'files 不能为空' }));
+                return;
+              }
+              const gameDirPath = resolve(cwd, gamesBasePath, gameId);
+              if (existsSync(gameDirPath)) rmSync(gameDirPath, { recursive: true, force: true });
+              mkdirSync(gameDirPath, { recursive: true });
+              for (const file of payload.files) {
+                const inputPath = String(file.path ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
+                if (!inputPath) throw new Error('文件路径不能为空');
+                const normalizedPath = normalize(inputPath);
+                if (
+                  normalizedPath.startsWith('..') ||
+                  normalizedPath.includes('/../') ||
+                  normalizedPath.includes('\\..\\')
+                ) {
+                  throw new Error(`非法路径: ${inputPath}`);
+                }
+                const outPath = resolve(gameDirPath, normalizedPath);
+                if (!outPath.startsWith(gameDirPath)) throw new Error(`非法路径: ${inputPath}`);
+                mkdirSync(dirname(outPath), { recursive: true });
+                const contentBase64 = String(file.contentBase64 ?? '');
+                writeFileSync(outPath, Buffer.from(contentBase64, 'base64'));
+              }
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {

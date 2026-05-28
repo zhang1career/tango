@@ -49,6 +49,7 @@ src/
 ## 参考资料
 
 - [AGENT-GUIDE.md](AGENT-GUIDE.md)：数据结构与编辑接口说明（面向 Agent）
+- [GAME_IMPORT_FORMAT.md](GAME_IMPORT_FORMAT.md)：导入游戏文件格式（zip）
 - [故事背景和人物介绍](background.md)
 - [剧情](plot.md)
 - [Twee 3 规范](https://github.com/iftechfoundation/twine-specs/blob/master/twee-3-specification.md)
