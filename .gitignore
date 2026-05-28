@@ -30,3 +30,8 @@ Thumbs.db
 ios/Pods/
 android/build/
 .expo/
+
+# Project
+assets/games/*
+!assets/games/default
+assets/games/default/story_bundle.json

@@ -24,7 +24,7 @@ import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
 type ImportZipFile = {path: string; contentBase64: string};
 type ImportPendingData = {
-  targetGameId: string;
+  sourceGameId: string;
   files: ImportZipFile[];
 };
 
@@ -35,13 +35,12 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function normalizeZipPath(input: string): string {
   const unified = input.replace(/\\/g, '/').replace(/^\/+/, '');
   const parts = unified.split('/').filter(Boolean);
-  const assetsGamesIndex = parts.findIndex((p, i) => p === 'assets' && parts[i + 1] === 'games');
-  const relativeParts = assetsGamesIndex >= 0 && parts.length > assetsGamesIndex + 3
-    ? parts.slice(assetsGamesIndex + 3)
-    : parts;
-  if (relativeParts.length === 0) throw new Error(`非法路径: ${input}`);
-  if (relativeParts.some((p) => p === '.' || p === '..')) throw new Error(`非法路径: ${input}`);
-  return relativeParts.join('/');
+  if (parts.length === 0 || parts.some((p) => p === '.' || p === '..')) throw new Error(`非法路径: ${input}`);
+  return parts.join('/');
+}
+
+function isValidGameId(v: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(v);
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -50,19 +49,38 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function parseZipImport(file: File, gameId: string): Promise<ImportPendingData> {
-  const id = gameId.trim();
-  if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('当前游戏ID非法');
+async function parseZipImport(file: File): Promise<ImportPendingData> {
   const zip = await JSZip.loadAsync(file);
-  const files: ImportZipFile[] = [];
+  const entries: Array<{entry: JSZip.JSZipObject; path: string}> = [];
   for (const [rawPath, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue;
-    const path = normalizeZipPath(rawPath);
-    const bytes = await entry.async('uint8array');
-    files.push({path, contentBase64: bytesToBase64(bytes)});
+    entries.push({entry, path: normalizeZipPath(rawPath)});
   }
-  if (files.length === 0) throw new Error('压缩包中没有可导入文件');
-  return {targetGameId: id, files};
+  if (entries.length === 0) throw new Error('压缩包中没有可导入文件');
+  const normalizedEntries: Array<{entry: JSZip.JSZipObject; relativePath: string}> = [];
+  const topLevelDirs = new Set<string>();
+  for (const item of entries) {
+    const parts = item.path.split('/');
+    if (parts.length < 2) {
+      throw new Error(`压缩包必须使用 <gameId>/... 结构，缺少游戏目录: ${item.path}`);
+    }
+    const gid = parts[0];
+    const relativePath = parts.slice(1).join('/');
+    if (!relativePath) throw new Error(`非法路径: ${item.path}`);
+    topLevelDirs.add(gid);
+    normalizedEntries.push({entry: item.entry, relativePath});
+  }
+  if (topLevelDirs.size !== 1) {
+    throw new Error(`压缩包必须且仅能包含一个顶层游戏目录，当前为: ${Array.from(topLevelDirs).join(', ')}`);
+  }
+  const sourceGameId = Array.from(topLevelDirs)[0];
+
+  const files: ImportZipFile[] = [];
+  for (const item of normalizedEntries) {
+    const bytes = await item.entry.async('uint8array');
+    files.push({path: item.relativePath, contentBase64: bytesToBase64(bytes)});
+  }
+  return {sourceGameId, files};
 }
 
 /**
@@ -275,6 +293,8 @@ export function FrameworkEditor({
   const [newGameError, setNewGameError] = useState<string | null>(null);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
   const [importPendingData, setImportPendingData] = useState<ImportPendingData | null>(null);
+  const [importGameIdInput, setImportGameIdInput] = useState('');
+  const [importGameIdError, setImportGameIdError] = useState<string | null>(null);
   const importFileInputRef = React.useRef<HTMLInputElement>(null);
   const apiKey = getAIGCApiKey();
   const [generatingSceneKey, setGeneratingSceneKey] = useState<string | null>(null);
@@ -394,21 +414,32 @@ export function FrameworkEditor({
       e.target.value = '';
       if (!file) return;
       try {
-        const pending = await parseZipImport(file, gameId);
+        const pending = await parseZipImport(file);
         setImportPendingData(pending);
+        setImportGameIdInput(pending.sourceGameId);
+        setImportGameIdError(null);
         setImportConfirmOpen(true);
       } catch (err) {
         setJsonError((err as Error).message ?? '解析压缩包失败');
       }
     },
-    [gameId]
+    []
   );
 
   const handleImportConfirm = useCallback(async () => {
     if (!importPendingData) return;
+    const targetGameId = importGameIdInput.trim();
+    if (!targetGameId) {
+      setImportGameIdError('请输入游戏ID');
+      return;
+    }
+    if (!isValidGameId(targetGameId)) {
+      setImportGameIdError('游戏ID只能包含字母、数字、下划线、横线');
+      return;
+    }
+    setImportGameIdError(null);
     try {
       if (!import.meta.env.DEV) throw new Error('导入游戏文件仅支持开发模式');
-      const targetGameId = importPendingData.targetGameId;
       const res = await fetch('/api/games/import-zip', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -438,11 +469,13 @@ export function FrameworkEditor({
     } catch (e) {
       setJsonError((e as Error).message);
     }
-  }, [gameId, importPendingData, updateFw, addNotification, refetchGameIds, setGameId]);
+  }, [gameId, importPendingData, importGameIdInput, updateFw, addNotification, refetchGameIds, setGameId]);
 
   const handleImportCancel = useCallback(() => {
     setImportConfirmOpen(false);
     setImportPendingData(null);
+    setImportGameIdInput('');
+    setImportGameIdError(null);
   }, []);
 
   const handleExport = useCallback(async () => {
@@ -669,8 +702,22 @@ export function FrameworkEditor({
               <h2 style={styles.modalTitle}>确认导入</h2>
             </div>
             <p style={{margin: '0 0 16px', fontSize: 14, color: '#e8e8e8'}}>
-              将压缩包导入到游戏 {importPendingData?.targetGameId}，并重建该目录（共 {importPendingData?.files.length ?? 0} 个文件），确认继续吗？
+              识别到压缩包顶层目录为 {importPendingData?.sourceGameId}。你可以修改导入目标游戏ID（保存目录名），导入时会重建目标目录（共 {importPendingData?.files.length ?? 0} 个文件）。
             </p>
+            <div style={styles.section}>
+              <label style={styles.label}>目标游戏ID（保存目录名）</label>
+              <input
+                type="text"
+                value={importGameIdInput}
+                onChange={(e) => setImportGameIdInput(e.target.value)}
+                placeholder="仅限字母、数字、下划线、横线"
+                style={styles.input}
+                autoFocus
+              />
+              {importGameIdError && (
+                <div style={{ marginTop: 8, fontSize: 13, color: '#e57373' }}>{importGameIdError}</div>
+              )}
+            </div>
             <div style={styles.modalActions}>
               <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleImportConfirm)}>
                 确认
