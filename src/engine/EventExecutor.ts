@@ -28,11 +28,28 @@ export interface EventExecutionContext {
   usedBehaviorIds: Set<string>;
 }
 
+function resolveOnlyOnceRuleId(
+  ruleMap: Map<string, { judgeExpr?: string; writebackExpr?: string }>
+): string | null {
+  if (ruleMap.has('rule_0001')) return 'rule_0001';
+  for (const [id, rule] of ruleMap.entries()) {
+    const judge = (rule.judgeExpr ?? '').trim();
+    const writeback = (rule.writebackExpr ?? '').replace(/\s+/g, '');
+    if (judge === '!$entity.is_used' && writeback.includes('$entity.is_used=true')) {
+      return id;
+    }
+  }
+  return null;
+}
+
 /** 检查事件是否通过准入预计算（条件为真、规则预计算为真） */
 export function checkEventAdmission(
   event: GameEvent,
   ctx: EventExecutionContext
 ): boolean {
+  // 防止在缺失 onlyOnce 规则映射时重复执行同一事件造成递归循环。
+  if (ctx.usedEventIds.has(event.id)) return false;
+
   const state = ctx.getState();
   const entity = { id: event.id, name: event.name };
   const ruleMap = new Map(
@@ -41,9 +58,10 @@ export function checkEventAdmission(
       { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
     ])
   );
+  const onlyOnceRuleId = resolveOnlyOnceRuleId(ruleMap);
   return admissionCalc({
     judgeExpr: undefined,
-    ruleIds: ['rule_0001'],
+    ruleIds: onlyOnceRuleId ? [onlyOnceRuleId] : [],
     ruleMap,
     entity,
     visitedIds: ctx.usedEventIds,
@@ -114,7 +132,11 @@ function runNonAttackBehavior(
     ])
   );
   const entity = { id: fullId, name: behavior.id };
-  const effectiveRuleIds = ['rule_0001', ...(behavior.ruleIds ?? []).filter((r) => r !== 'rule_0001')];
+  const onlyOnceRuleId = resolveOnlyOnceRuleId(ruleMap);
+  const effectiveRuleIds = [
+    ...(onlyOnceRuleId ? [onlyOnceRuleId] : []),
+    ...(behavior.ruleIds ?? []).filter((r) => r !== onlyOnceRuleId),
+  ];
 
   const passed = admissionCalc({
     judgeExpr: behavior.judgeExpr,

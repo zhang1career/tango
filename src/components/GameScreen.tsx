@@ -181,6 +181,13 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     refresh();
   }, [engine, refresh]);
 
+  const handleIntroError = useCallback(() => {
+    const passageId = engine?.getState()?.currentPassage?.id;
+    if (passageId) introPlayedRef.current.add(passageId);
+    setIntroVisible(false);
+    refresh();
+  }, [engine, refresh]);
+
   const state = engine?.getState();
   const passage = state?.currentPassage ?? null;
   const passageId = passage?.id ?? '';
@@ -286,6 +293,23 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     }
     refresh();
   },
+    [doExecuteEventAndMaybeEnding, refresh]
+  );
+
+  const handleEventMediaError = useCallback(
+    (overlay: { type: 'opening' | 'ending'; url: string; event: GameEvent }) => {
+      setEventMediaOverlay(null);
+      if (overlay.type === 'opening') {
+        doExecuteEventAndMaybeEnding(overlay.event);
+      } else {
+        if (eventBgmRef.current) {
+          eventBgmRef.current.pause();
+          eventBgmRef.current.src = '';
+        }
+        runEventPhaseRef.current();
+      }
+      refresh();
+    },
     [doExecuteEventAndMaybeEnding, refresh]
   );
 
@@ -529,6 +553,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   muted
                   playsInline
                   onEnded={handleIntroEnded}
+                  onError={handleIntroError}
                   style={overlayStyles.video}
                 />
               </div>
@@ -541,6 +566,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   muted
                   playsInline
                   onEnded={() => handleEventMediaEnded(eventMediaOverlay)}
+                  onError={() => handleEventMediaError(eventMediaOverlay)}
                   style={overlayStyles.video}
                 />
               </div>
