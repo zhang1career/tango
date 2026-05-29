@@ -183,29 +183,55 @@ lzx-twine-import.zip
 ### 上游录入建议（避免常见坑）
 
 - `scene.mapNodeId` 必须填写且能在 `story-maps.json` 的 `nodes[].id` 找到；
-- `scene.summary` 建议填写为该场景的**事实性概要**（人物、地点、事件、情绪、关键台词），作为“剧情 > 章节 > 场景 > 生成游戏”时 AI 生成正文的主依据；
-- `scene.summary` 若缺失或过短，会导致 `story.tw` 对应 passage 正文更依赖模型自由补全，稳定性和可控性都会下降；
+- `scene.passageBlocks` 必填，且按数组顺序生成对应 passage 正文（`raw` 透传 + `ai` 生成混排）；
+- `scene.passageBlocks` 中每个 `ai` 块都应提供清晰 `summary`（事实性概要：人物、地点、事件、情绪、关键台词），避免模型自由补全导致偏移；
 - 要让 A 场景能去 B 场景，本质是让 `A.mapNodeId` 与 `B.mapNodeId` 在地图边上连通；
 - 如果连了边但目标节点没有任何场景，运行时不会生成该跳转；
 - 当前实现尚未完整处理“同一地图节点对应多个场景”的分流，上游暂按**一个节点一个主场景**录入最稳妥。
 
-### `story-scenes.json` 里 `summary` 字段建议写法
+### `story-scenes.json` 里 `passageBlocks` 字段规范（必填）
 
-- 字段位置：`story-scenes.json > scene.summary`（字符串，必填建议）
-- 用途：用于生成 `story.tw` 中该场景对应 passage 的正文草稿；不是运行时跳转条件字段，但会显著影响生成文本质量。
-- 推荐包含（3-6 句）：
-  - 场景发生地点与时间（或时代氛围）
-  - 本场出场关键人物及关系
-  - 本场核心事件（发生了什么）
-  - 玩家视角能感知的冲突/目标
-  - 1-2 句关键对白或语气示例（可选）
-- 不建议：
-  - 只写“在某地发生一些事”这种空泛描述
-  - 引入与本章无关的大量新设定（会放大 AI 演义偏差）
+- 字段位置：`story-scenes.json > scene.passageBlocks`（数组，**必填**）
+- 生成规则：按数组顺序拼接为 `story.tw` 对应 passage 正文。
+  - `type: "raw"`：`text` 直接透传，不经过模型；
+  - `type: "ai"`：调用 OpenAI 兼容接口生成正文片段。
+- `ai` 块字段：
+  - `summary`（必填）：该块扩写依据；
+  - `hints`（可选）：该块风格/语气提示；
+  - `wordCount`（可选）：该块目标字数。
+- 推荐将一个场景拆成 2-6 个正文块，按“事实片段 -> 扩写片段 -> 事实片段”组织，便于控制叙事节奏。
+
+示例：
+
+```json
+{
+  "id": "scene_0001",
+  "name": "游历市井",
+  "mapNodeId": "xuanyangmen",
+  "passageBlocks": [
+    {
+      "type": "raw",
+      "text": "【史料摘录】洛阳宣阳门外，车马辐辏，市声喧然。"
+    },
+    {
+      "type": "ai",
+      "summary": "费穆初入市井，心怀投机与上升期待，见闻繁华后情绪高涨。",
+      "hints": "第一人称，短句，压迫感逐步增强",
+      "wordCount": 260
+    },
+    {
+      "type": "raw",
+      "text": "旁白：若早知终局，是否仍会走向同一条路？"
+    }
+  ]
+}
+```
 
 ### 上游交付前自检清单（5条）
 
 - [ ] **场景节点完整性**：`story-scenes.json` 中每个参与流程的场景都填写了 `mapNodeId`。
+- [ ] **正文块完整性**：每个场景都提供了非空 `passageBlocks[]`，且块顺序符合预期叙事节奏。
+- [ ] **AI 块摘要质量**：每个 `type: "ai"` 块都包含明确 `summary`（避免空泛描述）。
 - [ ] **节点引用有效性**：所有 `scene.mapNodeId` 都能在 `story-maps.json > nodes[].id` 中找到。
 - [ ] **连通可达性**：希望互相可跳转的场景，其 `mapNodeId` 在 `story-maps.json > edges` 中存在连通关系。
 - [ ] **章节收录一致性**：`story-fm.json > chapters[].sceneEntries[].sceneId` 已包含需要参与该章节导航的场景。
@@ -361,8 +387,8 @@ lzx-twine-import.zip
 为降低阅读压力（尤其是“短视频化节奏”的交互小说/轻量 RPG），建议上游在导出时同时约束三层尺度：
 
 1. **场景总字数**（控制单场信息体量）  
-   - 字段：`story-fm.json > chapters[].sceneEntries[].wordCount`
-   - 说明：点击“剧情 -> 章节 -> 场景 -> 生成游戏”时，若该字段为空，模型不带字数约束；建议上游显式填写。
+   - 字段：`story-scenes.json > scene.passageBlocks[].wordCount`（仅 `type: "ai"` 块生效）
+   - 说明：建议按块配置字数目标，再由多个块累加得到场景总量。
 
 2. **每页字数范围**（控制单页阅读负担）  
    - 环境变量：`VITE_PASSAGE_PAGE_CHARS_MIN` / `VITE_PASSAGE_PAGE_CHARS_MAX`
@@ -394,6 +420,6 @@ lzx-twine-import.zip
 
 ### 上游自检补充（篇幅维度）
 
-- [ ] 所有参与生成的 `sceneEntry` 已填写 `wordCount`（避免“默认无限制生成”）。
+- [ ] 所有 `type: "ai"` 正文块已按需要填写 `wordCount`（避免“默认无限制生成”）。
 - [ ] 已根据目标体验配置分页阈值（`VITE_PASSAGE_PAGE_CHARS_MIN/MAX`）。
 - [ ] 实际产物抽检 3 个场景：无“单页超长墙文本”，每页信息点数量可控。

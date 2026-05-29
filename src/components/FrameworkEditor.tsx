@@ -6,7 +6,7 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import JSZip from 'jszip';
 import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
-import type {GameScene} from '../schema/game-scene';
+import type {GameScene, ScenePassageAiBlock, ScenePassageBlock} from '../schema/game-scene';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
@@ -104,6 +104,39 @@ function truncatePathForDisplay(name: string, maxLen = 28): string {
   if (!name) return '';
   if (name.length <= maxLen) return name;
   return '…' + name.slice(-maxLen + 1);
+}
+
+function getScenePassageBlocks(scene: GameScene): ScenePassageBlock[] {
+  return Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function wrapRawPassageBlock(text: string): string {
+  return `<div class="raw-passage-quote">${escapeHtml(text)}</div>`;
+}
+
+function sceneContextSummary(scene: GameScene): string {
+  const blocks = getScenePassageBlocks(scene);
+  if (blocks.length === 0) return '';
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'ai') {
+      const summary = block.summary?.trim();
+      if (summary) parts.push(summary);
+      continue;
+    }
+    const text = block.text?.trim();
+    if (text) parts.push(text.length > 80 ? `${text.slice(0, 80)}...` : text);
+  }
+  return parts.join(' ');
 }
 
 function FileHandleButton({
@@ -217,7 +250,7 @@ function buildChapterContext(
       '前序场景概要：',
       ...prev.map((e) => {
         const s = sceneMap.get(e.sceneId);
-        return `  - ${e.sceneId}：${s?.summary ?? ''}`;
+        return `  - ${e.sceneId}：${s ? sceneContextSummary(s) : ''}`;
       })
     );
   }
@@ -248,15 +281,16 @@ function buildChapterContext(
   return parts.join('\n');
 }
 
-async function generateScenePassageText(
+async function generateAiPassageBlockText(
   fw: StoryFramework,
   scene: GameScene,
   ch: FrameworkChapter,
   sceneIndex: number,
   sceneMap: Map<string, GameScene>,
+  block: ScenePassageAiBlock,
+  blockIndex: number,
   apiKey: string,
-  apiUrl: string,
-  wordCount?: number
+  apiUrl: string
 ): Promise<string> {
   const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
   const system = `你是一名文字冒险游戏编剧。请基于「场景概要（summary）」做“有限演义”扩写，生成可读的剧情正文。
@@ -283,9 +317,10 @@ async function generateScenePassageText(
 ---
 
 场景：${scene.id}（${scene.name}）
-场景概要（最高优先级，必须严格围绕此内容扩写）：${scene.summary}
-${scene.hints ? `写作提示：${scene.hints}` : ''}
-${wordCount != null && wordCount > 0 ? `字数要求：约${wordCount}字` : ''}
+正文块：第 ${blockIndex + 1} 块 / AI 生成
+场景概要（最高优先级，必须严格围绕此内容扩写）：${block.summary}
+${block.hints ? `写作提示：${block.hints}` : ''}
+${block.wordCount != null && block.wordCount > 0 ? `字数要求：约${block.wordCount}字` : ''}
 
 请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字；且仅做有限演义扩写）：`;
 
@@ -314,6 +349,52 @@ ${wordCount != null && wordCount > 0 ? `字数要求：约${wordCount}字` : ''}
   const content = json.choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error('API 未返回正文');
   return content;
+}
+
+async function generateScenePassageText(
+  fw: StoryFramework,
+  scene: GameScene,
+  ch: FrameworkChapter,
+  sceneIndex: number,
+  sceneMap: Map<string, GameScene>,
+  apiKey: string,
+  apiUrl: string
+): Promise<string> {
+  const blocks = getScenePassageBlocks(scene);
+  if (blocks.length === 0) {
+    throw new Error(`场景 ${scene.id} 缺少 passageBlocks，无法生成正文`);
+  }
+
+  const rendered: string[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.type === 'raw') {
+      const text = block.text?.trim();
+      if (text) rendered.push(wrapRawPassageBlock(text));
+      continue;
+    }
+    const summary = block.summary?.trim();
+    if (!summary) {
+      throw new Error(`场景 ${scene.id} 的第 ${i + 1} 个 ai 块缺少 summary`);
+    }
+    const aiText = await generateAiPassageBlockText(
+      fw,
+      scene,
+      ch,
+      sceneIndex,
+      sceneMap,
+      block,
+      i,
+      apiKey,
+      apiUrl
+    );
+    rendered.push(aiText);
+  }
+
+  if (rendered.length === 0) {
+    throw new Error(`场景 ${scene.id} 的 passageBlocks 未产出有效正文`);
+  }
+  return rendered.join('\n\n');
 }
 
 function hashString(input: string): string {
@@ -387,14 +468,12 @@ function getSceneEntryFingerprint(
     entry: {
       sceneId: entry.sceneId,
       ruleIds: entry.ruleIds ?? [],
-      wordCount: entry.wordCount ?? null,
       sceneIndex,
     },
     scene: {
       id: scene.id,
       name: scene.name,
-      summary: scene.summary,
-      hints: scene.hints ?? '',
+      passageBlocks: scene.passageBlocks ?? [],
       mapNodeId: scene.mapNodeId ?? '',
       characterIds: scene.characterIds ?? [],
       eventIds: scene.eventIds ?? [],
@@ -493,7 +572,7 @@ async function compileSceneEntry(
   const fp = getSceneEntryFingerprint(fw, ch, sceneIndex, sceneMap);
   if (!fp) throw new Error('无法计算版本指纹');
 
-  const text = await generateScenePassageText(fw, scene, ch, sceneIndex, sceneMap, apiKey, apiUrl, entry.wordCount);
+  const text = await generateScenePassageText(fw, scene, ch, sceneIndex, sceneMap, apiKey, apiUrl);
   applySceneTextToStory(story, frameworkToStory(fw), fw, scene, chapterIndex, text);
   return {
     fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => ({...e, compiledFingerprint: fp})),
@@ -912,12 +991,13 @@ export function FrameworkEditor({
         const raw = res.ok ? await res.text() : '';
         const story = parseTwee(raw);
         const passage = lookupKeys.map((k) => story.passages.get(k)).find((p) => !!p);
-        const fallback = sceneMap.get(entry.sceneId)?.summary ?? '';
+        const fallbackScene = sceneMap.get(entry.sceneId);
+        const fallback = fallbackScene ? sceneContextSummary(fallbackScene) : '';
         setEditingSceneText((prev) => ({
           ...prev,
           [entryKey]: passage?.text ?? fallback,
         }));
-        if (!passage) addNotification('info', '未找到已有正文，已载入该场景 summary 作为编辑初稿');
+        if (!passage) addNotification('info', '未找到已有正文，已载入场景正文块摘要作为编辑初稿');
       } catch (e) {
         setJsonError((e as Error).message || '读取正文失败');
       } finally {
@@ -1457,16 +1537,18 @@ function ChapterBlock({
                 {isEntryExpanded && (
                   <div style={styles.sceneBody}>
                     <div style={styles.row}>
-                      <label style={styles.label}>场景 summary（存于 story-scenes.json）</label>
-                      <textarea
-                        value={scene?.summary ?? ''}
-                        onChange={(e) => {
-                          if (!scene) return;
-                          updateScene(scene.id, (s0) => ({...s0, summary: e.target.value}));
-                        }}
-                        placeholder="该场景的事实性概要（人物、地点、事件、情绪、关键台词）"
-                        style={{...styles.input, ...styles.textarea, minHeight: 90}}
-                      />
+                      <label style={styles.label}>场景正文块（story-scenes.json {'>'} passageBlocks）</label>
+                      <div style={{...styles.input, minHeight: 90, whiteSpace: 'pre-wrap', lineHeight: 1.5}}>
+                        {scene
+                          ? getScenePassageBlocks(scene).map((block, idx) => (
+                            <div key={`${scene.id}-block-${idx}`}>
+                              {block.type === 'raw'
+                                ? `[${idx + 1}] raw: ${(block.text ?? '').slice(0, 80)}`
+                                : `[${idx + 1}] ai: ${(block.summary ?? '').slice(0, 80)}`}
+                            </div>
+                          ))
+                          : '-'}
+                      </div>
                     </div>
                     <div style={styles.row}>
                       <label style={styles.label}>生成正文（story.tw passage，可手动覆盖）</label>
@@ -1493,23 +1575,6 @@ function ChapterBlock({
                         onChange={(e) => onSceneTextDraftChange(entryKey, e.target.value)}
                         placeholder="可手动编辑该场景在 story.tw 中的正文内容"
                         style={{...styles.input, ...styles.textarea, minHeight: 170}}
-                      />
-                    </div>
-                    <div style={styles.row}>
-                      <label style={styles.label}>字数</label>
-                      <input
-                        type="number"
-                        min={1}
-                        value={entry.wordCount ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.valueAsNumber;
-                          updateEntry(si, (e0) => ({
-                            ...e0,
-                            wordCount: Number.isFinite(v) && v > 0 ? v : undefined,
-                          }));
-                        }}
-                        placeholder="如：500（留空则不限制）"
-                        style={{...styles.input, flex: 1}}
                       />
                     </div>
                     <RuleIdsSelector

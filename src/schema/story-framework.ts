@@ -26,8 +26,6 @@ export interface SceneEntry {
   sceneId: string;
   /** 本章节采用该场景时的规则 id 列表（有序，准入时按顺序嵌套执行） */
   ruleIds?: string[];
-  /** 生成内容字数要求（约多少字），非空时加入 AI 提示词 */
-  wordCount?: number;
   /** story.tw 已编译对应的源版本指纹；与当前指纹不一致则表示正文过期 */
   compiledFingerprint?: string;
 }
@@ -106,7 +104,7 @@ export function migrateFramework(parsed: StoryFramework): void {
           scenes.push({
             id: s.id,
             name: s.name ?? s.id,
-            summary: s.summary ?? '',
+            passageBlocks: [{type: 'ai', summary: s.summary ?? ''}],
           });
           sceneMap.set(s.id, scenes[scenes.length - 1]);
         }

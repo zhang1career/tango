@@ -10,6 +10,29 @@ import type {GameScene} from '../schema/game-scene';
 import type {MapEdge} from '../schema/game-map';
 import type {GameRule} from '../schema/game-rule';
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function wrapRawPassageBlock(text: string): string {
+  return `<div class="raw-passage-quote">${escapeHtml(text)}</div>`;
+}
+
+function sceneDraftText(scene: GameScene): string {
+  const blocks = Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
+  if (blocks.length === 0) return '';
+  return blocks
+    .map((block) => (block.type === 'raw' ? wrapRawPassageBlock(block.text) : block.summary))
+    .map((text) => text?.trim() ?? '')
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 /** 准入条件按顺序嵌套：先章节规则，再场景条件，再场景规则 */
 function buildAccessCondition(
   entry: SceneEntry,
@@ -125,7 +148,7 @@ export function frameworkToStory(fw: StoryFramework): Story {
     passages.set(pid, {
       id: pid,
       name: scene.name,
-      text: scene.summary || '',
+      text: sceneDraftText(scene),
       links,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });

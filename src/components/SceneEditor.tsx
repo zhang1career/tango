@@ -15,6 +15,32 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
 
+function getFirstAiBlock(scene: GameScene): {summary: string; hints?: string; wordCount?: number} | null {
+  const blocks = Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
+  const block = blocks.find((it) => it.type === 'ai');
+  return block && block.type === 'ai' ? block : null;
+}
+
+function upsertFirstAiBlock(
+  scene: GameScene,
+  patch: (block: {type: 'ai'; summary: string; hints?: string; wordCount?: number}) => {
+    type: 'ai';
+    summary: string;
+    hints?: string;
+    wordCount?: number;
+  }
+): GameScene {
+  const blocks = Array.isArray(scene.passageBlocks) ? [...scene.passageBlocks] : [];
+  const index = blocks.findIndex((it) => it.type === 'ai');
+  if (index >= 0) {
+    const existing = blocks[index];
+    if (existing.type === 'ai') blocks[index] = patch(existing);
+  } else {
+    blocks.push(patch({type: 'ai', summary: ''}));
+  }
+  return {...scene, passageBlocks: blocks};
+}
+
 function FieldRow({
                     label,
                     value,
@@ -81,6 +107,7 @@ function SceneFormContent({
                             ruleIds: ruleList,
                             onUpdate,
                           }: SceneFormProps) {
+  const firstAi = getFirstAiBlock(scene);
   return (
     <div>
       <FieldRow label="ID" value={scene.id} editable={editable && !!onUpdate}>
@@ -99,18 +126,22 @@ function SceneFormContent({
           placeholder="市集"
         />
       </FieldRow>
-      <FieldRow label="概要" value={scene.summary} editable={editable && !!onUpdate}>
+      <FieldRow label="AI 概要（第一个 ai 块）" value={firstAi?.summary ?? ''} editable={editable && !!onUpdate}>
         <textarea
-          value={scene.summary}
-          onChange={(e) => onUpdate!((s) => ({...s, summary: e.target.value}))}
+          value={firstAi?.summary ?? ''}
+          onChange={(e) => onUpdate!((s) => upsertFirstAiBlock(s, (block) => ({...block, summary: e.target.value})))}
           style={{...styles.input, ...styles.textarea, minHeight: 60}}
-          placeholder="剧情概要，AI 据此生成正文"
+          placeholder="该场景第一个 AI 块的概要"
         />
       </FieldRow>
-      <FieldRow label="写作提示" value={scene.hints ?? ''} editable={editable && !!onUpdate}>
+      <FieldRow label="写作提示（第一个 ai 块）" value={firstAi?.hints ?? ''} editable={editable && !!onUpdate}>
         <input
-          value={scene.hints ?? ''}
-          onChange={(e) => onUpdate!((s) => ({...s, hints: e.target.value || undefined}))}
+          value={firstAi?.hints ?? ''}
+          onChange={(e) =>
+            onUpdate!((s) =>
+              upsertFirstAiBlock(s, (block) => ({...block, hints: e.target.value || undefined}))
+            )
+          }
           style={styles.input}
           placeholder="可选"
         />
@@ -323,11 +354,11 @@ export function SceneEditor({
   const [newScene, setNewScene] = useState<GameScene>(() => ({
     id: `scene_${Date.now()}`,
     name: '新场景',
-    summary: '',
+    passageBlocks: [{type: 'ai', summary: ''}],
   }));
 
   const openAddModal = () => {
-    setNewScene({id: `scene_${Date.now()}`, name: '新场景', summary: ''});
+    setNewScene({id: `scene_${Date.now()}`, name: '新场景', passageBlocks: [{type: 'ai', summary: ''}]});
     setAddModalOpen(true);
   };
 
