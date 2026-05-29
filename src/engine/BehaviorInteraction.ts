@@ -6,7 +6,7 @@
 import type {RuntimeState} from '@/types';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
-import type {GameRule} from '../schema/game-rule';
+import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
 import {admissionCalc} from './AdmissionCalculator';
 import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
@@ -37,6 +37,15 @@ export interface BehaviorInteractionContext {
     rep?: Record<string, number>;
   }) => void;
   usedBehaviorIds: Set<string>;
+  /** 当前 passage 对应的场景 id；用于 sceneIds 过滤 */
+  currentSceneId?: string;
+}
+
+function behaviorMatchesScene(behavior: GameBehavior, currentSceneId: string | undefined): boolean {
+  const ids = behavior.sceneIds?.map((id) => id.trim()).filter(Boolean);
+  if (!ids?.length) return true;
+  if (!currentSceneId) return false;
+  return ids.includes(currentSceneId);
 }
 
 export function getAvailableBehaviors(
@@ -54,12 +63,13 @@ export function getAvailableBehaviors(
     ])
   );
 
-  /** 行为准入时由程序临时添加 rule_0001（onlyOnce），不保存到数据 */
+  /** 行为准入时由程序临时添加 onlyOnce 规则，不保存到数据 */
   const effectiveRuleIds = (ids: string[] | undefined) =>
-    ['rule_0001', ...(ids ?? []).filter((r) => r !== 'rule_0001')];
+    [ONLY_ONCE_RULE_ID, ...(ids ?? []).filter((r) => r !== ONLY_ONCE_RULE_ID)];
 
   const result: GameBehavior[] = [];
   for (const b of lib) {
+    if (!behaviorMatchesScene(b, ctx.currentSceneId)) continue;
     const behaviorId = normalizeBehaviorId(characterId, b.id);
     const entity = { id: behaviorId, name: b.id };
     const passed = admissionCalc({
@@ -94,6 +104,9 @@ export function executeBehavior(
     (x) => x.id === bId || x.id === `${characterId}.${bId}`
   );
   if (!b) return { ok: false, response: UNAVAILABLE_RESPONSE };
+  if (!behaviorMatchesScene(b, ctx.currentSceneId)) {
+    return { ok: false, response: UNAVAILABLE_RESPONSE };
+  }
 
   const state = ctx.getState();
   const ruleMap = new Map(
@@ -104,8 +117,8 @@ export function executeBehavior(
   );
   const entity = { id: behaviorId, name: b.id };
 
-  /** 行为准入时由程序临时添加 rule_0001（onlyOnce），不保存到数据 */
-  const effectiveRuleIds = ['rule_0001', ...(b.ruleIds ?? []).filter((r) => r !== 'rule_0001')];
+  /** 行为准入时由程序临时添加 onlyOnce 规则，不保存到数据 */
+  const effectiveRuleIds = [ONLY_ONCE_RULE_ID, ...(b.ruleIds ?? []).filter((r) => r !== ONLY_ONCE_RULE_ID)];
 
   const passed = admissionCalc({
     judgeExpr: b.judgeExpr,

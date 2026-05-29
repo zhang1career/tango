@@ -121,6 +121,7 @@ interface BehaviorInteractionModalProps {
   open: boolean;
   character: GameCharacter | null;
   characters: GameCharacter[];
+  gameId?: string;
   behaviorCtx: BehaviorInteractionContext | null;
   history: BehaviorHistoryEntry[];
   onExecute: (charId: string, b: GameBehavior) => void;
@@ -131,6 +132,7 @@ export function BehaviorInteractionModal({
   open,
   character,
   characters,
+  gameId,
   behaviorCtx,
   history,
   onExecute,
@@ -250,7 +252,7 @@ export function BehaviorInteractionModal({
 
   const behaviorList =
     character && behaviorCtx ? getAvailableBehaviors(character.id, behaviorCtx) : [];
-  const avatarUrl = character?.avatar ? resolveMediaUrl(character.avatar) : undefined;
+  const avatarUrl = character?.avatar ? resolveMediaUrl(character.avatar, gameId) : undefined;
 
   return (
     <div ref={overlayRef} style={styles.overlay} onClick={onClose}>

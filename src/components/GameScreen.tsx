@@ -24,6 +24,7 @@ import type {GameBehavior} from '@/schema/game-behavior';
 import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
+import {resolveSceneIdFromPassage} from '@/utils/scene-id';
 import {
   BehaviorInteractionModal,
   type BehaviorHistoryEntry,
@@ -34,9 +35,10 @@ import {BattleSettlementModal} from './BattleSettlementModal';
 interface GameScreenProps {
   fetchContent: FetchContent;
   className?: string;
+  audioMuted?: boolean;
 }
 
-export function GameScreen({fetchContent, className}: GameScreenProps) {
+export function GameScreen({fetchContent, className, audioMuted = false}: GameScreenProps) {
   const {gameId} = useGameId();
   const [engine, setEngine] = useState<GameEngine | null>(null);
   const [characters, setCharacters] = useState<GameCharacter[]>([]);
@@ -63,6 +65,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
   const eventPhaseRunRef = useRef<string | null>(null);
   const [eventMediaOverlay, setEventMediaOverlay] = useState<{ type: 'opening' | 'ending'; url: string; event: GameEvent } | null>(null);
+  const [navWarning, setNavWarning] = useState<string | null>(null);
   const eventBgmRef = useRef<HTMLAudioElement | null>(null);
   const runEventPhaseRef = useRef<() => void>(() => {});
 
@@ -147,21 +150,29 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     const shouldPlay =
       url &&
       (!opening || introPlayedRef.current.has(passage?.id ?? '')) &&
-      eventPhaseReady;
+      eventPhaseReady &&
+      !audioMuted;
     const audio = bgmRef.current;
     if (audio) {
+      audio.muted = audioMuted;
       audio.pause();
       audio.src = '';
     }
     if (url && shouldPlay) {
-      const src = resolveMediaUrl(url);
+      const src = resolveMediaUrl(url, gameId);
       if (audio) {
         audio.src = src;
         audio.loop = true;
         audio.play().catch(() => {});
       }
     }
-  }, [engine?.getState()?.currentPassage?.id, introVisible, eventPhaseReady]);
+  }, [engine?.getState()?.currentPassage?.id, introVisible, eventPhaseReady, audioMuted, gameId]);
+
+  useEffect(() => {
+    if (!audioMuted) return;
+    if (bgmRef.current) bgmRef.current.pause();
+    if (eventBgmRef.current) eventBgmRef.current.pause();
+  }, [audioMuted]);
 
   // Set introVisible when entering passage with openingAnimation (first time)
   useEffect(() => {
@@ -212,8 +223,9 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const doExecuteEventAndMaybeEnding = useCallback(
     (evt: GameEvent) => {
       if (!engine || !passage) return;
-      if (evt.backgroundMusic && eventBgmRef.current) {
-        eventBgmRef.current.src = resolveMediaUrl(evt.backgroundMusic);
+      if (!audioMuted && evt.backgroundMusic && eventBgmRef.current) {
+        eventBgmRef.current.src = resolveMediaUrl(evt.backgroundMusic, gameId);
+        eventBgmRef.current.muted = audioMuted;
         eventBgmRef.current.loop = true;
         eventBgmRef.current.play().catch(() => {});
       }
@@ -236,7 +248,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       }
       runEventPhaseRef.current();
     },
-    [engine, passage, buildEvtCtx, characters]
+    [engine, passage, buildEvtCtx, characters, audioMuted, gameId]
   );
 
   const runEventPhase = useCallback(() => {
@@ -351,9 +363,11 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
 
   const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
-  const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u)).filter(Boolean);
+  const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
   const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
+
+  const currentSceneId = resolveSceneIdFromPassage(passage);
 
   const behaviorCtx: BehaviorInteractionContext = {
     characters,
@@ -368,13 +382,55 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     },
     applyActions: (actions) => engine.applyActions(actions),
     usedBehaviorIds: engine.usedBehaviorIds,
+    currentSceneId,
+  };
+
+  const technicalIdRe = /^ch\d+\.scene_\d+(?:\.p_\d+)?$/;
+
+  const getReadablePassageName = (name: string): string => {
+    const trimmed = name.trim();
+    if (!technicalIdRe.test(trimmed)) return trimmed;
+    const baseId = trimmed.replace(/\.p_\d+$/, '');
+    const basePassage = state.story.passages.get(baseId);
+    if (basePassage?.name && !technicalIdRe.test(basePassage.name.trim())) {
+      return basePassage.name.trim();
+    }
+    return '';
+  };
+
+  const readablePassageName = getReadablePassageName(passage?.name ?? '');
+  const readableStoryTitle = technicalIdRe.test(state.story.title.trim())
+    ? '未命名故事'
+    : state.story.title;
+
+  const getLinkLabel = (link: import('@/types').PassageLink): string => {
+    const raw = (link.displayText || link.passageName || '').trim();
+    if (!raw) return '继续';
+    if (raw === '继续') return raw;
+    const stripped = raw.startsWith('前往') ? raw.replace(/^前往\s*/, '').trim() : raw;
+    if (technicalIdRe.test(stripped)) {
+      const target = engine.getPassage(link.passageName);
+      const targetReadable = getReadablePassageName(target?.name ?? '') || getReadablePassageName(target?.id ?? '');
+      return targetReadable ? `前往 ${targetReadable}` : '继续';
+    }
+    return raw.startsWith('前往') ? raw : `前往 ${raw}`;
   };
 
   const handleLink = (passageName: string, link?: import('@/types').PassageLink) => {
     setSelectedCharId(null);
     setBehaviorList([]);
     setLastResponse(null);
-    engine.goTo(passageName, link ?? undefined);
+    let ok = engine.goTo(passageName, link ?? undefined);
+    if (!ok && /^ch\d+\.scene_\d+$/.test(passageName.trim())) {
+      // 兼容历史数据：章节入口常写 base id，实际首屏是 .p_100
+      ok = engine.goTo(`${passageName.trim()}.p_100`, link ?? undefined);
+    }
+    if (!ok) {
+      setNavWarning('该选项暂时无法跳转：目标场景不存在或数据未同步。');
+      refresh();
+      return;
+    }
+    setNavWarning(null);
     refresh();
   };
 
@@ -499,6 +555,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         },
         applyActions: (actions) => engine.applyActions(actions),
         usedBehaviorIds: engine.usedBehaviorIds,
+        currentSceneId: resolveSceneIdFromPassage(engine.getState().currentPassage),
       };
       executeBattleWriteback(bid, pending.b, result, ctx);
       refresh();
@@ -517,7 +574,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   return (
     <div className={`game-container ${className ?? ''}`} style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>{state.story.title}</h1>
+        <h1 style={styles.title}>{readableStoryTitle}</h1>
       </header>
 
       {(state.inventory.length > 0 || Object.keys(state.reputation).length > 0) && (
@@ -541,14 +598,14 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         </aside>
       )}
 
-      <audio ref={eventBgmRef} loop style={{display: 'none'}} />
+      <audio ref={eventBgmRef} loop muted={audioMuted} style={{display: 'none'}} />
       <main style={styles.scroll}>
         {passage && (
           <>
             {introVisible && openingAnimation && (
               <div style={overlayStyles.overlay}>
                 <video
-                  src={resolveMediaUrl(openingAnimation)}
+                  src={resolveMediaUrl(openingAnimation, gameId)}
                   autoPlay
                   muted
                   playsInline
@@ -561,7 +618,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
             {eventMediaOverlay && (
               <div style={overlayStyles.overlay}>
                 <video
-                  src={resolveMediaUrl(eventMediaOverlay.url)}
+                  src={resolveMediaUrl(eventMediaOverlay.url, gameId)}
                   autoPlay
                   muted
                   playsInline
@@ -573,23 +630,34 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
             )}
             {!introVisible && eventPhaseReady && (
               <>
-                <p style={styles.passageName}>{passage.name}</p>
+                {readablePassageName && (
+                  <p style={styles.passageName}>{readablePassageName}</p>
+                )}
                 <div ref={passageContentRef} className="passage-content">
-                  {resolvedImages.length > 0 && (
-                    <div
-                      className="media-carousel"
-                      data-images={JSON.stringify(resolvedImages)}
-                      style={{marginBottom: 16}}
-                    >
-                      <img src={resolvedImages[0]} alt="" style={{maxWidth: '100%', borderRadius: 8}} />
+                  {resolvedImages.length > 0 ? (
+                    <div style={styles.sceneStage}>
+                      <div
+                        className="media-carousel"
+                        data-images={JSON.stringify(resolvedImages)}
+                        style={styles.sceneImageLayer}
+                      >
+                        <img src={resolvedImages[0]} alt="" style={styles.sceneImage} />
+                      </div>
+                      <div style={styles.sceneTextLayer}>
+                        <div
+                          style={styles.passageTextOverlay}
+                          dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
+                        />
+                      </div>
                     </div>
+                  ) : (
+                    <div
+                      style={styles.passageText}
+                      dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
+                    />
                   )}
-                  <div
-                    style={styles.passageText}
-                    dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
-                  />
                 </div>
-                <audio ref={bgmRef} loop style={{display: 'none'}} />
+                <audio ref={bgmRef} loop muted={audioMuted} style={{display: 'none'}} />
 
             {characterIds.length > 0 && (
               <section style={styles.behaviorPanel}>
@@ -597,7 +665,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   <span style={styles.charListLabel}>攀谈：</span>
                   {characterIds.map((cid) => {
                     const c = characters.find((x) => x.id === cid);
-                    const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar) : undefined;
+                    const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar, gameId) : undefined;
                     return (
                       <button
                         key={cid}
@@ -631,10 +699,15 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   style={styles.linkButton}
                   onClick={() => handleLink(link.passageName, link)}
                 >
-                  {link.displayText.startsWith('前往') || link.displayText === '继续' ? link.displayText : `前往 ${link.displayText}`}
+                  {getLinkLabel(link)}
                 </button>
               ))}
             </nav>
+            {navWarning && (
+              <p style={styles.navWarning}>
+                {navWarning}
+              </p>
+            )}
 
             {state.isEnding && engine.getVisibleLinks().length === 0 && (
               <p style={{...styles.passageText, fontStyle: 'italic', color: '#888'}}>
@@ -662,6 +735,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         open={!!selectedCharId}
         character={selectedCharId ? characters.find((c) => c.id === selectedCharId) ?? null : null}
         characters={characters}
+        gameId={gameId}
         behaviorCtx={behaviorCtx}
         history={behaviorHistory}
         onExecute={handleExecuteBehavior}
@@ -674,6 +748,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         objectChar={battleObjectChar}
         behavior={pendingBattleBehavior?.b ?? null}
         battleBgm={featuresConfig?.battle?.backgroundMusic}
+        gameId={gameId}
+        audioMuted={audioMuted}
         onBattleEnd={handleBattleEnd}
         onClose={() => {
           setBattleOpen(false);
@@ -720,6 +796,49 @@ const styles: Record<string, React.CSSProperties> = {
   scroll: {flex: 1, overflow: 'auto', paddingBottom: 40},
   passageName: {fontSize: 14, color: '#888', marginBottom: 12},
   passageText: {fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap'},
+  sceneStage: {
+    position: 'relative',
+    marginBottom: 24,
+    minHeight: 420,
+    maxHeight: '62vh',
+    borderRadius: 10,
+    overflow: 'hidden',
+    border: '1px solid #2f2f45',
+    backgroundColor: '#111',
+  },
+  sceneImageLayer: {
+    position: 'absolute',
+    inset: 0,
+    marginBottom: 0,
+    zIndex: 1,
+  },
+  sceneImage: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    display: 'block',
+    filter: 'brightness(0.62) saturate(0.95)',
+  },
+  sceneTextLayer: {
+    position: 'relative',
+    zIndex: 2,
+    minHeight: 420,
+    maxHeight: '62vh',
+    overflowY: 'auto',
+    padding: '20px 18px 24px',
+    background: 'linear-gradient(to bottom, rgba(8,8,16,0.18), rgba(8,8,16,0.36))',
+  },
+  passageTextOverlay: {
+    fontSize: 17,
+    lineHeight: 1.7,
+    color: '#f3f3f8',
+    margin: 0,
+    whiteSpace: 'pre-wrap',
+    textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(10, 10, 20, 0.28)',
+    borderRadius: 10,
+    padding: '12px 14px',
+  },
   linkList: {display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16},
   behaviorPanel: {marginTop: 16, paddingTop: 16, borderTop: '1px solid #333'},
   charList: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12},
@@ -790,6 +909,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loadingText: {color: '#888', marginTop: 12},
   error: {color: '#e74c3c', padding: 16, textAlign: 'center'},
+  navWarning: {color: '#f5b041', marginTop: 8, marginBottom: 0, fontSize: 13},
 };
 
 const overlayStyles: Record<string, React.CSSProperties> = {

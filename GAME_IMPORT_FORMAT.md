@@ -21,6 +21,30 @@
 - 允许子目录（例如 `media/bg/forest.png`），会按相对路径写入目标目录。
 - 一个压缩包只能包含一个 `gameId` 目录；包含多个会报错。
 
+## 多媒体文件导入说明
+
+- 导入不限制文件扩展名：只要在 zip 内路径合法（不含 `..`）即可写入目标目录。
+- 建议将图片/音频/视频统一放在 `<gameId>/media/` 目录下，便于管理（也可使用任意子目录）。
+- 运行时引用媒体时，建议在相关字段中填写相对路径，例如：
+  - `openingAnimation: "media/beach.mp4"`
+  - `backgroundMusic: "media/frog.mp3"`
+  - `images: ["media/flower.png"]`
+- 若项目配置了 `VITE_MEDIA_BASE_URL`，相对路径会按该基地址解析；未配置时将按页面相对地址加载。
+- 构建产物会保留游戏目录下的全部文件（包含 `media/` 及其他附加资源）。
+
+### 多媒体引用方式（字段级规范）
+
+- 可填写两类值：
+  - **相对路径**（推荐）：如 `media/beach.mp4`、`media/bgm/frog.mp3`
+  - **完整 URL**：如 `https://cdn.example.com/tango/media/beach.mp4`
+- 相对路径建议不要以 `/` 开头，统一使用 `<gameId>/` 目录内相对位置（最稳妥）。
+- 常用字段对应：
+  - `story-scenes.json > scene.openingAnimation`：开场视频
+  - `story-scenes.json > scene.backgroundMusic`：场景背景音乐
+  - `story-scenes.json > scene.images[]`：场景图片轮播
+  - `story-events.json > event.openingAnimation / endingAnimation / backgroundMusic`：事件媒体
+- 若 `story.tw` passage metadata 中也写了 `openingAnimation/images/backgroundMusic`，运行时同样可识别，建议与 `story-scenes.json` 保持一致。
+
 ## 示例
 
 压缩包结构（推荐）：
@@ -141,40 +165,57 @@ lzx-twine-import.zip
 
 ## 对话集（人物互动）可识别格式
 
-为确保“场景中点人物 -> 出现该人物对话集”生效，上游导出需要满足下面两层绑定：
+为确保“场景中点人物 -> 出现该人物对话集”生效，上游导出需要满足下面三层绑定：
 
 1. **场景绑定人物**：在 `story.tw` 的 passage metadata 使用 `characterIds`（驼峰）；
-2. **人物绑定对话集**：在 `StoryData` 的 `characters[].behaviorLibrary` 提供行为列表。
+2. **人物绑定对话集**：在 `StoryData` 的 `characters[].behaviorLibrary` 提供行为列表；
+3. **（可选）对话限定场景**：在 `behaviorLibrary[]` 条目上使用 `sceneIds`，仅在该场景显示该对话。
 
 ### 运行时读取来源（很重要）
 
 - 当前前端运行时通过 `story.tw` 加载故事（`StoryData + passage metadata`）。
 - `story_bundle.json` 可以保留用于其他链路，但**不会直接驱动前端人物对话弹窗**。
+- 人物对话数据也可来自 `story-characters.json`（编辑/导出链路会合并进 `story.tw` 的 `StoryData.characters`）。
 
 ### 1) 场景绑定人物（passage metadata）
 
 在对应 passage 标题后附加 JSON metadata，字段名必须是 `characterIds`：
 
 ```twee
-:: 京师七年 {"characterIds":["emperor_dg"],"eventIds":["evt_02"]}
+:: 游历市井 {"sceneId":"scene_0001","characterIds":["feimu","yuanyong"]}
 ```
 
 - `characterIds` 必须是字符串数组；
-- 数组中的 id 必须能在 `StoryData.characters` 中找到对应人物。
+- 数组中的 id 必须能在 `StoryData.characters` 中找到对应人物；
+- 建议同时写入 `sceneId`（与 `story-scenes.json` 中 `scene.id` 一致）；使用编辑器生成 `story.tw` 时会自动写入。若省略，运行时会尝试从 passage id（`ch{N}.{sceneId}`）解析。
 
 ### 2) 人物绑定对话集（StoryData.characters[].behaviorLibrary）
 
-在 `:: StoryData` 的 JSON 里，每个可互动人物应带 `behaviorLibrary`：
+在 `:: StoryData` 的 JSON 里，每个可互动人物应带 `behaviorLibrary`（`story-characters.json` 中同名字段格式一致）：
 
 ```json
 {
-  "id": "emperor_dg",
-  "name": "道光帝",
+  "id": "yuanyong",
+  "name": "元雍",
   "behaviorLibrary": [
     {
-      "id": "emperor_dg.b_100",
-      "q": "皇上如何看待当前民情？",
-      "a": "朕自有权衡，亦需顾及朝局。",
+      "id": "yuanyong.b_scene1_01",
+      "q": "你为何反对引入军事强人整肃朝廷？",
+      "a": "我认为旧有的官僚体系是稳定政权的基石，一旦动摇，后果不堪设想。",
+      "t": "dialog",
+      "sceneIds": ["scene_0001"]
+    },
+    {
+      "id": "yuanyong.b_scene2_01",
+      "q": "在太庙，你为何如此激动？",
+      "a": "此地岂容你放肆！",
+      "t": "dialog",
+      "sceneIds": ["scene_0002"]
+    },
+    {
+      "id": "yuanyong.b_common",
+      "q": "高阳王这个称号对你意味着什么？",
+      "a": "这不仅是一个称号，更是我肩负的责任。",
       "t": "dialog"
     }
   ]
@@ -188,14 +229,70 @@ lzx-twine-import.zip
 - `a`: 反馈文本（执行后展示）
 - `t`: `dialog` 或 `action`
 - 可选：`ruleIds`、`judgeExpr`、`writebackExpr`
+- 可选：`sceneIds`：字符串数组，元素为 `story-scenes.json` 中的 `scene.id`；**省略或空数组表示所有场景均可用**；填写后仅当玩家处于对应场景时，该对话才会出现在人物弹窗中
 
 > 若 `behaviorLibrary` 缺失或为空，人物可显示但弹窗会是“暂无可用行为”。
+> 若某人物在当前场景下没有任何可用对话（全部被 `sceneIds` 排除或准入未通过），弹窗同样会显示“暂无可用行为”。
+
+## 准入规则约定（`story-rules.json`）
+
+本节为上游内容生成方的**硬性契约**。约定大于实现：运行时只识别 id 为 `rule_0001` 的规则，**不会**根据 `judgeExpr` / `writebackExpr` 的语义自动匹配其他 id。
+
+### 规范定义：`rule_0001`（onlyOnce）
+
+**语义**：同一实体（人物对话、事件行为等）首次通过准入并执行后，标记为已使用；后续不再出现在可选列表中。
+
+**每个游戏包 MUST 原样包含以下规则定义（禁止修改字段值）：**
+
+```json
+{
+  "id": "rule_0001",
+  "name": "onlyOnce",
+  "judgeExpr": "!$entity.is_used",
+  "writebackExpr": "$entity.is_used = true"
+}
+```
+
+字段约束：
+
+| 字段 | 要求 |
+|------|------|
+| `id` | **MUST** 为 `"rule_0001"`（精确匹配，区分大小写） |
+| `name` | **SHOULD** 为 `"onlyOnce"`（供人阅读，引擎不依赖） |
+| `judgeExpr` | **MUST** 为 `"!$entity.is_used"` |
+| `writebackExpr` | **MUST** 为 `"$entity.is_used = true"` |
+
+### 出现位置
+
+- **MUST** 写入 `story-rules.json`（推荐作为数组首项，但不强制顺序）。
+- 若 `story.tw` 的 `:: StoryData` 内嵌了 `gameRules`，**MUST** 包含与上表完全一致的一条 `rule_0001`。
+- 允许在同一 `story-rules.json` 中定义其他规则（如 `rule_0002`），但**不得**用其他 id 替代 `rule_0001` 的 onlyOnce 语义。
+
+### 运行时行为（供理解，非可配置项）
+
+- 引擎在人物对话、事件行为等准入计算时，**自动**将 `rule_0001` 置于规则列表最前。
+- `behaviorLibrary` 中的对话项**无需**逐条填写 `ruleIds`；引擎会自动应用 `rule_0001`。
+- 若 `story-rules.json` 中缺少 `rule_0001`，或 id / 表达式不符合上表，onlyOnce **不会生效**（对话可重复触发、历史会重复累积）。
+
+### MUST NOT（禁止项）
+
+- **MUST NOT** 使用 `rule_only_once`、`only_once` 等自定义 id 代替 `rule_0001`。
+- **MUST NOT** 仅把 onlyOnce 语义写在 `judgeExpr` / `writebackExpr` 中，却使用非 `rule_0001` 的 id。
+- **MUST NOT** 修改 `rule_0001` 的 `judgeExpr` 或 `writebackExpr`（例如改成 `"true"` 或空字符串）。
+- **MUST NOT** 省略 `story-rules.json`，或在 `StoryData.gameRules` 中遗漏 `rule_0001`。
+
+### 上游交付前自检（规则维度）
+
+- [ ] `story-rules.json` 中存在 id 为 `rule_0001` 的规则。
+- [ ] `judgeExpr` 精确为 `!$entity.is_used`，`writebackExpr` 精确为 `$entity.is_used = true`。
+- [ ] 未使用其他 id 承载 onlyOnce 语义。
+- [ ] 若 `story.tw` 内嵌 `gameRules`，同样包含与规范定义一致的 `rule_0001` 条目。
 
 ## 最小可用示例（可直接作为导出参考）
 
 ```twee
 :: StoryData
-{"characters":[{"id":"merchant","name":"商贩","behaviorLibrary":[{"id":"merchant.b_100","q":"最近生意如何？","a":"勉强糊口。","t":"dialog"}]}],"gameRules":[],"start":"市场"}
+{"characters":[{"id":"merchant","name":"商贩","behaviorLibrary":[{"id":"merchant.b_100","q":"最近生意如何？","a":"勉强糊口。","t":"dialog"}]}],"gameRules":[{"id":"rule_0001","name":"onlyOnce","judgeExpr":"!$entity.is_used","writebackExpr":"$entity.is_used = true"}],"start":"市场"}
 
 :: 市场 {"characterIds":["merchant"]}
 你来到集市。
@@ -207,3 +304,48 @@ lzx-twine-import.zip
 - 只导出 `story_bundle.json` 的 `character_ids` / `media_cues`，但 `story.tw` passage metadata 未写 `characterIds`；
 - `story.tw` 写了 `characterIds`，但 `StoryData.characters` 中人物没有 `behaviorLibrary`；
 - `characterIds` 引用的角色 id 与 `StoryData.characters[].id` 不一致。
+- `behaviorLibrary[].sceneIds` 引用了不存在的 `scene.id`，导致该对话在任何场景都不会出现。
+- 手写 passage 未带 `sceneId`，且 passage id 不符合 `ch{N}.{sceneId}` 格式，导致 `sceneIds` 过滤无法识别当前场景。
+- `story-rules.json` 或 `StoryData.gameRules` 中缺少 `rule_0001`，或 `rule_0001` 的 id / 表达式不符合「准入规则约定」。
+
+## 篇幅、段落与分页建议（建议纳入上游规范）
+
+为降低阅读压力（尤其是“短视频化节奏”的交互小说/轻量 RPG），建议上游在导出时同时约束三层尺度：
+
+1. **场景总字数**（控制单场信息体量）  
+   - 字段：`story-fm.json > chapters[].sceneEntries[].wordCount`
+   - 说明：点击“剧情 -> 章节 -> 场景 -> 生成游戏”时，若该字段为空，模型不带字数约束；建议上游显式填写。
+
+2. **每页字数范围**（控制单页阅读负担）  
+   - 环境变量：`VITE_PASSAGE_PAGE_CHARS_MIN` / `VITE_PASSAGE_PAGE_CHARS_MAX`
+   - 默认值：`300 / 500`
+   - 说明：正文会自动分页为主 passage + `继续` 子页（如 `.p_100/.p_200`）。
+
+3. **信息分布密度**（控制节奏与停留时长）  
+   - 建议每页只承载 1 个核心情绪点 + 1 个新信息点，避免单页塞入过多背景解释。
+
+### 推荐区间（按体验目标）
+
+- **短视频感（强节奏）**
+  - `wordCount`: `250-450` / 场景
+  - `VITE_PASSAGE_PAGE_CHARS_MIN`: `120`
+  - `VITE_PASSAGE_PAGE_CHARS_MAX`: `220`
+  - 预期：单场约 3-6 页，节奏快，阅读压力低
+
+- **平衡叙事（默认推荐）**
+  - `wordCount`: `400-700` / 场景
+  - `VITE_PASSAGE_PAGE_CHARS_MIN`: `160`
+  - `VITE_PASSAGE_PAGE_CHARS_MAX`: `280`
+  - 预期：单场约 3-5 页，叙事与节奏平衡
+
+- **剧情深读（文本向）**
+  - `wordCount`: `700-1200` / 场景
+  - `VITE_PASSAGE_PAGE_CHARS_MIN`: `220`
+  - `VITE_PASSAGE_PAGE_CHARS_MAX`: `360`
+  - 预期：单场约 4-7 页，适合重剧情用户
+
+### 上游自检补充（篇幅维度）
+
+- [ ] 所有参与生成的 `sceneEntry` 已填写 `wordCount`（避免“默认无限制生成”）。
+- [ ] 已根据目标体验配置分页阈值（`VITE_PASSAGE_PAGE_CHARS_MIN/MAX`）。
+- [ ] 实际产物抽检 3 个场景：无“单页超长墙文本”，每页信息点数量可控。

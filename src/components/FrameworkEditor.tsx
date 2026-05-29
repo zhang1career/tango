@@ -90,7 +90,7 @@ async function parseZipImport(file: File): Promise<ImportPendingData> {
  * openingAnimation、images、backgroundMusic、characterIds 等由场景决定的字段，空时设为 undefined 以移除
  */
 function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Record<string, unknown> {
-  const m: Record<string, unknown> = {};
+  const m: Record<string, unknown> = { sceneId: scene.id };
   const ids = scene.characterIds?.filter((id) => id !== fw.playerCharacterId);
   m.characterIds = ids?.length ? ids : undefined;
   m.openingAnimation = scene.openingAnimation || undefined;
@@ -533,6 +533,7 @@ export function FrameworkEditor({
   const [importPendingData, setImportPendingData] = useState<ImportPendingData | null>(null);
   const [importGameIdInput, setImportGameIdInput] = useState('');
   const [importGameIdError, setImportGameIdError] = useState<string | null>(null);
+  const [importActionError, setImportActionError] = useState<string | null>(null);
   const [importCompileEnabled, setImportCompileEnabled] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
   const [compileProgress, setCompileProgress] = useState<{ current: number; total: number; scene?: string } | null>(null);
@@ -540,6 +541,8 @@ export function FrameworkEditor({
   const apiKey = getAIGCApiKey();
   const [generatingSceneKey, setGeneratingSceneKey] = useState<string | null>(null);
   const [editingSceneText, setEditingSceneText] = useState<Record<string, string>>({});
+  const editingSceneTextRef = React.useRef(editingSceneText);
+  editingSceneTextRef.current = editingSceneText;
   const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
   const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
   const apiUrl = getAIGCApiUrl();
@@ -562,15 +565,6 @@ export function FrameworkEditor({
       const next = new Set(s);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleScene = (key: string) => {
-    setExpandedScene((s) => {
-      const next = new Set(s);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
       return next;
     });
   };
@@ -669,6 +663,7 @@ export function FrameworkEditor({
         setImportPendingData(pending);
         setImportGameIdInput(pending.sourceGameId);
         setImportGameIdError(null);
+        setImportActionError(null);
         setImportCompileEnabled(true);
         setCompileProgress(null);
         setImportConfirmOpen(true);
@@ -691,10 +686,13 @@ export function FrameworkEditor({
       return;
     }
     setImportGameIdError(null);
+    setImportActionError(null);
     setIsImporting(true);
     setCompileProgress(null);
     try {
-      if (!import.meta.env.DEV) throw new Error('导入游戏文件仅支持开发模式');
+      if (!import.meta.env.DEV) {
+        throw new Error('导入仅支持 `npm run dev`。当前看起来是预览/生产模式（`import.meta.env.DEV=false`）。');
+      }
       let oldFingerprintMap = new Map<string, string>();
       if (importCompileEnabled) {
         const oldFw = await loadFrameworkWithListData(targetGameId);
@@ -766,9 +764,12 @@ export function FrameworkEditor({
       setImportConfirmOpen(false);
       setImportPendingData(null);
       setImportCompileEnabled(true);
+      setImportActionError(null);
       setCompileProgress(null);
     } catch (e) {
-      setJsonError((e as Error).message);
+      const message = (e as Error).message;
+      setJsonError(message);
+      setImportActionError(message);
     } finally {
       setCompileProgress(null);
       setIsImporting(false);
@@ -781,6 +782,7 @@ export function FrameworkEditor({
     setImportPendingData(null);
     setImportGameIdInput('');
     setImportGameIdError(null);
+    setImportActionError(null);
     setImportCompileEnabled(true);
     setCompileProgress(null);
   }, [isImporting]);
@@ -925,6 +927,20 @@ export function FrameworkEditor({
     [fw, gameId, sceneMap, addNotification]
   );
 
+  const toggleScene = useCallback((chi: number, si: number) => {
+    const entryKey = `${chi}-${si}`;
+    setExpandedScene((prev) => {
+      const expanding = !prev.has(entryKey);
+      const next = new Set(prev);
+      if (prev.has(entryKey)) next.delete(entryKey);
+      else next.add(entryKey);
+      if (expanding && editingSceneTextRef.current[entryKey] === undefined) {
+        void handleLoadSceneText(chi, si);
+      }
+      return next;
+    });
+  }, [handleLoadSceneText]);
+
   const handleSaveSceneText = useCallback(
     async (chi: number, si: number) => {
       const ch = fw.chapters[chi];
@@ -1066,6 +1082,11 @@ export function FrameworkEditor({
                 {compileProgress.scene ? ` · ${compileProgress.scene}` : ''}
               </div>
             )}
+            {importActionError && (
+              <div style={{marginTop: 8, fontSize: 13, color: '#e57373'}}>
+                {importActionError}
+              </div>
+            )}
             <div style={styles.modalActions}>
               <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleImportConfirm)} disabled={isImporting}>
                 {isImporting ? '处理中...' : '确认'}
@@ -1186,7 +1207,7 @@ export function FrameworkEditor({
             expandedCh={expandedCh}
             expandedEntry={expandedScene}
             toggleCh={toggleCh}
-            toggleEntry={toggleScene}
+            onToggleEntry={(si) => toggleScene(chi, si)}
             updateFw={updateFwWithErrorReset}
             onGenerateScene={(si) => handleGenerateScene(chi, si)}
             generatingEntry={generatingSceneKey}
@@ -1214,7 +1235,7 @@ function ChapterBlock({
   expandedCh,
   expandedEntry,
   toggleCh,
-  toggleEntry,
+  onToggleEntry,
   updateFw,
   onGenerateScene,
   generatingEntry,
@@ -1233,7 +1254,7 @@ function ChapterBlock({
   expandedCh: Set<string>;
   expandedEntry: Set<string>;
   toggleCh: (id: string) => void;
-  toggleEntry: (key: string) => void;
+  onToggleEntry: (si: number) => void;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
   onGenerateScene: (si: number) => void;
   generatingEntry: string | null;
@@ -1397,15 +1418,15 @@ function ChapterBlock({
             const isGenerating = generatingEntry === entryKey;
             const isLoadingText = loadingSceneTextKey === entryKey;
             const isSavingText = savingSceneTextKey === entryKey;
-            const textDraft = sceneTextDrafts[entryKey] ?? scene?.summary ?? '';
+            const textDraft = sceneTextDrafts[entryKey] ?? '';
             return (
               <div key={entryKey} style={styles.scene}>
                 <div
                   style={styles.sceneHead}
-                  onClick={() => toggleEntry(entryKey)}
+                  onClick={() => onToggleEntry(si)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && toggleEntry(entryKey)}
+                  onKeyDown={(e) => e.key === 'Enter' && onToggleEntry(si)}
                 >
                   <span style={styles.sceneTitle}>
                     {isEntryExpanded ? '▼' : '▶'} {scene?.name ?? entry.sceneId}

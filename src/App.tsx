@@ -217,6 +217,16 @@ function AppBody({
   loadStoryFm,
 }: AppBodyProps) {
   const {user, returnTo, clearReturnTo, login} = useAuth();
+  const [audioMuted, setAudioMuted] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('tango.audioMuted') === '1';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('tango.audioMuted', audioMuted ? '1' : '0');
+  }, [audioMuted]);
+
   const handleLoginSuccess = useCallback(() => {
     if (returnTo) {
       setMode(returnTo.mode as ModeType);
@@ -313,6 +323,22 @@ function AppBody({
           </>
         )}
         <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12}}>
+          <button
+            type="button"
+            onClick={() => setAudioMuted((v) => !v)}
+            style={{
+              padding: '4px 10px',
+              backgroundColor: audioMuted ? '#3a2330' : '#252540',
+              color: audioMuted ? '#fda4af' : '#a78bfa',
+              border: '1px solid #333',
+              borderRadius: 6,
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+            title="关闭或开启声音（背景音乐/语音）"
+          >
+            声音：{audioMuted ? '关' : '开'}
+          </button>
           <select
             value={gameIds.includes(gameId) ? gameId : (gameIds[0] ?? DEFAULT_GAME_ID)}
             onChange={handleGameSelect}
@@ -333,7 +359,7 @@ function AppBody({
         </div>
       </nav>
       {(mode === 'game' || isProd) ? (
-        <GameScreen fetchContent={fetchContent}/>
+        <GameScreen fetchContent={fetchContent} audioMuted={audioMuted}/>
       ) : mode === 'timeline' ? (
         <FrameworkEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'scenes' ? (

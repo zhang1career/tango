@@ -53,7 +53,6 @@ export function frameworkToStory(fw: StoryFramework): Story {
 
   const maps = fw.maps ?? [];
   const edgesByFrom = new Map<string, MapEdge[]>();
-  const edgesByTo = new Map<string, MapEdge[]>();
   const nodeNameById = new Map<string, string>();
   for (const map of maps) {
     for (const n of map.nodes) nodeNameById.set(n.id, n.name);
@@ -61,9 +60,6 @@ export function frameworkToStory(fw: StoryFramework): Story {
       const fromList = edgesByFrom.get(e.from) ?? [];
       fromList.push(e);
       edgesByFrom.set(e.from, fromList);
-      const toList = edgesByTo.get(e.to) ?? [];
-      toList.push(e);
-      edgesByTo.set(e.to, toList);
     }
   }
 
@@ -74,9 +70,8 @@ export function frameworkToStory(fw: StoryFramework): Story {
     const links: PassageLink[] = [];
 
     if (scene.mapNodeId) {
-      // 出边：当前节点 -> 目标；入边（反向）：目标 -> 当前节点，可生成「从当前到来源」的链接
+      // 仅使用出边：当前节点 -> 目标。不把入边反向生成为回跳链接，避免线性章节在幕间循环。
       const outEdges = edgesByFrom.get(scene.mapNodeId) ?? [];
-      const inEdges = edgesByTo.get(scene.mapNodeId) ?? [];
       const seenTargets = new Set<string>();
       const addLink = (edge: MapEdge, targetNodeId: string) => {
         if (seenTargets.has(targetNodeId)) return;
@@ -109,10 +104,9 @@ export function frameworkToStory(fw: StoryFramework): Story {
         });
       };
       for (const edge of outEdges) addLink(edge, edge.to);
-      for (const edge of inEdges) addLink(edge, edge.from);
     }
 
-    const metadata: Record<string, unknown> = {};
+    const metadata: Record<string, unknown> = { sceneId: scene.id };
     if (scene.stateActions) {
       if (scene.stateActions.give) metadata.give = scene.stateActions.give;
       if (scene.stateActions.take) metadata.take = scene.stateActions.take;
@@ -153,7 +147,14 @@ export function frameworkToStory(fw: StoryFramework): Story {
     if (nextCh?.startMapNodeId) {
       const nextStartPid = findPassageByMapNode(ci + 1, nextCh.startMapNodeId, flatEntries);
       if (nextStartPid) {
-        p.links = [...(p.links ?? []), {displayText: '前往 下一章', passageName: nextStartPid}];
+        // 跨章链接写入目标场景名称，避免序列化/反序列化后因 id 不在 passage name 集合中而失配
+        const nextEntry = flatEntries.find(
+          (x) => toPassageId(x.chapterIndex, x.entry.sceneId) === nextStartPid
+        );
+        p.links = [
+          ...(p.links ?? []),
+          {displayText: '前往 下一章', passageName: nextEntry?.scene.name ?? nextStartPid},
+        ];
       }
     } else {
       p.links = [...(p.links ?? []), {displayText: '前往 完结', passageName: 'End'}];

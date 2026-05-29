@@ -157,12 +157,30 @@ export function getMediaBaseUrl(): string {
   return base.endsWith('/') ? base.slice(0, -1) : base;
 }
 
-/** 解析媒体 URL：若为 http(s) 则原样返回，否则拼上媒体基础 URL。gameId 传值时才加 /games/{id} 前缀（多游戏） */
+function isLegacyLocalMediaBase(base: string): boolean {
+  const normalized = base.replace(/^\/+/, '').replace(/\/+$/, '');
+  return normalized === 'assets/media';
+}
+
+/** 解析媒体 URL：优先支持多游戏目录媒体，其次兼容旧 mediaBase/CDN 配置 */
 export function resolveMediaUrl(path: string, gameId?: string): string {
   if (!path || /^https?:\/\//i.test(path)) return path;
-  const base = getMediaBaseUrl();
-  if (!base) return path;
-  const prefix = gameId != null ? `${base}/games/${gameId}` : base;
   const normalized = path.startsWith('/') ? path.slice(1) : path;
-  return `${prefix}/${normalized}`;
+  const base = getMediaBaseUrl();
+
+  if (gameId) {
+    // 新设计：媒体与游戏数据同目录（assets/games/{gameId}/...）
+    // 同时兼容旧默认配置 assets/media，避免其覆盖新目录解析。
+    if (!base || isLegacyLocalMediaBase(base)) {
+      if (normalized.startsWith('media/')) {
+        return toFetchUrl(`${getGameAssetsPrefix(gameId)}/${normalized}`);
+      }
+      if (base) return `${base}/${normalized}`;
+      return toFetchUrl(`${getGameAssetsPrefix(gameId)}/${normalized}`);
+    }
+    return `${base}/games/${gameId}/${normalized}`;
+  }
+
+  if (!base) return path;
+  return `${base}/${normalized}`;
 }

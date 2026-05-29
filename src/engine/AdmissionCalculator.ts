@@ -5,6 +5,7 @@
  */
 
 import type {RuntimeState} from '@/types';
+import {ONLY_ONCE_RULE_ID} from '../schema/game-rule';
 import {evaluateCondition, type EntityLike} from './ConditionEvaluator';
 import {parseWritebackToActions, hasEntityIsUsedWriteback} from './WritebackExecutor';
 
@@ -42,8 +43,10 @@ export function admissionCalc(params: AdmissionParams): boolean {
     if (!evaluateCondition(judgeExpr.trim(), ctx, entityCtx)) return false;
   }
 
-  const onlyOnceRule = ruleMap.get('rule_0001');
-  const orderedRuleIds = onlyOnceRule ? ['rule_0001', ...ruleIds.filter((r) => r !== 'rule_0001')] : ruleIds;
+  const onlyOnceRule = ruleMap.get(ONLY_ONCE_RULE_ID);
+  const orderedRuleIds = onlyOnceRule
+    ? [ONLY_ONCE_RULE_ID, ...ruleIds.filter((r) => r !== ONLY_ONCE_RULE_ID)]
+    : ruleIds;
 
   for (const rid of orderedRuleIds) {
     const rule = ruleMap.get(rid);

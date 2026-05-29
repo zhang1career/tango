@@ -4,12 +4,13 @@
 
 import React, {useCallback, useEffect, useState} from 'react';
 import {useStoryMetadata} from '../hooks/useStoryMetadata';
-import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
+import type {GameScene} from '../schema/game-scene';
 import {AttributeValuesCard} from './cards/AttributeValuesCard';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {AttributesEditorCard} from './cards/AttributesEditorCard';
@@ -215,11 +216,13 @@ function uuid(): string {
 function DialogueLibrarySection({
   ownerId,
   lib,
+  scenes,
   editable,
   onUpdate,
 }: {
   ownerId: string;
   lib: GameBehavior[];
+  scenes: Array<{ id: string; name: string }>;
   editable: boolean;
   onUpdate?: (lib: GameBehavior[]) => void;
 }) {
@@ -235,6 +238,11 @@ function DialogueLibrarySection({
                 <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
                 <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
                 {b.judgeExpr && <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>}
+                {b.sceneIds?.length ? (
+                  <div style={{fontSize: 12, color: '#888', marginTop: 4}}>
+                    场景：{b.sceneIds.map((id) => scenes.find((s) => s.id === id)?.name ?? id).join('、')}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -310,6 +318,35 @@ function DialogueLibrarySection({
             </div>
           )}
           <div style={styles.row}>
+            <label style={styles.label}>限定场景 sceneIds</label>
+            {scenes.length === 0 ? (
+              <div style={styles.readOnlyValue}>请先在「场景」页添加场景</div>
+            ) : (
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                {scenes.map((scene) => {
+                  const selected = (b.sceneIds ?? []).includes(scene.id);
+                  return (
+                    <label key={scene.id} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(e) => {
+                          const ids = b.sceneIds ?? [];
+                          const next = e.target.checked
+                            ? [...ids, scene.id]
+                            : ids.filter((x) => x !== scene.id);
+                          update(i, (x) => ({...x, sceneIds: next.length ? next : undefined}));
+                        }}
+                      />
+                      {scene.name}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{fontSize: 12, color: '#888', marginTop: 4}}>不勾选表示所有场景均可用</div>
+          </div>
+          <div style={styles.row}>
             <label style={styles.label}>准入条件 judgeExpr</label>
             <input
               value={b.judgeExpr ?? ''}
@@ -360,6 +397,7 @@ type CharFormProps = {
   editable: boolean;
   attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
   items: import('../schema/game-item').GameItem[];
+  scenes: Array<{ id: string; name: string }>;
   onUpdate?: (fn: (c: GameCharacter) => GameCharacter) => void;
   /** 折叠区域默认是否展开，详情弹窗为 true，编辑弹窗为 false */
   collapsibleDefaultExpanded?: boolean;
@@ -370,6 +408,7 @@ function CharacterFormContent({
                                 editable,
                                 attributeDefs,
                                 items,
+                                scenes,
                                 onUpdate,
                                 collapsibleDefaultExpanded = false,
                               }: CharFormProps) {
@@ -504,6 +543,7 @@ function CharacterFormContent({
         <DialogueLibrarySection
           ownerId={char.id}
           lib={char.behaviorLibrary ?? []}
+          scenes={scenes}
           editable={editable && !!onUpdate}
           onUpdate={onUpdate ? (lib) => onUpdate((c) => ({...c, behaviorLibrary: lib.length ? lib : undefined})) : undefined}
         />
@@ -558,9 +598,21 @@ export function CharacterEditor({fw, updateFw}: {
       });
   }, [updateFw, gameId]);
 
+  useEffect(() => {
+    fetch(getScenesFetchUrl(gameId))
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        updateFw((d) => ({...d, scenes: list as GameScene[]}));
+      })
+      .catch(() => {
+      });
+  }, [updateFw, gameId]);
+
   useStoryMetadata(updateFw);
 
   const characters = fw.characters ?? [];
+  const scenes = (fw.scenes ?? []).map((s) => ({id: s.id, name: s.name}));
   const setCharacters = (fn: (c: GameCharacter[]) => GameCharacter[]) =>
     updateFw((d) => ({...d, characters: fn(d.characters ?? [])}));
 
@@ -657,6 +709,7 @@ export function CharacterEditor({fw, updateFw}: {
             editable={false}
             attributeDefs={attributeDefs}
             items={items}
+            scenes={scenes}
             collapsibleDefaultExpanded
           />
         </DetailEditModal>
@@ -675,6 +728,7 @@ export function CharacterEditor({fw, updateFw}: {
             editable={true}
             attributeDefs={attributeDefs}
             items={items}
+            scenes={scenes}
             onUpdate={(fn) => updateCharacter(editIndex, fn)}
           />
         </DetailEditModal>
@@ -693,6 +747,7 @@ export function CharacterEditor({fw, updateFw}: {
             editable={true}
             attributeDefs={attributeDefs}
             items={items}
+            scenes={scenes}
             onUpdate={(fn) => setNewChar(fn(newChar))}
           />
         </DetailEditModal>

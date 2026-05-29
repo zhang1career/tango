@@ -17,10 +17,12 @@ export interface GameBehavior {
   t?: 'dialog' | 'action';
   /** 动作类型：t=action 时使用。attack=攻击，触发回合制战斗 */
   actionKind?: ActionKind;
-  /** 准入规则 id（onlyOnce 固定在前，程序写死） */
+  /** 准入规则 id（onlyOnce 固定为 rule_0001，由程序自动前置） */
   ruleIds?: string[];
   /** 准入条件表达式 */
   judgeExpr?: string;
   /** 回写表达式 */
   writebackExpr?: string;
+  /** 限定可见/可执行的场景 id 列表；省略或空数组表示所有场景均可用 */
+  sceneIds?: string[];
 }

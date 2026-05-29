@@ -27,6 +27,8 @@ interface BattleModalProps {
   behavior: GameBehavior | null;
   /** 战斗背景音乐 URL（来自功能板块配置） */
   battleBgm?: string;
+  gameId?: string;
+  audioMuted?: boolean;
   onBattleEnd: (result: BattleResult) => void;
   onClose: () => void;
 }
@@ -46,6 +48,8 @@ export function BattleModal({
   objectChar,
   behavior,
   battleBgm,
+  gameId,
+  audioMuted = false,
   onBattleEnd,
   onClose,
 }: BattleModalProps) {
@@ -83,15 +87,17 @@ export function BattleModal({
   // BGM
   useEffect(() => {
     const audio = bgmRef.current;
-    if (!open || !battleBgm) {
+    if (!open || !battleBgm || audioMuted) {
       if (audio) {
+        audio.muted = audioMuted;
         audio.pause();
         audio.src = '';
       }
       return;
     }
-    const src = resolveMediaUrl(battleBgm);
+    const src = resolveMediaUrl(battleBgm, gameId);
     if (audio) {
+      audio.muted = audioMuted;
       audio.src = src;
       audio.loop = true;
       audio.play().catch(() => {});
@@ -102,7 +108,7 @@ export function BattleModal({
         audio.src = '';
       }
     };
-  }, [open, battleBgm]);
+  }, [open, battleBgm, audioMuted, gameId]);
 
   const doTurn = useCallback(() => {
     if (phase !== 'fighting' || playerHp <= 0 || enemyHp <= 0) return;
@@ -181,7 +187,7 @@ export function BattleModal({
           <div style={styles.side}>
             <div style={styles.avatarPlace}>
               {subjectChar?.avatar ? (
-                <img src={resolveMediaUrl(subjectChar.avatar)} alt="" style={styles.avatar} />
+                <img src={resolveMediaUrl(subjectChar.avatar, gameId)} alt="" style={styles.avatar} />
               ) : (
                 <div style={{...styles.avatar, backgroundColor: '#333', fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>?</div>
               )}
@@ -203,7 +209,7 @@ export function BattleModal({
           <div style={styles.side}>
             <div style={styles.avatarPlace}>
               {objectChar?.avatar ? (
-                <img src={resolveMediaUrl(objectChar.avatar)} alt="" style={styles.avatar} />
+                <img src={resolveMediaUrl(objectChar.avatar, gameId)} alt="" style={styles.avatar} />
               ) : (
                 <div style={{...styles.avatar, backgroundColor: '#333', fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>?</div>
               )}
@@ -238,7 +244,7 @@ export function BattleModal({
           <p style={styles.endedHint}>战斗结束，即将进入结算...</p>
         )}
 
-        <audio ref={bgmRef} loop style={{display: 'none'}} />
+        <audio ref={bgmRef} loop muted={audioMuted} style={{display: 'none'}} />
       </div>
     </div>
   );

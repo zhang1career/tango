@@ -5,7 +5,7 @@
 
 import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameCharacter} from '../schema/game-character';
-import type {GameRule} from '../schema/game-rule';
+import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {RuntimeState} from '@/types';
 import {admissionCalc} from './AdmissionCalculator';
@@ -28,18 +28,8 @@ export interface EventExecutionContext {
   usedBehaviorIds: Set<string>;
 }
 
-function resolveOnlyOnceRuleId(
-  ruleMap: Map<string, { judgeExpr?: string; writebackExpr?: string }>
-): string | null {
-  if (ruleMap.has('rule_0001')) return 'rule_0001';
-  for (const [id, rule] of ruleMap.entries()) {
-    const judge = (rule.judgeExpr ?? '').trim();
-    const writeback = (rule.writebackExpr ?? '').replace(/\s+/g, '');
-    if (judge === '!$entity.is_used' && writeback.includes('$entity.is_used=true')) {
-      return id;
-    }
-  }
-  return null;
+function withOnlyOnceRuleIds(ruleIds: string[] | undefined): string[] {
+  return [ONLY_ONCE_RULE_ID, ...(ruleIds ?? []).filter((r) => r !== ONLY_ONCE_RULE_ID)];
 }
 
 /** 检查事件是否通过准入预计算（条件为真、规则预计算为真） */
@@ -58,10 +48,9 @@ export function checkEventAdmission(
       { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
     ])
   );
-  const onlyOnceRuleId = resolveOnlyOnceRuleId(ruleMap);
   return admissionCalc({
     judgeExpr: undefined,
-    ruleIds: onlyOnceRuleId ? [onlyOnceRuleId] : [],
+    ruleIds: [ONLY_ONCE_RULE_ID],
     ruleMap,
     entity,
     visitedIds: ctx.usedEventIds,
@@ -132,15 +121,10 @@ function runNonAttackBehavior(
     ])
   );
   const entity = { id: fullId, name: behavior.id };
-  const onlyOnceRuleId = resolveOnlyOnceRuleId(ruleMap);
-  const effectiveRuleIds = [
-    ...(onlyOnceRuleId ? [onlyOnceRuleId] : []),
-    ...(behavior.ruleIds ?? []).filter((r) => r !== onlyOnceRuleId),
-  ];
 
   const passed = admissionCalc({
     judgeExpr: behavior.judgeExpr,
-    ruleIds: effectiveRuleIds,
+    ruleIds: withOnlyOnceRuleIds(behavior.ruleIds),
     ruleMap,
     entity,
     visitedIds: ctx.usedBehaviorIds,

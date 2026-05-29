@@ -3,8 +3,6 @@ import react from '@vitejs/plugin-react';
 import { resolve, dirname, normalize } from 'node:path';
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { formatJsonCompact } from './src/utils/json-format';
-import { parseTwee } from './src/engine/TweeParser';
-import { storyToBundle } from './src/engine/StoryToBundle';
 
 const DEFAULT_GAMES_BASE_PATH = 'assets/games';
 
@@ -29,15 +27,18 @@ export default defineConfig(({ mode }) => {
     return resolve(cwd, gamesBasePath, gameId, gameAssetFileName(resource));
   }
 
-  function compileStoryBundleText(tweeSource: string, gameId: string): string {
-    const story = parseTwee(tweeSource);
-    const bundle = storyToBundle(story, { storyId: gameId });
-    return formatJsonCompact(bundle);
-  }
-
-  function writeStoryBundleFromTwee(gameId: string, tweeSource: string): void {
-    mkdirSync(resolve(cwd, gamesBasePath, gameId), { recursive: true });
-    writeFileSync(gameAssetPath(gameId, 'story-bundle'), compileStoryBundleText(tweeSource, gameId), 'utf-8');
+  function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
+    mkdirSync(dstDir, { recursive: true });
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      const src = resolve(srcDir, entry.name);
+      const dst = resolve(dstDir, entry.name);
+      if (entry.isDirectory()) {
+        copyDirectoryRecursive(src, dst);
+      } else if (entry.isFile()) {
+        mkdirSync(dirname(dst), { recursive: true });
+        copyFileSync(src, dst);
+      }
+    }
   }
 
   return {
@@ -196,11 +197,6 @@ export default defineConfig(({ mode }) => {
                 try {
                   mkdirSync(resolve(cwd, gamesBasePath, gameId), { recursive: true });
                   writeFileSync(outPath, body, 'utf-8');
-                  try {
-                    writeStoryBundleFromTwee(gameId, body);
-                  } catch (e) {
-                    console.warn(`[story-bundle] compile failed for ${gameId}:`, (e as Error).message);
-                  }
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({ ok: true }));
                 } catch (e) {
@@ -238,24 +234,12 @@ export default defineConfig(({ mode }) => {
         const srcGamesDir = gamesDir();
         const distGamesDir = resolve(outDir, gamesBasePath);
         mkdirSync(distGamesDir, { recursive: true });
-        const files = ['story.tw', 'story-fm.json', 'story_bundle.json', 'story-characters.json', 'story-rules.json', 'story-features.json', 'story-events.json', 'story-scenes.json', 'story-maps.json', 'story-items.json', 'story-metadata.json'];
         if (existsSync(srcGamesDir)) {
           for (const gid of readdirSync(srcGamesDir, { withFileTypes: true }).filter((d: { isDirectory: () => boolean }) => d.isDirectory()).map((d: { name: string }) => d.name)) {
             const gameSrc = resolve(srcGamesDir, gid);
             const gameDst = resolve(distGamesDir, gid);
             mkdirSync(gameDst, { recursive: true });
-            const storyTwPath = resolve(gameSrc, 'story.tw');
-            if (existsSync(storyTwPath)) {
-              try {
-                writeStoryBundleFromTwee(gid, readFileSync(storyTwPath, 'utf-8'));
-              } catch (e) {
-                console.warn(`[story-bundle] build compile failed for ${gid}:`, (e as Error).message);
-              }
-            }
-            for (const f of files) {
-              const src = resolve(gameSrc, f);
-              if (existsSync(src)) copyFileSync(src, resolve(gameDst, f as string));
-            }
+            copyDirectoryRecursive(gameSrc, gameDst);
           }
         }
       },

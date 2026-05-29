@@ -91,7 +91,28 @@ export class GameEngine {
 
   getPassage(id: string): Passage | undefined {
     const normalized = id.trim().replace(/\s+/g, '_');
-    return this.story.passages.get(normalized);
+    const direct = this.story.passages.get(normalized);
+    if (direct) return direct;
+
+    // 兼容：目标可能以名称传入（非 id）
+    for (const [, p] of this.story.passages) {
+      if (p.name?.trim().replace(/\s+/g, '_') === normalized) return p;
+    }
+
+    // 兼容旧数据：分页场景常见目标写成 `chX.scene_YY`，实际首屏节点为 `chX.scene_YY.p_100`
+    const pagedFirst = this.story.passages.get(`${normalized}.p_100`);
+    if (pagedFirst) return pagedFirst;
+
+    // 最后兜底：若存在 `normalized.p_XXX`，取最小页号
+    let best: { num: number; passage: Passage } | null = null;
+    const prefix = `${normalized}.p_`;
+    for (const [pid, p] of this.story.passages) {
+      if (!pid.startsWith(prefix)) continue;
+      const num = Number(pid.slice(prefix.length));
+      if (Number.isNaN(num)) continue;
+      if (!best || num < best.num) best = {num, passage: p};
+    }
+    return best?.passage;
   }
 
   get story(): Story {
