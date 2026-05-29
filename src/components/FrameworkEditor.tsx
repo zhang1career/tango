@@ -6,8 +6,9 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import JSZip from 'jszip';
 import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
-import type {GameScene, ScenePassageAiBlock, ScenePassageBlock} from '../schema/game-scene';
+import type {GameScene, SceneCharacterOverride, ScenePassageAiBlock, ScenePassageBlock} from '../schema/game-scene';
 import type {GameCharacter} from '../schema/game-character';
+import type {GameBehavior} from '../schema/game-behavior';
 import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
@@ -87,12 +88,17 @@ async function parseZipImport(file: File): Promise<ImportPendingData> {
 
 /**
  * 从当前场景构建 passage 的权威元数据（与 characterIds 逻辑一致：始终以场景当前值为准，删除则覆盖掉旧值）
- * openingAnimation、images、backgroundMusic、characterIds 等由场景决定的字段，空时设为 undefined 以移除
+ * openingAnimation、images、backgroundMusic、characterIds、counterpartCharacterIds、characterOverrides 等由场景决定的字段，空时设为 undefined 以移除
  */
 function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Record<string, unknown> {
   const m: Record<string, unknown> = { sceneId: scene.id };
   const ids = scene.characterIds?.filter((id) => id !== fw.playerCharacterId);
   m.characterIds = ids?.length ? ids : undefined;
+  const counterpartIds = scene.counterpartCharacterIds?.filter(Boolean);
+  m.counterpartCharacterIds = counterpartIds?.length ? counterpartIds : undefined;
+  m.characterOverrides = scene.characterOverrides && Object.keys(scene.characterOverrides).length
+    ? scene.characterOverrides
+    : undefined;
   m.openingAnimation = scene.openingAnimation || undefined;
   const validImages = scene.images?.filter((u) => u?.trim());
   m.images = validImages?.length ? validImages.map((u) => u.trim()) : undefined;
@@ -137,6 +143,171 @@ function sceneContextSummary(scene: GameScene): string {
     if (text) parts.push(text.length > 80 ? `${text.slice(0, 80)}...` : text);
   }
   return parts.join(' ');
+}
+
+function truncateForPrompt(text: string, max = 120): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  return compact.length > max ? `${compact.slice(0, max)}...` : compact;
+}
+
+const AI_PROMPT_BUDGET = {
+  maxChapterEvents: 8,
+  maxPreviousSceneSummaries: 8,
+  maxRawSnippets: 6,
+  maxCharactersInContext: 14,
+  maxBehaviorsPerCharacter: 5,
+};
+
+function applyCharacterOverride(
+  base: GameCharacter,
+  override?: SceneCharacterOverride
+): GameCharacter {
+  if (!override) return base;
+  return {
+    ...base,
+    description: override.description ?? base.description,
+    attributes: override.attributes ?? base.attributes,
+    inventory: override.inventory ?? base.inventory,
+    behaviorLibrary: override.behaviorLibrary ?? base.behaviorLibrary,
+  };
+}
+
+function compactBehaviorForPrompt(behavior: GameBehavior): Record<string, unknown> {
+  return {
+    id: behavior.id,
+    t: behavior.t ?? 'dialog',
+    actionKind: behavior.actionKind,
+    q: truncateForPrompt(behavior.q ?? '', 80),
+    a: truncateForPrompt(behavior.a ?? '', 80),
+    sceneIds: behavior.sceneIds?.length ? behavior.sceneIds : undefined,
+    ruleIds: behavior.ruleIds?.length ? behavior.ruleIds : undefined,
+    judgeExpr: behavior.judgeExpr ? truncateForPrompt(behavior.judgeExpr, 80) : undefined,
+    writebackExpr: behavior.writebackExpr ? truncateForPrompt(behavior.writebackExpr, 80) : undefined,
+  };
+}
+
+function collectChapterCharacterIds(ch: FrameworkChapter, sceneMap: Map<string, GameScene>): Set<string> {
+  const charIds = new Set<string>();
+  for (const e of ch.sceneEntries ?? []) {
+    const s = sceneMap.get(e.sceneId);
+    for (const id of s?.characterIds ?? []) charIds.add(id);
+  }
+  return charIds;
+}
+
+function buildCharacterResourceDict(
+  fw: StoryFramework,
+  chapterCharIds: Set<string>,
+  sceneCharIds: Set<string>,
+  counterpartCharacterIds: Set<string>,
+  sceneCharacterOverrides?: Record<string, SceneCharacterOverride>
+): Record<string, unknown> {
+  const itemNameMap = new Map((fw.items ?? []).map((it) => [it.id, it.name]));
+  const chars = (fw.characters ?? [])
+    .filter((c) => chapterCharIds.has(c.id))
+    .slice(0, AI_PROMPT_BUDGET.maxCharactersInContext);
+  const dict: Record<string, unknown> = {};
+  for (const c of chars) {
+    const effective = applyCharacterOverride(c, sceneCharacterOverrides?.[c.id]);
+    const behaviorLibrary = effective.behaviorLibrary ?? [];
+    const behaviorPreview = behaviorLibrary
+      .slice(0, AI_PROMPT_BUDGET.maxBehaviorsPerCharacter)
+      .map(compactBehaviorForPrompt);
+    const inventory = (effective.inventory ?? []).map((id) => ({
+      id,
+      name: itemNameMap.get(id) ?? id,
+    }));
+    dict[c.id] = {
+      id: effective.id,
+      name: effective.name,
+      description: effective.description ? truncateForPrompt(effective.description, 300) : undefined,
+      appearsInCurrentScene: sceneCharIds.has(c.id),
+      counterpartsInCurrentScene: sceneCharIds.has(c.id)
+        ? Array.from(counterpartCharacterIds).filter((id) => id !== c.id)
+        : [],
+      attributes: effective.attributes ?? {},
+      inventory,
+      behaviorCount: behaviorLibrary.length,
+      behaviorLibraryPreview: behaviorPreview,
+      behaviorLibraryTruncated: behaviorLibrary.length > behaviorPreview.length,
+      hasSceneOverride: !!sceneCharacterOverrides?.[c.id],
+    };
+  }
+  return dict;
+}
+
+type AiGenerationContext = {
+  possibilityContext: string;
+  constraintContext: string;
+};
+
+function buildAiGenerationContext(
+  fw: StoryFramework,
+  scene: GameScene,
+  ch: FrameworkChapter,
+  sceneIndex: number,
+  sceneMap: Map<string, GameScene>
+): AiGenerationContext {
+  const entries = ch.sceneEntries ?? [];
+  const prev = entries.slice(0, sceneIndex);
+  const previousSceneSummaries = prev.slice(-AI_PROMPT_BUDGET.maxPreviousSceneSummaries).map((e) => {
+    const s = sceneMap.get(e.sceneId);
+    return {
+      sceneId: e.sceneId,
+      summary: s ? truncateForPrompt(sceneContextSummary(s), 180) : '',
+    };
+  });
+  const currentSceneRawSnippets = getScenePassageBlocks(scene)
+    .filter((block): block is Extract<ScenePassageBlock, { type: 'raw' }> => block.type === 'raw')
+    .map((block) => truncateForPrompt(block.text ?? '', 120))
+    .slice(0, AI_PROMPT_BUDGET.maxRawSnippets)
+    .filter(Boolean);
+  const chapterCharIds = collectChapterCharacterIds(ch, sceneMap);
+  const sceneCharIds = new Set((scene.characterIds ?? []).filter(Boolean));
+  const counterpartCharacterIds = new Set((scene.counterpartCharacterIds ?? []).filter(Boolean));
+  const chapterEventIds = new Set<string>();
+  for (const e of entries) {
+    const s = sceneMap.get(e.sceneId);
+    for (const id of s?.eventIds ?? []) chapterEventIds.add(id);
+  }
+  const chapterEvents = (fw.events ?? [])
+    .filter((e) => chapterEventIds.has(e.id))
+    .slice(0, AI_PROMPT_BUDGET.maxChapterEvents)
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      description: e.description ? truncateForPrompt(e.description, 160) : undefined,
+    }));
+  const characterResourceDict = buildCharacterResourceDict(
+    fw,
+    chapterCharIds,
+    sceneCharIds,
+    counterpartCharacterIds,
+    scene.characterOverrides
+  );
+  const possibilityPayload = {
+    background: fw.background ? truncateForPrompt(fw.background, 600) : undefined,
+    chapterEvents,
+    currentSceneCharacters: Array.from(sceneCharIds),
+    counterpartCharacters: Array.from(counterpartCharacterIds),
+    counterpartSource: 'scene.counterpartCharacterIds',
+    chapterCharacterIds: Array.from(chapterCharIds),
+    characterResourceDict,
+    promptBudget: AI_PROMPT_BUDGET,
+    note: 'onMeet 当前未接入运行时执行链路，故本次不纳入 AI 可用资源。',
+  };
+  const constraintPayload = {
+    writingRules: fw.rules ?? [],
+    chapterTitle: ch.title,
+    chapterTheme: ch.theme ?? '',
+    previousSceneSummaries,
+    currentSceneRawSnippets,
+  };
+  return {
+    possibilityContext: JSON.stringify(possibilityPayload, null, 2),
+    constraintContext: JSON.stringify(constraintPayload, null, 2),
+  };
 }
 
 function FileHandleButton({
@@ -234,53 +405,6 @@ async function saveFrameworkToStorage(gameId: string, fw: StoryFramework): Promi
   if (!res.ok || !data.ok) throw new Error(data.error || `保存剧情框架失败: ${res.status}`);
 }
 
-function buildChapterContext(
-  fw: StoryFramework,
-  ch: FrameworkChapter,
-  sceneIndex: number,
-  sceneMap: Map<string, GameScene>
-): string {
-  const parts: string[] = [];
-  parts.push(`章节标题：${ch.title}`);
-  if (ch.theme) parts.push(`章节主题：${ch.theme}`);
-  const entries = ch.sceneEntries ?? [];
-  const prev = entries.slice(0, sceneIndex);
-  if (prev.length > 0) {
-    parts.push(
-      '前序场景概要：',
-      ...prev.map((e) => {
-        const s = sceneMap.get(e.sceneId);
-        return `  - ${e.sceneId}：${s ? sceneContextSummary(s) : ''}`;
-      })
-    );
-  }
-  const charIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
-    for (const id of s?.characterIds ?? []) charIds.add(id);
-  }
-  const chars = (fw.characters ?? []).filter((c) => charIds.has(c.id));
-  if (chars.length > 0) {
-    parts.push(
-      '人物介绍：',
-      ...chars.map((c) => `  - ${c.id}（${c.name}）：${c.description ?? '无描述'}`)
-    );
-  }
-  const eventIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
-    for (const id of s?.eventIds ?? []) eventIds.add(id);
-  }
-  const events = (fw.events ?? []).filter((e) => eventIds.has(e.id));
-  if (events.length > 0) {
-    parts.push(
-      '当前事件：',
-      ...events.map((ev) => `  - ${ev.id}：${ev.name}${ev.description ? '；描述：' + ev.description : ''}`)
-    );
-  }
-  return parts.join('\n');
-}
-
 async function generateAiPassageBlockText(
   fw: StoryFramework,
   scene: GameScene,
@@ -293,7 +417,11 @@ async function generateAiPassageBlockText(
   apiUrl: string
 ): Promise<string> {
   const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
-  const system = `你是一名文字冒险游戏编剧。请基于「场景概要（summary）」做“有限演义”扩写，生成可读的剧情正文。
+  const system = `你是一名文字冒险游戏编剧。请基于输入中的「创作可能性资源」与「创作范围约束」完成有限演义扩写。
+
+机制说明（必须遵守）：
+- 创作可能性资源：用于提供可引用的素材池（故事背景、章节事件、人物资源字典等），可以引用但不是必须全部使用。
+- 创作范围约束：用于限定事实边界（写作规则、章节标题/主题、前序场景摘要、当前场景 raw 摘要、当前块 summary 等），必须优先服从。
 
 输出必须包含三类内容：
 1. 人物对话：角色之间的对白，用引号标出
@@ -310,9 +438,12 @@ async function generateAiPassageBlockText(
 
 输出要求：纯正文，不要包含 [[链接]]，链接由系统自动添加。`;
 
-  const ctx = fw.background ? `故事背景：${fw.background}\n\n` : '';
-  const chapterCtx = buildChapterContext(fw, ch, sceneIndex, sceneMap);
-  const user = `${ctx}${chapterCtx}
+  const aiCtx = buildAiGenerationContext(fw, scene, ch, sceneIndex, sceneMap);
+  const user = `【创作可能性资源（提供可用素材，不等于必须全部采用）】
+${aiCtx.possibilityContext}
+
+【创作范围约束（限定事实边界，优先级高于可能性资源）】
+${aiCtx.constraintContext}
 
 ---
 
@@ -476,12 +607,14 @@ function getSceneEntryFingerprint(
       passageBlocks: scene.passageBlocks ?? [],
       mapNodeId: scene.mapNodeId ?? '',
       characterIds: scene.characterIds ?? [],
+      counterpartCharacterIds: scene.counterpartCharacterIds ?? [],
+      characterOverrides: scene.characterOverrides ?? {},
       eventIds: scene.eventIds ?? [],
       openingAnimation: scene.openingAnimation ?? '',
       backgroundMusic: scene.backgroundMusic ?? '',
       images: scene.images ?? [],
     },
-    chapterContext: buildChapterContext(fw, ch, sceneIndex, sceneMap),
+    aiContext: buildAiGenerationContext(fw, scene, ch, sceneIndex, sceneMap),
   }));
 }
 

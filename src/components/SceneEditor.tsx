@@ -8,7 +8,10 @@ import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
+import type {GameBehavior} from '../schema/game-behavior';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
+import {AttributeValuesCard} from './cards/AttributeValuesCard';
+import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {MediaUrlField, MediaCarouselField} from './ui/MediaFields';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
@@ -88,6 +91,7 @@ async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok
 type SceneFormProps = {
   scene: GameScene;
   editable: boolean;
+  attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
   items: import('../schema/game-item').GameItem[];
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
   characterIds: Array<{ id: string; name: string }>;
@@ -100,6 +104,7 @@ type SceneFormProps = {
 function SceneFormContent({
                             scene,
                             editable,
+                            attributeDefs,
                             items,
                             mapNodeIds,
                             characterIds,
@@ -108,6 +113,29 @@ function SceneFormContent({
                             onUpdate,
                           }: SceneFormProps) {
   const firstAi = getFirstAiBlock(scene);
+  const overrideMap = scene.characterOverrides ?? {};
+  const overrideCharacterIds = Object.keys(overrideMap);
+  const toBehaviorId = (charId: string) =>
+    `ovr_${charId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const updateOverride = (
+    charId: string,
+    patch: (current: NonNullable<GameScene['characterOverrides']>[string]) => NonNullable<GameScene['characterOverrides']>[string]
+  ) => {
+    if (!onUpdate) return;
+    onUpdate((s) => {
+      const currentMap = s.characterOverrides ?? {};
+      const nextMap = {...currentMap, [charId]: patch(currentMap[charId] ?? {})};
+      return {...s, characterOverrides: Object.keys(nextMap).length ? nextMap : undefined};
+    });
+  };
+  const removeOverride = (charId: string) => {
+    if (!onUpdate) return;
+    onUpdate((s) => {
+      const currentMap = {...(s.characterOverrides ?? {})};
+      delete currentMap[charId];
+      return {...s, characterOverrides: Object.keys(currentMap).length ? currentMap : undefined};
+    });
+  };
   return (
     <div>
       <FieldRow label="ID" value={scene.id} editable={editable && !!onUpdate}>
@@ -199,6 +227,35 @@ function SceneFormContent({
       </div>
 
       <div style={styles.row}>
+        <label style={styles.label}>对手戏人物集（counterpartCharacterIds）</label>
+        {editable && onUpdate ? (
+          <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+            {characterIds.map((c) => {
+              const selected = (scene.counterpartCharacterIds ?? []).includes(c.id);
+              return (
+                <label key={`cp-${c.id}`} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={(e) => {
+                      const ids = scene.counterpartCharacterIds ?? [];
+                      const next = e.target.checked ? [...ids, c.id] : ids.filter((x) => x !== c.id);
+                      onUpdate((s) => ({...s, counterpartCharacterIds: next.length ? next : undefined}));
+                    }}
+                  />
+                  {c.name}
+                </label>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={styles.readOnlyValue}>
+            {(scene.counterpartCharacterIds ?? []).map((id) => characterIds.find((c) => c.id === id)?.name ?? id).join(', ') || '-'}
+          </div>
+        )}
+      </div>
+
+      <div style={styles.row}>
         <label style={styles.label}>关联事件</label>
         {editable && onUpdate ? (
           <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
@@ -223,6 +280,252 @@ function SceneFormContent({
         ) : (
           <div style={styles.readOnlyValue}>
             {(scene.eventIds ?? []).map((id) => eventIds.find((e) => e.id === id)?.name ?? id).join(', ') || '-'}
+          </div>
+        )}
+      </div>
+
+      <div style={styles.row}>
+        <label style={styles.label}>角色覆写（characterOverrides）</label>
+        {editable && onUpdate ? (
+          <>
+            <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10}}>
+              {characterIds.map((c) => {
+                const selected = !!overrideMap[c.id];
+                return (
+                  <label key={`ovr-sel-${c.id}`} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          updateOverride(c.id, (x) => x);
+                        } else {
+                          removeOverride(c.id);
+                        }
+                      }}
+                    />
+                    {c.name}
+                  </label>
+                );
+              })}
+            </div>
+            {overrideCharacterIds.length === 0 ? (
+              <div style={styles.readOnlyValue}>未启用角色覆写</div>
+            ) : (
+              overrideCharacterIds.map((charId) => {
+                const char = characterIds.find((c) => c.id === charId);
+                const ovr = overrideMap[charId] ?? {};
+                const lib = ovr.behaviorLibrary ?? [];
+                return (
+                  <div key={`ovr-${charId}`} style={{...styles.card, marginBottom: 12}}>
+                    <div style={styles.cardHead}>
+                      <span>{char?.name ?? charId}（{charId}）</span>
+                      <button type="button" style={styles.btnSmall} onClick={() => removeOverride(charId)}>
+                        移除覆写
+                      </button>
+                    </div>
+                    <div style={{padding: 12}}>
+                      <div style={styles.row}>
+                        <label style={styles.label}>描述覆写</label>
+                        <textarea
+                          value={ovr.description ?? ''}
+                          onChange={(e) =>
+                            updateOverride(charId, (x) => ({...x, description: e.target.value || undefined}))
+                          }
+                          style={{...styles.input, ...styles.textarea, minHeight: 60}}
+                          placeholder="留空表示不覆写人物描述"
+                        />
+                      </div>
+                      <AttributeValuesCard
+                        attributeDefs={attributeDefs}
+                        values={ovr.attributes}
+                        onChange={(v) =>
+                          updateOverride(charId, (x) => ({
+                            ...x,
+                            attributes: Object.keys(v).length ? v : undefined,
+                          }))
+                        }
+                        title="属性覆写（整对象替换）"
+                        readOnly={false}
+                      />
+                      <InventoryValuesCard
+                        items={items}
+                        inventory={ovr.inventory ?? []}
+                        onChange={(ids) =>
+                          updateOverride(charId, (x) => ({
+                            ...x,
+                            inventory: ids.length ? ids : undefined,
+                          }))
+                        }
+                        title="背包覆写（数组 replace）"
+                        readOnly={false}
+                      />
+                      <div style={styles.row}>
+                        <label style={styles.label}>行为库覆写（数组 replace）</label>
+                        {lib.map((b, i) => (
+                          <div key={`${charId}-${b.id}-${i}`} style={{...styles.card, marginBottom: 8}}>
+                            <div style={{padding: 10}}>
+                              <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
+                                <span style={{fontSize: 12, color: '#aaa'}}>行为 #{i + 1}</span>
+                                <button
+                                  type="button"
+                                  style={styles.btnSmall}
+                                  onClick={() =>
+                                    updateOverride(charId, (x) => ({
+                                      ...x,
+                                      behaviorLibrary: (x.behaviorLibrary ?? []).filter((_, idx) => idx !== i),
+                                    }))
+                                  }
+                                >
+                                  删除
+                                </button>
+                              </div>
+                              <input
+                                value={b.id}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, id: e.target.value} : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                                placeholder="行为 id"
+                              />
+                              <input
+                                value={b.q}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, q: e.target.value} : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                                placeholder="请求 q"
+                              />
+                              <input
+                                value={b.a}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, a: e.target.value} : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                                placeholder="响应 a"
+                              />
+                              <select
+                                value={b.t ?? 'dialog'}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, t: e.target.value as GameBehavior['t']} : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                              >
+                                <option value="dialog">dialog</option>
+                                <option value="action">action</option>
+                              </select>
+                              <input
+                                value={b.actionKind ?? ''}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, actionKind: e.target.value || undefined} : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                                placeholder="actionKind（可选）"
+                              />
+                              <input
+                                value={(b.sceneIds ?? []).join(',')}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i
+                                        ? {
+                                          ...it,
+                                          sceneIds: e.target.value
+                                            .split(',')
+                                            .map((s) => s.trim())
+                                            .filter(Boolean).length
+                                            ? e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                                            : undefined,
+                                        }
+                                        : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                                placeholder="sceneIds（逗号分隔，可选）"
+                              />
+                              <input
+                                value={b.judgeExpr ?? ''}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, judgeExpr: e.target.value || undefined} : it
+                                    ),
+                                  }))
+                                }
+                                style={{...styles.input, marginBottom: 8}}
+                                placeholder="judgeExpr（可选）"
+                              />
+                              <input
+                                value={b.writebackExpr ?? ''}
+                                onChange={(e) =>
+                                  updateOverride(charId, (x) => ({
+                                    ...x,
+                                    behaviorLibrary: (x.behaviorLibrary ?? []).map((it, idx) =>
+                                      idx === i ? {...it, writebackExpr: e.target.value || undefined} : it
+                                    ),
+                                  }))
+                                }
+                                style={styles.input}
+                                placeholder="writebackExpr（可选）"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          style={styles.btnSmall}
+                          onClick={() =>
+                            updateOverride(charId, (x) => ({
+                              ...x,
+                              behaviorLibrary: [
+                                ...(x.behaviorLibrary ?? []),
+                                {id: toBehaviorId(charId), q: '', a: '', t: 'dialog'},
+                              ],
+                            }))
+                          }
+                        >
+                          + 添加覆写行为
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </>
+        ) : (
+          <div style={styles.readOnlyValue}>
+            {overrideCharacterIds.length
+              ? overrideCharacterIds.map((id) => characterIds.find((c) => c.id === id)?.name ?? id).join(', ')
+              : '-'}
           </div>
         )}
       </div>
@@ -340,6 +643,7 @@ export function SceneEditor({
     updateFw((d) => ({...d, scenes: fn(d.scenes ?? [])}));
 
   const items = fw.items ?? [];
+  const attributeDefs = fw.metadata?.characterAttributes ?? [];
   const mapNodeIds: Array<{ id: string; name: string; mapName: string }> = [];
   for (const map of fw.maps ?? []) {
     for (const n of map.nodes) mapNodeIds.push({id: n.id, name: n.name, mapName: map.name});
@@ -435,6 +739,7 @@ export function SceneEditor({
           <SceneFormContent
             scene={scenes[detailIndex]}
             editable={false}
+            attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
             characterIds={characterIds}
@@ -455,6 +760,7 @@ export function SceneEditor({
           <SceneFormContent
             scene={scenes[editIndex]}
             editable={true}
+            attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
             characterIds={characterIds}
@@ -476,6 +782,7 @@ export function SceneEditor({
           <SceneFormContent
             scene={newScene}
             editable={true}
+            attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
             characterIds={characterIds}

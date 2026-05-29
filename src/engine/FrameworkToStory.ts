@@ -139,6 +139,12 @@ export function frameworkToStory(fw: StoryFramework): Story {
       const ids = scene.characterIds.filter((id) => id !== fw.playerCharacterId);
       if (ids.length) metadata.characterIds = ids;
     }
+    if (scene.counterpartCharacterIds?.length) {
+      metadata.counterpartCharacterIds = scene.counterpartCharacterIds.filter(Boolean);
+    }
+    if (scene.characterOverrides && Object.keys(scene.characterOverrides).length > 0) {
+      metadata.characterOverrides = scene.characterOverrides;
+    }
     if (scene.eventIds?.length) metadata.eventIds = scene.eventIds;
     if (scene.openingAnimation) metadata.openingAnimation = scene.openingAnimation;
     const validImages = scene.images?.filter((u) => u?.trim());

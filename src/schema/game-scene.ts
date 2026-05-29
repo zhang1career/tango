@@ -22,6 +22,18 @@ export interface ScenePassageAiBlock {
 
 export type ScenePassageBlock = ScenePassageRawBlock | ScenePassageAiBlock;
 
+/** 场景级人物覆写（用于替换人物集中的默认设定） */
+export interface SceneCharacterOverride {
+  /** 覆写人物描述 */
+  description?: string;
+  /** 覆写属性（对象整体替换） */
+  attributes?: Record<string, string | number | boolean>;
+  /** 覆写背包（数组 replace） */
+  inventory?: string[];
+  /** 覆写行为库（数组 replace） */
+  behaviorLibrary?: import('./game-behavior').GameBehavior[];
+}
+
 /** 场景进入时的状态变更（不含人物属性） */
 export interface SceneStateActions {
   /** 添加物品 */
@@ -45,6 +57,10 @@ export interface GameScene {
   mapNodeId?: string;
   /** 该场景出场的人物 id 列表 */
   characterIds?: string[];
+  /** 该场景“对手戏人物集”id 列表（供 AI 与交互使用，不再从 characterIds 自动推导） */
+  counterpartCharacterIds?: string[];
+  /** 场景级人物覆写：按人物 id 指定，数组字段语义为 replace */
+  characterOverrides?: Record<string, SceneCharacterOverride>;
   /** 该场景关联的事件 id 列表 */
   eventIds?: string[];
   /** 规则 id 列表 */

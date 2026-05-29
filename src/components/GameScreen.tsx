@@ -22,6 +22,7 @@ import type {GameRule} from '@/schema/game-rule';
 import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
 import type {GameItem} from '@/schema/game-item';
+import type {SceneCharacterOverride} from '@/schema/game-scene';
 import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
@@ -38,6 +39,24 @@ interface GameScreenProps {
   fetchContent: FetchContent;
   className?: string;
   audioMuted?: boolean;
+}
+
+function applySceneOverridesToCharacters(
+  baseCharacters: GameCharacter[],
+  overrides?: Record<string, SceneCharacterOverride>
+): GameCharacter[] {
+  if (!overrides || Object.keys(overrides).length === 0) return baseCharacters;
+  return baseCharacters.map((c) => {
+    const o = overrides[c.id];
+    if (!o) return c;
+    return {
+      ...c,
+      description: o.description ?? c.description,
+      attributes: o.attributes ?? c.attributes,
+      inventory: o.inventory ?? c.inventory,
+      behaviorLibrary: o.behaviorLibrary ?? c.behaviorLibrary,
+    };
+  });
 }
 
 export function GameScreen({fetchContent, className, audioMuted = false}: GameScreenProps) {
@@ -215,11 +234,16 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const state = engine?.getState();
   const passage = state?.currentPassage ?? null;
   const passageId = passage?.id ?? '';
+  const sceneCharacterOverrides = (passage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined;
+  const activeCharacters = applySceneOverridesToCharacters(characters, sceneCharacterOverrides);
 
   const buildEvtCtx = useCallback(
-    () => ({
+    () => {
+      const currentPassage = engine?.getState()?.currentPassage ?? null;
+      const overrides = (currentPassage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined;
+      return {
       events,
-      characters,
+      characters: applySceneOverridesToCharacters(characters, overrides),
       ruleMap: new Map(rules.map((r) => [r.id, r])),
       features: featuresConfig,
       getState: () => {
@@ -229,7 +253,8 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine!.applyActions(a),
       usedEventIds: engine!.usedEventIds,
       usedBehaviorIds: engine!.usedBehaviorIds,
-    }),
+    };
+  },
     [engine, events, characters, rules, featuresConfig]
   );
 
@@ -246,8 +271,8 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       const result = executeEvent(evt, evtCtx);
       if (!result.completed && result.pendingBattle) {
         const { item, behavior } = result.pendingBattle;
-        const subjChar = characters.find((c) => c.id === item.subject);
-        const objChar = characters.find((c) => c.id === (item.object ?? ''));
+        const subjChar = evtCtx.characters.find((c) => c.id === item.subject);
+        const objChar = evtCtx.characters.find((c) => c.id === (item.object ?? ''));
         pendingEventBattleRef.current = result.pendingBattle;
         setBattleSubjectChar(subjChar ?? null);
         setBattleObjectChar(objChar ?? null);
@@ -261,7 +286,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       }
       runEventPhaseRef.current();
     },
-    [engine, passage, buildEvtCtx, characters, audioMuted, gameId]
+    [engine, passage, buildEvtCtx, audioMuted, gameId]
   );
 
   const runEventPhase = useCallback(() => {
@@ -387,7 +412,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const currentSceneId = resolveSceneIdFromPassage(passage);
 
   const behaviorCtx: BehaviorInteractionContext = {
-    characters,
+    characters: activeCharacters,
     ruleMap: new Map(rules.map((r) => [r.id, r])),
     getState: () => {
       const s = engine.getState();
@@ -487,10 +512,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const handleExecuteBehavior = (charId: string, b: GameBehavior) => {
     if (shouldOpenBattle(b, featuresConfig)) {
       const playerId = (state?.story?.metadata as { playerCharacterId?: string })?.playerCharacterId
-        ?? characters[0]?.id
+        ?? activeCharacters[0]?.id
         ?? 'player';
-      const playerChar = characters.find((c) => c.id === playerId) ?? characters[0];
-      const enemyChar = characters.find((c) => c.id === charId) ?? null;
+      const playerChar = activeCharacters.find((c) => c.id === playerId) ?? activeCharacters[0];
+      const enemyChar = activeCharacters.find((c) => c.id === charId) ?? null;
       setBattleSubjectChar(playerChar ?? null);
       setBattleObjectChar(enemyChar);
       const pending = { charId, b };
@@ -521,7 +546,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       setPendingBattleBehavior(null);
       const evtCtx = {
         events,
-        characters,
+        characters: applySceneOverridesToCharacters(
+          characters,
+          (engine.getState().currentPassage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined
+        ),
         ruleMap: new Map(rules.map((r) => [r.id, r])),
         features: featuresConfig,
         getState: () => {
@@ -535,8 +563,8 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       const resumeResult = resumeEventExecution(pendingEvt, result, evtCtx);
       if (!resumeResult.completed && resumeResult.pendingBattle) {
         const { item, behavior } = resumeResult.pendingBattle;
-        const subjChar = characters.find((c) => c.id === item.subject);
-        const objChar = characters.find((c) => c.id === (item.object ?? ''));
+        const subjChar = evtCtx.characters.find((c) => c.id === item.subject);
+        const objChar = evtCtx.characters.find((c) => c.id === (item.object ?? ''));
         pendingEventBattleRef.current = resumeResult.pendingBattle;
         setBattleSubjectChar(subjChar ?? null);
         setBattleObjectChar(objChar ?? null);
@@ -564,7 +592,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     if (pending && engine) {
       const bid = toBehaviorFullId(pending.charId, pending.b.id);
       const ctx: BehaviorInteractionContext = {
-        characters,
+        characters: applySceneOverridesToCharacters(
+          characters,
+          (engine.getState().currentPassage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined
+        ),
         ruleMap: new Map(rules.map((r) => [r.id, r])),
         getState: () => {
           const s = engine.getState();
@@ -684,7 +715,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
                       <>
                         <span style={styles.charListLabel}>攀谈：</span>
                         {characterIds.map((cid) => {
-                          const c = characters.find((x) => x.id === cid);
+                          const c = activeCharacters.find((x) => x.id === cid);
                           const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar, gameId) : undefined;
                           return (
                             <button
@@ -765,8 +796,8 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
 
       <BehaviorInteractionModal
         open={!!selectedCharId}
-        character={selectedCharId ? characters.find((c) => c.id === selectedCharId) ?? null : null}
-        characters={characters}
+        character={selectedCharId ? activeCharacters.find((c) => c.id === selectedCharId) ?? null : null}
+        characters={activeCharacters}
         gameId={gameId}
         behaviorCtx={behaviorCtx}
         history={behaviorHistory}

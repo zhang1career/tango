@@ -308,6 +308,81 @@ lzx-twine-import.zip
 > 若 `behaviorLibrary` 缺失或为空，人物可显示但弹窗会是“暂无可用行为”。
 > 若某人物在当前场景下没有任何可用对话（全部被 `sceneIds` 排除或准入未通过），弹窗同样会显示“暂无可用行为”。
 
+## AI 正文扩写的人物资源字典输入约定
+
+从当前版本起，`type: "ai"` 的正文块在调用 OpenAI 兼容接口时，会按“人物资源字典”提供更细粒度的创作素材。上游若希望模型产出更稳定，请按以下字段准备 `story-characters.json`。
+
+### 参与构建资源字典的字段
+
+- `story-characters.json > character.id / name / description`
+- `story-characters.json > character.attributes`
+- `story-characters.json > character.inventory`
+- `story-characters.json > character.behaviorLibrary[]`
+- `story-scenes.json > scene.characterIds`（当前场景可互动人物）
+- `story-scenes.json > scene.counterpartCharacterIds`（当前场景对手戏人物集，必须显式提供，不再自动推导）
+- `story-scenes.json > scene.characterOverrides`（场景级人物覆写）
+
+说明：
+
+- 章节内出场人物会进入资源字典；
+- 对手戏人物集仅以 `counterpartCharacterIds` 为准，不从 `characterIds` 自动推导；
+- 默认人物资料来自 `story-characters.json`；若 `characterOverrides` 提供同人物覆写，则以场景覆写为准；
+- `behaviorLibrary` 会以摘要形式提供给模型（用于对话语气与行为风格参考）。
+
+### `story-scenes.json` 新增字段约定（人物维度）
+
+```json
+{
+  "id": "scene_0001",
+  "characterIds": ["feimu", "yuanyong"],
+  "counterpartCharacterIds": ["yuanyong"],
+  "characterOverrides": {
+    "yuanyong": {
+      "description": "在本场景中更强势，语气更激进。",
+      "inventory": ["humen_record"],
+      "behaviorLibrary": [
+        {"id":"yuanyong.scene_0001.01","q":"...","a":"...","t":"dialog"}
+      ]
+    }
+  }
+}
+```
+
+字段语义：
+
+- `counterpartCharacterIds`: 字符串数组；表示该场景应作为“对手戏”参考的人物集合。
+- `characterOverrides`: key 为人物 id；value 为场景级人物覆写对象。
+- 覆写规则：
+  - 数组字段（`inventory`、`behaviorLibrary`）使用 **replace** 语义；
+  - 对象字段（`attributes`）按整对象替换；
+  - 未提供的字段回退到 `story-characters.json` 默认值。
+- 该覆写不仅用于 AI 生成，也将用于运行时人物交互（对话/行为可见性等）。
+
+### AI 上下文预算约束（防止 prompt 过长）
+
+- 每个角色最多注入前 `5` 条行为预览；
+- 前序场景摘要最多注入 `8` 条；
+- 章节事件最多注入 `8` 条；
+- 当前场景 raw 片段最多注入 `6` 条；
+- 章节人物最多注入 `14` 人（超出部分截断）。
+
+> 上游若提供更长数据不会报错，但模型可见内容将按预算截断。
+
+### 人物描述（`description`）篇幅建议
+
+为提升 AI 扩写稳定性，建议对主线人物提供足够密度的描述文本：
+
+- 主线核心人物：建议 `120-300` 字；
+- 关键配角：建议 `80-180` 字；
+- 路人/功能角色：建议 `30-80` 字；
+- 描述应优先包含：立场、关系、说话习惯、行为偏好、禁忌/底线。
+
+### `onMeet` 当前状态（重要）
+
+- `onMeet`（首次遇见触发）目前**尚未接入运行时执行链路**；
+- 因此本次 AI 扩写增强中，`onMeet` **不会**进入人物资源字典；
+- 上游可继续保留该字段用于未来兼容，但当前不作为必填或生效项。
+
 ## 准入规则约定（`story-rules.json`）
 
 本节为上游内容生成方的**硬性契约**。约定大于实现：运行时只识别 id 为 `rule_0001` 的规则，**不会**根据 `judgeExpr` / `writebackExpr` 的语义自动匹配其他 id。
