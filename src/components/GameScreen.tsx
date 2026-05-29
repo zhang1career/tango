@@ -21,7 +21,8 @@ import type {GameCharacter} from '@/schema/game-character';
 import type {GameRule} from '@/schema/game-rule';
 import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
-import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl} from '@/config';
+import type {GameItem} from '@/schema/game-item';
+import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {resolveSceneIdFromPassage} from '@/utils/scene-id';
@@ -31,6 +32,7 @@ import {
 } from './BehaviorInteractionModal';
 import {BattleModal, type BattleResult} from './BattleModal';
 import {BattleSettlementModal} from './BattleSettlementModal';
+import {InventoryModal, resolveInventoryNames} from './InventoryModal';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -61,6 +63,8 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const pendingBattleRef = useRef<{ charId: string; b: GameBehavior } | null>(null);
   const [featuresConfig, setFeaturesConfig] = useState<{ battle?: { backgroundMusic?: string } } | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
+  const [itemCatalog, setItemCatalog] = useState<GameItem[]>([]);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const [eventPhaseReady, setEventPhaseReady] = useState(false);
   const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
   const eventPhaseRunRef = useRef<string | null>(null);
@@ -105,6 +109,15 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       .then((res) => (res.ok ? res.json() : []))
       .then((d: unknown) => setEvents(Array.isArray(d) ? d : []))
       .catch(() => setEvents([]));
+  }, [gameId]);
+
+  // 加载物品目录
+  useEffect(() => {
+    const url = getItemsFetchUrl(gameId);
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((d: unknown) => setItemCatalog(Array.isArray(d) ? d : []))
+      .catch(() => setItemCatalog([]));
   }, [gameId]);
 
   // 加载功能板块配置（战斗背景音乐等）
@@ -362,6 +375,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   if (!state?.story) return null;
 
   const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
+  const inventoryIds = state.inventory;
+  const showActionRow = characterIds.length > 0 || inventoryIds.length > 0;
+  const showBackpack = inventoryIds.length > 0;
+  const inventoryDisplayNames = resolveInventoryNames(inventoryIds, itemCatalog);
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
   const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
@@ -582,7 +599,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
           {state.inventory.length > 0 && (
             <section>
               <strong style={styles.statusLabel}>物品</strong>
-              <span style={styles.statusValue}>{state.inventory.join(' · ')}</span>
+              <span style={styles.statusValue}>{inventoryDisplayNames.join(' · ')}</span>
             </section>
           )}
           {Object.keys(state.reputation).length > 0 && (
@@ -659,34 +676,49 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
                 </div>
                 <audio ref={bgmRef} loop muted={audioMuted} style={{display: 'none'}} />
 
-            {characterIds.length > 0 && (
+            {showActionRow && (
               <section style={styles.behaviorPanel}>
-                <div style={styles.charList}>
-                  <span style={styles.charListLabel}>攀谈：</span>
-                  {characterIds.map((cid) => {
-                    const c = characters.find((x) => x.id === cid);
-                    const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar, gameId) : undefined;
-                    return (
-                      <button
-                        key={cid}
-                        type="button"
-                        style={{
-                          ...styles.charButton,
-                          ...(selectedCharId === cid ? styles.charButtonActive : {}),
-                        }}
-                        onClick={() => handleSelectCharacter(cid)}
-                      >
-                        {avatarUrl && (
-                          <img
-                            src={avatarUrl}
-                            alt=""
-                            style={{width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', marginRight: 6}}
-                          />
-                        )}
-                        {c?.name ?? cid}
-                      </button>
-                    );
-                  })}
+                <div style={styles.actionRow}>
+                  <div style={styles.actionRowMain}>
+                    {characterIds.length > 0 && (
+                      <>
+                        <span style={styles.charListLabel}>攀谈：</span>
+                        {characterIds.map((cid) => {
+                          const c = characters.find((x) => x.id === cid);
+                          const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar, gameId) : undefined;
+                          return (
+                            <button
+                              key={cid}
+                              type="button"
+                              style={{
+                                ...styles.charButton,
+                                ...(selectedCharId === cid ? styles.charButtonActive : {}),
+                              }}
+                              onClick={() => handleSelectCharacter(cid)}
+                            >
+                              {avatarUrl && (
+                                <img
+                                  src={avatarUrl}
+                                  alt=""
+                                  style={{width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', marginRight: 6}}
+                                />
+                              )}
+                              {c?.name ?? cid}
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                  {showBackpack && (
+                    <button
+                      type="button"
+                      style={styles.backpackButton}
+                      onClick={() => setInventoryOpen(true)}
+                    >
+                      背包
+                    </button>
+                  )}
                 </div>
               </section>
             )}
@@ -757,6 +789,14 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
           setPendingBattleBehavior(null);
           refresh();
         }}
+      />
+
+      <InventoryModal
+        open={inventoryOpen}
+        inventoryIds={inventoryIds}
+        catalog={itemCatalog}
+        gameId={gameId}
+        onClose={() => setInventoryOpen(false)}
       />
 
       <BattleSettlementModal
@@ -841,6 +881,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   linkList: {display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16},
   behaviorPanel: {marginTop: 16, paddingTop: 16, borderTop: '1px solid #333'},
+  actionRow: {display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12},
+  actionRowMain: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1, minWidth: 0},
   charList: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12},
   charListLabel: {fontSize: 14, color: '#888'},
   charButton: {
@@ -853,6 +895,16 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   charButtonActive: {borderColor: '#6c5ce7', color: '#e8e8e8'},
+  backpackButton: {
+    padding: '6px 14px',
+    backgroundColor: '#2d2d44',
+    border: '1px solid #444',
+    borderRadius: 6,
+    color: '#c4b5fd',
+    fontSize: 14,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
   behaviorList: {listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8},
   behaviorButton: {
     padding: '10px 14px',

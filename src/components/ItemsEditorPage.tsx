@@ -115,6 +115,9 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{item.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{item.name}</p>
+        {item.description && (
+          <p style={{margin: '0 0 8px'}}><strong>描述：</strong>{item.description}</p>
+        )}
         {imgs.length > 0 && (
           <p style={{margin: '0 0 8px'}}><strong>配图：</strong>{imgs.join(', ')}</p>
         )}
@@ -138,6 +141,14 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
           value={item.name}
           onChange={(e) => onUpdate((x) => ({...x, name: e.target.value}))}
           style={styles.input}
+        />
+      </div>
+      <div style={styles.row}>
+        <label style={styles.label}>描述</label>
+        <textarea
+          value={item.description ?? ''}
+          onChange={(e) => onUpdate((x) => ({...x, description: e.target.value || undefined}))}
+          style={{...styles.input, minHeight: 72, resize: 'vertical'}}
         />
       </div>
       <MediaCarouselField

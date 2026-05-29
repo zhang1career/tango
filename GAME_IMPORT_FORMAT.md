@@ -43,7 +43,53 @@
   - `story-scenes.json > scene.backgroundMusic`：场景背景音乐
   - `story-scenes.json > scene.images[]`：场景图片轮播
   - `story-events.json > event.openingAnimation / endingAnimation / backgroundMusic`：事件媒体
+  - `story-items.json > item.images[]`：物品配图（背包查看）
 - 若 `story.tw` passage metadata 中也写了 `openingAnimation/images/backgroundMusic`，运行时同样可识别，建议与 `story-scenes.json` 保持一致。
+
+## 物品目录（`story-items.json`）
+
+运行时背包从 `StoryData.inventory`（或 `story-fm.json > initialState.inventory`）读取玩家**已持有**的物品 id 列表；物品的名称、描述、配图等展示信息来自 `story-items.json`。
+
+### 字段约定
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | 是 | 物品唯一 id；`inventory` / `give` / `take` 中**必须**使用此 id |
+| `name` | 是 | 展示名称（状态栏、背包列表） |
+| `description` | 否 | 查看时的文字描述；无配图时作为主要展示内容 |
+| `images` | 否 | 配图路径数组（相对路径或完整 URL）；背包详情页展示首张，支持后续扩展轮播 |
+
+### 示例
+
+```json
+[
+  {
+    "id": "imperial_edict",
+    "name": "钦差谕旨",
+    "description": "道光帝亲笔御批，命林则徐赴粤禁烟。",
+    "images": ["media/items/imperial_edict.png"]
+  },
+  {
+    "id": "humen_record",
+    "name": "虎门销烟记录"
+  }
+]
+```
+
+- 无 `images` 时，背包详情降级为「名称 + 描述」；两者皆无则显示「暂无图文描述」。
+- 物品媒体建议放在 `<gameId>/media/items/` 下，与场景、人物媒体目录并列。
+
+### 与运行时状态的关系
+
+- **持有列表**：`story.tw` 的 `StoryData.inventory` 为初始背包；游戏中通过 `give` / `take` 或 passage 内 `<<run $inventory.push(...)>>` 变更。
+- **id 规范**：`inventory` 数组元素必须是 `story-items.json` 中某条的 `id`，不要使用 `name` 或其他别名。
+- **条件表达式**：`$items has "imperial_edict"` 与 `$inventory has "imperial_edict"` 等价，均检查是否持有该 id。
+
+### 上游交付前自检（物品维度）
+
+- [ ] `story-items.json` 中每个会被 `give` 或初始 `inventory` 引用的 id 均有对应条目。
+- [ ] 需要图文展示的物品已填写 `description` 和/或 `images`。
+- [ ] `images` 路径在 zip 包内存在对应文件（如 `media/items/xxx.png`）。
 
 ## 示例
 
@@ -64,7 +110,9 @@ my-game.zip
     ├── story-features.json
     └── media/
         ├── beach.mp4
-        └── flower.png
+        ├── flower.png
+        └── items/
+            └── imperial_edict.png
 ```
 
 导入后会自动识别到游戏 `my-game`，写入：
