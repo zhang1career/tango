@@ -1,6 +1,6 @@
 /**
  * 条件表达式求值器
- * 支持: $var, $var == value, $items has "x", $rep.xxx >= n, $entity.is_used
+ * 支持: $var, $var == value, $items has "x", $rep.xxx >= n, $entity.is_used, and/or 复合条件
  */
 
 import type {RuntimeState} from '@/types';
@@ -43,7 +43,28 @@ function getVar(ctx: Context, path: string): unknown {
   return ctx.variables[path];
 }
 
-export function evaluateCondition(
+/** 在括号深度为 0 处按分隔符拆分复合条件（and / or） */
+function splitConditionAtTopLevel(expr: string, separator: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (depth === 0 && expr.startsWith(separator, i)) {
+      const piece = expr.slice(start, i).trim();
+      if (piece) parts.push(piece);
+      start = i + separator.length;
+      i += separator.length - 1;
+    }
+  }
+  const tail = expr.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+function evaluateSimpleCondition(
   condition: string,
   ctx: Context,
   entityCtx?: EntityContext
@@ -153,4 +174,25 @@ export function evaluateCondition(
   }
 
   return false;
+}
+
+export function evaluateCondition(
+  condition: string,
+  ctx: Context,
+  entityCtx?: EntityContext
+): boolean {
+  const expr = condition.trim();
+  if (!expr) return true;
+
+  const andParts = splitConditionAtTopLevel(expr, ' and ');
+  if (andParts.length > 1) {
+    return andParts.every((part) => evaluateSimpleCondition(part, ctx, entityCtx));
+  }
+
+  const orParts = splitConditionAtTopLevel(expr, ' or ');
+  if (orParts.length > 1) {
+    return orParts.some((part) => evaluateSimpleCondition(part, ctx, entityCtx));
+  }
+
+  return evaluateSimpleCondition(expr, ctx, entityCtx);
 }

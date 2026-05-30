@@ -10,6 +10,9 @@ import type {Passage, PassageLink, PassageStateActions, Story} from '@/types';
 
 const PASSAGE_HEADER_RE = /^::\s*(.+?)(?:\s+\[([^\]]*)])?(?:\s*(\{.*}))?$/;
 
+/** SugarCube 宏参数：匹配至 closing `>>`（允许表达式中含单个 `>`，如 >=） */
+const SUGARCUBE_MACRO_CLOSE = '([\\s\\S]*?)>>';
+
 /** 解析 Sugarcube setter 如 [$x to 1, $rep.xxx to 5, $reputation["x"] to ($reputation["x"]||0)+5] 为 linkActions */
 function parseSetterToActions(setterStr: string): PassageStateActions | undefined {
   const actions: PassageStateActions = {};
@@ -165,12 +168,12 @@ function parseSugarcubeContent(rawContent: string): {
   };
 
   const extractMacros = (block: string) => {
-    block.replace(/<<set\s+\$variables\[\s*"([^"]+)"\s*]\s+to\s+([^>]+)>>/g, (_, key, valStr) => {
+    block.replace(new RegExp(`<<set\\s+\\$variables\\[\\s*"([^"]+)"\\s*]\\s+to\\s+${SUGARCUBE_MACRO_CLOSE}`, 'g'), (_, key, valStr) => {
       const v = parseSetterValue(valStr.trim());
       if (v !== undefined) collectSet(key.replace(/\\"/g, '"'), v as string | number | boolean);
       return '';
     });
-    block.replace(/<<set\s+\$([a-zA-Z0-9_.]+)\s+to\s+([^>]+)>>/g, (_, key, valStr) => {
+    block.replace(new RegExp(`<<set\\s+\\$([a-zA-Z0-9_.]+)\\s+to\\s+${SUGARCUBE_MACRO_CLOSE}`, 'g'), (_, key, valStr) => {
       const v = parseSetterValue(valStr.trim());
       if (v !== undefined) collectSet(key, v as string | number | boolean);
       return '';
@@ -196,8 +199,8 @@ function parseSugarcubeContent(rawContent: string): {
     return '';
   });
   extractMacros(text);
-  text = text.replace(/<<set\s+\$[^>]+>>/g, '');
-  text = text.replace(/<<run\s+[^>]+>>/g, '');
+  text = text.replace(/<<set\s+\$[\s\S]*?>>/g, '');
+  text = text.replace(/<<run\s+[\s\S]*?>>/g, '');
 
   const pushLink = (
     display: string,
@@ -213,7 +216,7 @@ function parseSugarcubeContent(rawContent: string): {
     });
   };
 
-  text = text.replace(/<<if\s+([^>]+)>>([\s\S]*?)<<endif>>/gi, (_, cond, inner) => {
+  text = text.replace(new RegExp(`<<if\\s+${SUGARCUBE_MACRO_CLOSE}([\\s\\S]*?)<<endif>>`, 'gi'), (_, cond, inner) => {
     // 仅匹配 SugarCube setter 链接形态：[[text|target][setter]]
     // 不允许跨行吞并后续普通链接（如 [[A|B]]\n[[C|D]]）
     const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\[(.*?)]]/g;

@@ -44,6 +44,24 @@ export interface SceneStateActions {
   rep?: Record<string, number>;
 }
 
+/** 主线场景上的支线选项定义（编译为 story.tw 条件跳转） */
+export interface SceneBranchOption {
+  /** 选项 id（建议全局唯一） */
+  id: string;
+  /** 在主线场景中展示给玩家的入口文案 */
+  displayText: string;
+  /** 该支线导向的失败结局标识/描述（用于内容治理与验收） */
+  failureEnding: string;
+  /** 支线路径（1-2 个场景，单向、不可成环） */
+  branchSceneIds: string[];
+  /** 主线 -> 支线入口的可见条件 */
+  condition?: string;
+  /** 支线内部“继续”文案；长度应为 branchSceneIds.length - 1 */
+  continueDisplayTexts?: string[];
+  /** 支线末端返回主线根场景的文案 */
+  returnDisplayText?: string;
+}
+
 /** 场景定义 */
 export interface GameScene {
   id: string;
@@ -75,4 +93,6 @@ export interface GameScene {
   images?: string[];
   /** 背景音乐 URL */
   backgroundMusic?: string;
+  /** 主线场景分出的支线选项（仅主线场景填写） */
+  branchOptions?: SceneBranchOption[];
 }

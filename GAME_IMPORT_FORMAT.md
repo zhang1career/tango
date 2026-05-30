@@ -160,7 +160,7 @@ lzx-twine-import.zip
 
 ## 地图节点与场景绑定（默认游戏参考）
 
-本项目里“场景顺序”不是硬编码线性列表，而是通过**地图节点连通 + 玩家在节点间移动**来驱动。
+当前版本中，**主线场景顺序默认由 `story-fm.json > chapters[].sceneEntries[]` 的顺序驱动**，不再按 `story-maps.json > edges` 自动生成章内跳转。
 
 上游录入时，核心是把这三层数据对齐：
 
@@ -172,21 +172,22 @@ lzx-twine-import.zip
 2. **地图连通（map node -> map node）**
    - 文件：`story-maps.json`
    - 字段：`map.edges[].from / to / displayText / condition`
-   - 含义：玩家在地图上的可移动关系。
+   - 含义：章节边界（跨章）可选校验关系，不再作为章内主线导航来源。
 
 3. **章节使用的场景集合**
    - 文件：`story-fm.json`
    - 字段：`chapters[].sceneEntries[].sceneId`
-   - 含义：同一个章节内，哪些场景参与“节点移动 -> 场景跳转”的计算。
+   - 含义：同一个章节内主线场景的实际播放顺序来源。
 
-### 运行时如何从“地图移动”得到“场景跳转”
+### 运行时主线跳转规则（重要）
 
-- 当前场景先根据 `mapNodeId` 找到自己所在地图节点；
-- 读取该节点的可达节点（默认实现会同时考虑 `from -> to` 和反向入边）；
-- 对每个可达节点，查找“本章节中 `mapNodeId` 命中该节点”的目标场景；
-- 只有找到目标场景时，才会生成可点击跳转选项；
-- 若某条边有 `condition`，会并入该跳转的可见条件；
-- 跳转文案优先取边的 `displayText`，否则回退为目标节点名（并补 `前往 ` 前缀）。
+- 章内主线默认按 `sceneEntries` 顺序生成“继续”链接；
+- 只有在章节边界（跨章）且两侧都配置了节点时，才会读取地图边：
+  - 前一章要求填写 `endMapNodeId`；
+  - 后一章要求填写 `startMapNodeId`；
+  - 前一章最后一个主线场景的 `mapNodeId` 必须等于该章 `endMapNodeId`；
+  - `story-maps.json` 必须存在 `endMapNodeId -> next.startMapNodeId` 连边；
+  - 满足后才生成“前往 下一章”跳转（可合并边条件与目标场景准入条件）。
 
 ### 默认游戏中的实际映射（`assets/games/default`）
 
@@ -195,19 +196,16 @@ lzx-twine-import.zip
   - `政见纷争` 绑定 `taimiao`（太庙）
   - `寺中祷告` 绑定 `jinglesi`（景乐寺）
   - `河阴丕变` 绑定 `guozixue`（国子学）
-- `story-maps.json` 中可见：
-  - `xuanyangmen -> taimiao`，因此可从“宣阳门场景”进入“太庙场景”
-  - `jinglesi -> taimiao`、`jinglesi -> guozixue`，因此“景乐寺场景”可进入“太庙/国子学场景”
-  - 默认实现支持沿入边反向移动，所以也会出现从 `taimiao` 回 `jinglesi`、从 `guozixue` 回 `jinglesi` 的场景跳转
+- `story-maps.json` 中的边主要用于跨章节点衔接校验，不再直接决定章内跳转选项。
 
 ### 上游录入建议（避免常见坑）
 
 - `scene.mapNodeId` 必须填写且能在 `story-maps.json` 的 `nodes[].id` 找到；
 - `scene.passageBlocks` 必填，且按数组顺序生成对应 passage 正文（`raw` 透传 + `ai` 生成混排）；
 - `scene.passageBlocks` 中每个 `ai` 块都应提供清晰 `summary`（事实性概要：人物、地点、事件、情绪、关键台词），避免模型自由补全导致偏移；
-- 要让 A 场景能去 B 场景，本质是让 `A.mapNodeId` 与 `B.mapNodeId` 在地图边上连通；
-- 如果连了边但目标节点没有任何场景，运行时不会生成该跳转；
-- 当前实现尚未完整处理“同一地图节点对应多个场景”的分流，上游暂按**一个节点一个主场景**录入最稳妥。
+- 章内主线顺序以 `sceneEntries` 为准，不要再依赖地图边表达章内流程；
+- 若需要跨章“前往 下一章”，请同时配置 `endMapNodeId`、`next.startMapNodeId` 与对应地图边；
+- 支线剧情与地图边解耦，按 `branchOptions` 规则录入（见“支线剧情选项”章节）。
 
 ### `story-scenes.json` 里 `passageBlocks` 字段规范（必填）
 
@@ -255,7 +253,117 @@ lzx-twine-import.zip
 - [ ] **节点引用有效性**：所有 `scene.mapNodeId` 都能在 `story-maps.json > nodes[].id` 中找到。
 - [ ] **连通可达性**：希望互相可跳转的场景，其 `mapNodeId` 在 `story-maps.json > edges` 中存在连通关系。
 - [ ] **章节收录一致性**：`story-fm.json > chapters[].sceneEntries[].sceneId` 已包含需要参与该章节导航的场景。
+- [ ] **章节末场景显式可识别**：每章最后一个主线场景必须在 `sceneEntries` 顺序中明确可识别（建议作为该章 `sceneEntries` 末项），避免跨章边界校验歧义。
 - [ ] **一节点一主场景**：当前版本避免将多个主流程场景绑定到同一个 `mapNodeId`（多场景同节点分流暂未稳定支持）。
+
+### 支线剧情选项（`story-scenes.json`，用于失败结局分支）
+
+为降低上游与编译链路复杂度，支线剧情统一建模在 `story-scenes.json > scene.branchOptions[]`（仅主线根场景填写）。
+
+#### 设计约束（硬性）
+
+- 支线剧情**只在当前章节内生效**，不产生“进入下一章/返回上一章”线路。
+- 说明：`story.tw` 中可能出现“继续”链接（长文本自动分页子页），这属于同一场景内容分页机制，不属于地图导航或章节跳转分支。
+- 支线剧情语义是“导向某种失败结局”，且支线末端必须返回其根主线场景。
+- 单个支线仅允许 `1-2` 个支线场景；支线场景之间单向连通，不可成环。
+- 支线剧情与地图边解耦：支线链接不通过 `story-maps.json > edges` 生成。
+- 支线场景 **MUST** 与其根主线场景使用相同 `mapNodeId`（视为同一地点内的分歧）。
+- 作为支线场景的 `scene.ruleIds` **MUST** 包含 `rule_0001`（`onlyOnce`）。
+- 若某主线场景配置了 `branchOptions`，该主线场景的规则（`chapter.sceneEntries[].ruleIds` 与 `scene.ruleIds`）**MUST NOT** 包含 `rule_0001`。
+
+#### 字段定义（`story-scenes.json > scene.branchOptions[]`）
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | 是 | 分支选项 id（建议全局唯一） |
+| `displayText` | 是 | 主线场景中展示的入口文案 |
+| `failureEnding` | 是 | 该分支对应的失败结局标识/描述（供验收与内容治理） |
+| `branchSceneIds` | 是 | 支线路径场景 id 数组，长度必须为 `1` 或 `2` |
+| `condition` | 否 | 主线 -> 支线入口可见条件表达式 |
+| `continueDisplayTexts` | 否 | 支线内部“继续”文案数组；长度应为 `branchSceneIds.length - 1` |
+| `returnDisplayText` | 否 | 末端支线场景返回主线根场景的文案（默认 `返回主线`） |
+
+#### 示例（位于 `story-scenes.json`）
+
+```json
+{
+  "id": "scene_0100",
+  "name": "会审前夜",
+  "passageBlocks": [{"type": "ai", "summary": "主线正文略"}],
+  "branchOptions": [
+    {
+      "id": "br_confess",
+      "displayText": "仓促认罪，换取速断",
+      "failureEnding": "名节尽失，民望崩塌",
+      "condition": "$will < 40",
+      "branchSceneIds": ["scene_0100_b1"],
+      "returnDisplayText": "回到会审前夜"
+    },
+    {
+      "id": "br_private_deal",
+      "displayText": "私下交易，暂避锋芒",
+      "failureEnding": "短期脱身，长期失控",
+      "branchSceneIds": ["scene_0100_b2", "scene_0100_b3"],
+      "continueDisplayTexts": ["继续掩盖"],
+      "returnDisplayText": "硬着头皮回到主线"
+    }
+  ]
+}
+```
+
+配套约束示例（支线场景必须 onlyOnce）：
+
+```json
+{
+  "id": "scene_0100_b2",
+  "name": "密室交易",
+  "passageBlocks": [{"type": "ai", "summary": "失败分支正文略"}],
+  "ruleIds": ["rule_0001"]
+}
+```
+
+#### 从 `*.json` 到 `story.tw` 的编译规则
+
+- 编译器会把 `branchOptions` 翻译为 passage 间链接：
+  - 主线根场景 -> `branchSceneIds[0]`（文案=`displayText`，条件=`condition` 与目标场景准入条件按 `and` 合并）
+  - 若 `branchSceneIds` 有第 2 个场景：第 1 个支线场景 -> 第 2 个支线场景（文案取 `continueDisplayTexts[0]` 或默认 `继续`）
+  - 末端支线场景 -> 主线根场景（文案取 `returnDisplayText` 或默认 `返回主线`）
+- 作为支线场景的 passage，默认不再从 `map.edges` 自动生成导航链接（避免与支线约束冲突）。
+- 若章节终点场景恰好是支线场景，编译器不会为其注入跨章“前往下一章”链接。
+- 支线末端场景会自动附加“失败结局模板文案”（由 `failureEnding` 填充），并可套用统一失败结局媒体预设（见下文 `story-features.json`）。
+- 任一约束不满足（例如：`branchSceneIds` 超过 2、支线场景缺少 `rule_0001`、主线根场景使用了 `rule_0001`）时，编译会报错并中止。
+
+#### 失败结局模板与统一媒体预设（`story-features.json`）
+
+可选在 `story-features.json` 提供 `branchFailureEnding` 配置，让所有支线失败结局使用统一背景图/BGM，同时保留每个分支自定义失败文案。
+
+```json
+{
+  "battle": {
+    "backgroundMusic": "media/bgm/battle_theme.mp3"
+  },
+  "branchFailureEnding": {
+    "backgroundMusic": "media/bgm/failure_common.mp3",
+    "images": ["media/bg/failure_common.png"],
+    "template": "【失败结局】{{failureEnding}}\n\n你暂时偏离了主线目标。"
+  }
+}
+```
+
+模板占位符：
+
+- `{{failureEnding}}`：取自 `branchOptions[].failureEnding`
+- `{{rootSceneName}}`：根主线场景名
+- `{{branchOptionId}}`：分支选项 id
+
+#### 上游交付前自检（支线维度）
+
+- [ ] 每个 `branchOptions[].branchSceneIds` 仅包含当前章节已收录的场景 id。
+- [ ] 每个 `branchOptions[].branchSceneIds` 长度为 `1-2` 且无重复 id。
+- [ ] 每个支线场景与根主线场景使用同一 `mapNodeId`。
+- [ ] 每个支线场景 `scene.ruleIds` 均包含 `rule_0001`。
+- [ ] 配置 `branchOptions` 的主线根场景，未在 `scene.ruleIds` 或 `sceneEntries[].ruleIds` 中使用 `rule_0001`。
+- [ ] 支线末端已设置可回到根主线场景（显式或使用默认 `returnDisplayText`）。
 
 ## 对话集（人物互动）可识别格式
 

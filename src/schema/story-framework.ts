@@ -10,6 +10,7 @@ import type {GameMetadata} from './metadata';
 import type {GameItem} from './game-item';
 import type {GameScene} from './game-scene';
 import type {GameRule} from './game-rule';
+import type {FeaturesConfig} from './features';
 
 export type {FrameworkStateActions} from './state-actions';
 export type {FrameworkStateActions as StateActions} from './state-actions';
@@ -88,6 +89,8 @@ export interface StoryFramework {
   scenes?: GameScene[];
   /** 可选：游戏规则（专有数据表） */
   gameRules?: GameRule[];
+  /** 可选：功能板块配置（专有数据表） */
+  features?: FeaturesConfig;
 }
 
 /** 迁移旧版剧情框架结构（如 scenes 数组改为 sceneEntries） */

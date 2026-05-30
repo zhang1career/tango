@@ -13,14 +13,15 @@ import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl, getStoryBundleFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getStoryBundleFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
 import {useAuth} from '@/context/AuthContext';
-import {frameworkToStory, parseTwee, serializeStorySugarcube, storyToBundle} from '@/engine';
+import {frameworkToStory, parseTwee, serializeStorySugarcube, storyToBundle, syncStoryTitleFromFramework} from '@/engine';
 
 import {formatJsonCompact} from '../utils/json-format';
 import {paginatePassageText, removeSceneSubPassages} from '../utils/paginate-passage';
+import {collectPrecedingRawTexts, stripAiTextOverlappingRaw} from '../utils/strip-ai-raw-overlap';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
 type ImportZipFile = {path: string; contentBase64: string};
@@ -132,17 +133,18 @@ function wrapRawPassageBlock(text: string): string {
 function sceneContextSummary(scene: GameScene): string {
   const blocks = getScenePassageBlocks(scene);
   if (blocks.length === 0) return '';
-  const parts: string[] = [];
+  const aiSummaries = blocks
+    .filter((block): block is ScenePassageAiBlock => block.type === 'ai')
+    .map((block) => block.summary?.trim())
+    .filter(Boolean);
+  if (aiSummaries.length > 0) return aiSummaries.join(' ');
+  const rawFallback: string[] = [];
   for (const block of blocks) {
-    if (block.type === 'ai') {
-      const summary = block.summary?.trim();
-      if (summary) parts.push(summary);
-      continue;
-    }
+    if (block.type !== 'raw') continue;
     const text = block.text?.trim();
-    if (text) parts.push(text.length > 80 ? `${text.slice(0, 80)}...` : text);
+    if (text) rawFallback.push(text.length > 40 ? `${text.slice(0, 40)}...` : text);
   }
-  return parts.join(' ');
+  return rawFallback.join(' ');
 }
 
 function truncateForPrompt(text: string, max = 120): string {
@@ -154,7 +156,6 @@ function truncateForPrompt(text: string, max = 120): string {
 const AI_PROMPT_BUDGET = {
   maxChapterEvents: 8,
   maxPreviousSceneSummaries: 8,
-  maxRawSnippets: 6,
   maxCharactersInContext: 14,
   maxBehaviorsPerCharacter: 5,
 };
@@ -246,38 +247,21 @@ function buildSceneRawContextForAiBlock(
   scene: GameScene,
   aiBlockIndex?: number
 ): {
-  currentSceneRawSnippets: string[];
-  adjacentRawBlocksAlreadyRendered?: Array<{ position: 'before' | 'after'; text: string }>;
+  precedingRawBlockCount?: number;
+  followingRawBlockCount?: number;
 } {
+  if (aiBlockIndex == null) return {};
   const blocks = getScenePassageBlocks(scene);
-  const adjacentIndices =
-    aiBlockIndex != null ? new Set([aiBlockIndex - 1, aiBlockIndex + 1]) : null;
-  const adjacentRawBlocksAlreadyRendered: Array<{ position: 'before' | 'after'; text: string }> = [];
-  const currentSceneRawSnippets: string[] = [];
-
+  let precedingRawBlockCount = 0;
+  let followingRawBlockCount = 0;
   for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (block.type !== 'raw') continue;
-    const text = block.text?.trim();
-    if (!text) continue;
-
-    if (adjacentIndices?.has(i) && aiBlockIndex != null) {
-      adjacentRawBlocksAlreadyRendered.push({
-        position: i < aiBlockIndex ? 'before' : 'after',
-        text: truncateForPrompt(text, 200),
-      });
-      continue;
-    }
-
-    if (currentSceneRawSnippets.length < AI_PROMPT_BUDGET.maxRawSnippets) {
-      currentSceneRawSnippets.push(truncateForPrompt(text, 120));
-    }
+    if (blocks[i].type !== 'raw') continue;
+    if (i < aiBlockIndex) precedingRawBlockCount++;
+    else if (i > aiBlockIndex) followingRawBlockCount++;
   }
-
   return {
-    currentSceneRawSnippets,
-    adjacentRawBlocksAlreadyRendered:
-      adjacentRawBlocksAlreadyRendered.length > 0 ? adjacentRawBlocksAlreadyRendered : undefined,
+    precedingRawBlockCount: precedingRawBlockCount || undefined,
+    followingRawBlockCount: followingRawBlockCount || undefined,
   };
 }
 
@@ -339,9 +323,10 @@ function buildAiGenerationContext(
     chapterTheme: ch.theme ?? '',
     previousSceneSummaries,
     ...rawContext,
-    rawContextNote: rawContext.adjacentRawBlocksAlreadyRendered
-      ? 'adjacentRawBlocksAlreadyRendered 已在成稿中单独展示；AI 扩写段不得复述其原文或同义改写，仅基于 summary 做增量扩写。currentSceneRawSnippets 仅作非相邻 raw 块的事实边界参考，不得照搬。'
-      : 'currentSceneRawSnippets 仅作场景内 raw 块的事实边界参考，不是待扩写素材，不得照搬进 AI 正文。',
+    rawContextNote:
+      rawContext.precedingRawBlockCount || rawContext.followingRawBlockCount
+        ? `当前场景成稿中，本 AI 块之前已有 ${rawContext.precedingRawBlockCount ?? 0} 段 raw 原文、之后另有 ${rawContext.followingRawBlockCount ?? 0} 段 raw 原文，它们会单独展示。AI 正文不得复述、摘抄或同义改写这些 raw 内容；只扩写 summary。`
+        : '只扩写 summary，不要复述 passage 中已单独展示的 raw 原文。',
   };
   return {
     possibilityContext: JSON.stringify(possibilityPayload, null, 2),
@@ -385,8 +370,9 @@ async function fetchListData(gameId: string): Promise<Partial<StoryFramework>> {
       }
     },
     {url: getRulesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
+    {url: getFeaturesFetchUrl(gameId), parse: (d: unknown) => (d && typeof d === 'object' && !Array.isArray(d) ? d : undefined) as import('../schema/features').FeaturesConfig | undefined},
   ];
-  const keys: (keyof StoryFramework)[] = ['characters', 'scenes', 'maps', 'events', 'items', 'metadata', 'gameRules'];
+  const keys: (keyof StoryFramework)[] = ['characters', 'scenes', 'maps', 'events', 'items', 'metadata', 'gameRules', 'features'];
   for (let i = 0; i < apis.length; i++) {
     const {url, parse} = apis[i];
     const key = keys[i];
@@ -456,13 +442,14 @@ async function generateAiPassageBlockText(
   apiUrl: string
 ): Promise<string> {
   const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
+  const precedingRawTexts = collectPrecedingRawTexts(scene, blockIndex);
   const system = `你是一名文字冒险游戏编剧。请基于输入中的「创作可能性资源」与「创作范围约束」完成有限演义扩写。
 
 机制说明（必须遵守）：
 - 创作可能性资源：用于提供可引用的素材池（故事背景、章节事件、人物资源字典等），可以引用但不是必须全部使用。
+- behaviorLibraryPreview 是玩家互动对话素材，不要把其中的 q/a 原文嵌入 passage 正文。
 - 创作范围约束：用于限定事实边界（写作规则、章节标题/主题、前序场景摘要、当前块 summary 等），必须优先服从。
-- 场景中 type=raw 的正文块会原样插入成稿并与 AI 块拼接展示。若约束中出现 adjacentRawBlocksAlreadyRendered，表示读者已能看到这些原文，严禁在 AI 正文中复述、摘抄或同义改写。
-- currentSceneRawSnippets 仅用于了解场景内其它 raw 块的事实边界，不是待扩写素材，不得搬进 AI 正文。
+- 场景中 type=raw 的正文块会原样插入成稿并与 AI 块拼接展示。读者已能看到这些 raw 原文，AI 正文严禁复述、摘抄或同义改写 raw 内容。
 
 输出必须包含三类内容：
 1. 人物对话：角色之间的对白，用引号标出
@@ -471,7 +458,8 @@ async function generateAiPassageBlockText(
 
 硬性约束（必须遵守）：
 - 以 summary 的事实为主干，只能在其范围内做细节补全，不得改写核心事实。
-- 只扩写本块 summary：用对话、旁白、描写补足细节，避免与已展示或相邻 raw 段落内容重叠。
+- 只扩写本块 summary：用对话、旁白、描写补足细节，从 summary 的新角度切入，不要重述 raw 已写过的句子。
+- 正文开头不得复用 raw 原文的首句、关键短语或史料摘录。
 - 不得新增 summary 未出现且上下文也未出现的关键设定（新人物、新地点、新组织、新事件主线、新世界观规则）。
 - 允许补充少量过渡句、动作细节、情绪描写，但不得引入会改变剧情走向的新信息。
 - 若 summary 信息不足，优先保守表达，不要臆造。
@@ -495,7 +483,7 @@ ${aiCtx.constraintContext}
 ${block.hints ? `写作提示：${block.hints}` : ''}
 ${block.wordCount != null && block.wordCount > 0 ? `字数要求：约${block.wordCount}字` : ''}
 
-重要：若「创作范围约束」中有 adjacentRawBlocksAlreadyRendered，表示这些 raw 原文已在成稿中单独展示，本 AI 块只做 summary 的增量扩写，不得重复相邻 raw 内容。
+重要：本场景已有 ${precedingRawTexts.length} 段 raw 原文展示在本 AI 块之前。只做 summary 的增量扩写，不要重复 raw 原文，也不要从 raw 首句起笔。
 
 请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字；且仅做有限演义扩写）：`;
 
@@ -523,7 +511,11 @@ ${block.wordCount != null && block.wordCount > 0 ? `字数要求：约${block.wo
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const content = json.choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error('API 未返回正文');
-  return content;
+  const deduped = stripAiTextOverlappingRaw(content, precedingRawTexts);
+  if (!deduped) {
+    throw new Error('API 返回正文与 raw 块高度重复，请重试生成');
+  }
+  return deduped;
 }
 
 async function generateScenePassageText(
@@ -718,7 +710,8 @@ function applySceneTextToStory(
   const template = fullStory.passages.get(pid);
   if (!template) throw new Error(`未找到 passage 模板: ${pid}`);
 
-  const meta = {...(template.metadata ?? {}), ...sceneAuthoritativeMetadata(scene, fw)};
+  // 场景正文模板可能注入了“支线失败结局统一媒体预设”；模板元数据优先，避免被场景默认媒体覆盖。
+  const meta = {...sceneAuthoritativeMetadata(scene, fw), ...(template.metadata ?? {})};
   story.passages.set(pid, {
     ...template,
     id: pid,
@@ -728,6 +721,7 @@ function applySceneTextToStory(
   paginatePassageText(story, pid, sceneText, getPassagePageCharsMin(), getPassagePageCharsMax());
 
   story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
+  syncStoryTitleFromFramework(story, fw);
   const startName = resolveStoryStartPassageName(fw);
   if (startName) story.startPassageId = startName;
 }
@@ -767,6 +761,18 @@ async function saveStoryTw(gameId: string, story: ReturnType<typeof parseTwee>):
     const err = await res.json().catch(() => ({error: res.statusText}));
     throw new Error((err as { error?: string }).error ?? '保存 story.tw 失败');
   }
+}
+
+/** 若 story.tw 标题与 story-fm 不一致，则仅同步 StoryTitle 并写回 */
+async function persistStoryTitleToTw(gameId: string, fw: StoryFramework): Promise<void> {
+  const title = fw.title?.trim();
+  if (!title) return;
+  const res = await fetch(getGameContentUrl(gameId));
+  if (!res.ok) return;
+  const story = parseTwee(await res.text());
+  if (story.title.trim() === title) return;
+  syncStoryTitleFromFramework(story, fw);
+  await saveStoryTw(gameId, story);
 }
 
 export function FrameworkEditor({
@@ -898,6 +904,7 @@ export function FrameworkEditor({
   const handleSave = useCallback(async () => {
     try {
       await saveFrameworkToStorage(gameId, fw);
+      await persistStoryTitleToTw(gameId, fw);
       setJsonError(null);
       addNotification('info', '保存成功');
     } catch (e) {
@@ -1017,6 +1024,7 @@ export function FrameworkEditor({
       }
 
       updateFw(() => nextFw);
+      await persistStoryTitleToTw(targetGameId, nextFw);
       setImportConfirmOpen(false);
       setImportPendingData(null);
       setImportCompileEnabled(true);
@@ -1230,6 +1238,7 @@ export function FrameworkEditor({
             text,
           });
         }
+        syncStoryTitleFromFramework(story, fw);
         await saveStoryTw(gameId, story);
         addNotification('info', '场景正文已保存到 story.tw');
       } catch (e) {

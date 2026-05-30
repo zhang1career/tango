@@ -154,11 +154,7 @@ export function InventoryModal({
     [onClose]
   );
 
-  if (!open) return null;
-
-  const heldItems = inventoryIds.map((id) => resolveInventoryItem(id, catalog));
   const selected = selectedId ? resolveInventoryItem(selectedId, catalog) : null;
-  const selectedImages = (selected?.images ?? []).map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
 
   useEffect(() => {
     if (!open) {
@@ -167,6 +163,11 @@ export function InventoryModal({
     }
     onActiveBackgroundMusicChange?.(selected?.backgroundMusic);
   }, [open, selected?.backgroundMusic, onActiveBackgroundMusicChange]);
+
+  if (!open) return null;
+
+  const heldItems = inventoryIds.map((id) => resolveInventoryItem(id, catalog));
+  const selectedImages = (selected?.images ?? []).map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
 
   return (
     <div ref={overlayRef} style={styles.overlay} onClick={handleOverlayClick}>
