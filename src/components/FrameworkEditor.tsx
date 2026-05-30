@@ -242,12 +242,52 @@ type AiGenerationContext = {
   constraintContext: string;
 };
 
+function buildSceneRawContextForAiBlock(
+  scene: GameScene,
+  aiBlockIndex?: number
+): {
+  currentSceneRawSnippets: string[];
+  adjacentRawBlocksAlreadyRendered?: Array<{ position: 'before' | 'after'; text: string }>;
+} {
+  const blocks = getScenePassageBlocks(scene);
+  const adjacentIndices =
+    aiBlockIndex != null ? new Set([aiBlockIndex - 1, aiBlockIndex + 1]) : null;
+  const adjacentRawBlocksAlreadyRendered: Array<{ position: 'before' | 'after'; text: string }> = [];
+  const currentSceneRawSnippets: string[] = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.type !== 'raw') continue;
+    const text = block.text?.trim();
+    if (!text) continue;
+
+    if (adjacentIndices?.has(i) && aiBlockIndex != null) {
+      adjacentRawBlocksAlreadyRendered.push({
+        position: i < aiBlockIndex ? 'before' : 'after',
+        text: truncateForPrompt(text, 200),
+      });
+      continue;
+    }
+
+    if (currentSceneRawSnippets.length < AI_PROMPT_BUDGET.maxRawSnippets) {
+      currentSceneRawSnippets.push(truncateForPrompt(text, 120));
+    }
+  }
+
+  return {
+    currentSceneRawSnippets,
+    adjacentRawBlocksAlreadyRendered:
+      adjacentRawBlocksAlreadyRendered.length > 0 ? adjacentRawBlocksAlreadyRendered : undefined,
+  };
+}
+
 function buildAiGenerationContext(
   fw: StoryFramework,
   scene: GameScene,
   ch: FrameworkChapter,
   sceneIndex: number,
-  sceneMap: Map<string, GameScene>
+  sceneMap: Map<string, GameScene>,
+  aiBlockIndex?: number
 ): AiGenerationContext {
   const entries = ch.sceneEntries ?? [];
   const prev = entries.slice(0, sceneIndex);
@@ -258,11 +298,7 @@ function buildAiGenerationContext(
       summary: s ? truncateForPrompt(sceneContextSummary(s), 180) : '',
     };
   });
-  const currentSceneRawSnippets = getScenePassageBlocks(scene)
-    .filter((block): block is Extract<ScenePassageBlock, { type: 'raw' }> => block.type === 'raw')
-    .map((block) => truncateForPrompt(block.text ?? '', 120))
-    .slice(0, AI_PROMPT_BUDGET.maxRawSnippets)
-    .filter(Boolean);
+  const rawContext = buildSceneRawContextForAiBlock(scene, aiBlockIndex);
   const chapterCharIds = collectChapterCharacterIds(ch, sceneMap);
   const sceneCharIds = new Set((scene.characterIds ?? []).filter(Boolean));
   const counterpartCharacterIds = new Set((scene.counterpartCharacterIds ?? []).filter(Boolean));
@@ -302,7 +338,10 @@ function buildAiGenerationContext(
     chapterTitle: ch.title,
     chapterTheme: ch.theme ?? '',
     previousSceneSummaries,
-    currentSceneRawSnippets,
+    ...rawContext,
+    rawContextNote: rawContext.adjacentRawBlocksAlreadyRendered
+      ? 'adjacentRawBlocksAlreadyRendered 已在成稿中单独展示；AI 扩写段不得复述其原文或同义改写，仅基于 summary 做增量扩写。currentSceneRawSnippets 仅作非相邻 raw 块的事实边界参考，不得照搬。'
+      : 'currentSceneRawSnippets 仅作场景内 raw 块的事实边界参考，不是待扩写素材，不得照搬进 AI 正文。',
   };
   return {
     possibilityContext: JSON.stringify(possibilityPayload, null, 2),
@@ -421,7 +460,9 @@ async function generateAiPassageBlockText(
 
 机制说明（必须遵守）：
 - 创作可能性资源：用于提供可引用的素材池（故事背景、章节事件、人物资源字典等），可以引用但不是必须全部使用。
-- 创作范围约束：用于限定事实边界（写作规则、章节标题/主题、前序场景摘要、当前场景 raw 摘要、当前块 summary 等），必须优先服从。
+- 创作范围约束：用于限定事实边界（写作规则、章节标题/主题、前序场景摘要、当前块 summary 等），必须优先服从。
+- 场景中 type=raw 的正文块会原样插入成稿并与 AI 块拼接展示。若约束中出现 adjacentRawBlocksAlreadyRendered，表示读者已能看到这些原文，严禁在 AI 正文中复述、摘抄或同义改写。
+- currentSceneRawSnippets 仅用于了解场景内其它 raw 块的事实边界，不是待扩写素材，不得搬进 AI 正文。
 
 输出必须包含三类内容：
 1. 人物对话：角色之间的对白，用引号标出
@@ -430,6 +471,7 @@ async function generateAiPassageBlockText(
 
 硬性约束（必须遵守）：
 - 以 summary 的事实为主干，只能在其范围内做细节补全，不得改写核心事实。
+- 只扩写本块 summary：用对话、旁白、描写补足细节，避免与已展示或相邻 raw 段落内容重叠。
 - 不得新增 summary 未出现且上下文也未出现的关键设定（新人物、新地点、新组织、新事件主线、新世界观规则）。
 - 允许补充少量过渡句、动作细节、情绪描写，但不得引入会改变剧情走向的新信息。
 - 若 summary 信息不足，优先保守表达，不要臆造。
@@ -438,7 +480,7 @@ async function generateAiPassageBlockText(
 
 输出要求：纯正文，不要包含 [[链接]]，链接由系统自动添加。`;
 
-  const aiCtx = buildAiGenerationContext(fw, scene, ch, sceneIndex, sceneMap);
+  const aiCtx = buildAiGenerationContext(fw, scene, ch, sceneIndex, sceneMap, blockIndex);
   const user = `【创作可能性资源（提供可用素材，不等于必须全部采用）】
 ${aiCtx.possibilityContext}
 
@@ -452,6 +494,8 @@ ${aiCtx.constraintContext}
 场景概要（最高优先级，必须严格围绕此内容扩写）：${block.summary}
 ${block.hints ? `写作提示：${block.hints}` : ''}
 ${block.wordCount != null && block.wordCount > 0 ? `字数要求：约${block.wordCount}字` : ''}
+
+重要：若「创作范围约束」中有 adjacentRawBlocksAlreadyRendered，表示这些 raw 原文已在成稿中单独展示，本 AI 块只做 summary 的增量扩写，不得重复相邻 raw 内容。
 
 请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字；且仅做有限演义扩写）：`;
 
