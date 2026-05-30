@@ -21,6 +21,15 @@
 - 允许子目录（例如 `media/bg/forest.png`），会按相对路径写入目标目录。
 - 一个压缩包只能包含一个 `gameId` 目录；包含多个会报错。
 
+## 项目级策略文件（`assets/policy.json`）
+
+`assets/policy.json` 是**项目级**策略文件，不属于某个 `gameId`，因此：
+
+- 不放在 zip 压缩包中；
+- 不放在 `assets/games/{gameId}/` 下；
+- 由项目仓库维护，不由上游导入包传递；
+- 本文档仅说明其与导入格式的边界，不展开其内部内容规范。
+
 ## 多媒体文件导入说明
 
 - 导入不限制文件扩展名：只要在 zip 内路径合法（不含 `..`）即可写入目标目录。
@@ -114,6 +123,8 @@ my-game.zip
         └── items/
             └── imperial_edict.png
 ```
+
+说明：`assets/policy.json` 若存在，应位于项目根目录（非 zip 内容）。
 
 导入后会自动识别到游戏 `my-game`，写入：
 
@@ -315,6 +326,8 @@ lzx-twine-import.zip
 ### 参与构建资源字典的字段
 
 - `story-characters.json > character.id / name / description`
+- `story-characters.json > character.nameProfile`
+- `story-characters.json > character.addressingProfile`
 - `story-characters.json > character.attributes`
 - `story-characters.json > character.inventory`
 - `story-characters.json > character.behaviorLibrary[]`
@@ -328,6 +341,68 @@ lzx-twine-import.zip
 - 对手戏人物集仅以 `counterpartCharacterIds` 为准，不从 `characterIds` 自动推导；
 - 默认人物资料来自 `story-characters.json`；若 `characterOverrides` 提供同人物覆写，则以场景覆写为准；
 - `behaviorLibrary` 会以摘要形式提供给模型（用于对话语气与行为风格参考）。
+
+### `story-characters.json` 新增字段约定（结构化姓名与称呼）
+
+```json
+{
+  "id": "yuanyong",
+  "name": "元雍",
+  "nameProfile": {
+    "familyName": "元",
+    "givenName": "雍",
+    "courtesyName": "某某",
+    "title": "高阳王"
+  },
+  "addressingProfile": {
+    "peerOrJuniorPrefer": ["courtesyName", "title", "name"],
+    "elderPrefer": ["title", "courtesyName", "name"],
+    "avoidGivenName": true,
+    "contextTags": ["ancient_china"]
+  }
+}
+```
+
+字段语义：
+
+- `nameProfile.familyName / givenName`：用于拆分“姓/名”；
+- `nameProfile.courtesyName`：字（古代语境常用于平辈称呼）；
+- `nameProfile.artName`：号（可选）；
+- `nameProfile.title`：封号/爵位（如“高阳王”）；
+- `addressingProfile.peerOrJuniorPrefer`：平辈/晚辈称呼优先级；
+- `addressingProfile.elderPrefer`：长辈称呼优先级；
+- `addressingProfile.avoidGivenName`：是否避免直呼其“名”；
+- `addressingProfile.contextTags`：该称呼规则生效的语境标签（如 `ancient_china`）。
+
+### 人物称呼字段的上游交付要求（与项目策略联动）
+
+当项目级策略（`assets/policy.json`）包含古代称呼约束（如平辈/晚辈优先称字、号、封号）时，上游在 `story-characters.json` 中应满足以下要求：
+
+- **MUST** 提供 `name`（人物通用显示名）；
+- **SHOULD** 提供 `nameProfile.courtesyName`（字）；
+- **SHOULD** 提供 `nameProfile.artName`（号）；
+- **SHOULD** 提供 `nameProfile.title`（封号/爵位）；
+- **SHOULD** 在 `addressingProfile.peerOrJuniorPrefer` 中显式包含 `"courtesyName"` / `"artName"` / `"title"` / `"name"` 的优先顺序；
+- 若某角色史料上确无字/号/封号，可留空对应字段，但建议在 `description` 中注明，避免模型误补。
+
+最小建议示例：
+
+```json
+{
+  "id": "yuanyong",
+  "name": "元雍",
+  "nameProfile": {
+    "courtesyName": "某某",
+    "artName": "",
+    "title": "高阳王"
+  },
+  "addressingProfile": {
+    "peerOrJuniorPrefer": ["courtesyName", "artName", "title", "name"],
+    "avoidGivenName": true,
+    "contextTags": ["ancient_china"]
+  }
+}
+```
 
 ### `story-scenes.json` 新增字段约定（人物维度）
 

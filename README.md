@@ -39,6 +39,7 @@ src/
   schema/       # 数据结构定义
   data/         # 内嵌示例故事
 {VITE_GAMES_BASE_PATH}/   # 游戏数据，按 gameId 隔离（默认 assets/games）
+assets/policy.json        # 项目级策略（跨游戏共享，不限于 AI）
 ```
 
 ## 扩展

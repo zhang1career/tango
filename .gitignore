@@ -34,4 +34,4 @@ android/build/
 # Project
 assets/games/*
 !assets/games/default
-assets/games/default/story_bundle.json
+assets/games/default/media
