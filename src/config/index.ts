@@ -169,12 +169,12 @@ export function resolveMediaUrl(path: string, gameId?: string): string {
   const base = getMediaBaseUrl();
 
   if (gameId) {
+    if (normalized.startsWith('media/') || normalized.startsWith('media-custom/')) {
+      return toFetchUrl(`${getGameAssetsPrefix(gameId)}/${normalized}`);
+    }
     // 新设计：媒体与游戏数据同目录（assets/games/{gameId}/...）
     // 同时兼容旧默认配置 assets/media，避免其覆盖新目录解析。
     if (!base || isLegacyLocalMediaBase(base)) {
-      if (normalized.startsWith('media/')) {
-        return toFetchUrl(`${getGameAssetsPrefix(gameId)}/${normalized}`);
-      }
       if (base) return `${base}/${normalized}`;
       return toFetchUrl(`${getGameAssetsPrefix(gameId)}/${normalized}`);
     }

@@ -33,7 +33,7 @@ import {
 } from './BehaviorInteractionModal';
 import {BattleModal, type BattleResult} from './BattleModal';
 import {BattleSettlementModal} from './BattleSettlementModal';
-import {InventoryModal, resolveInventoryNames} from './InventoryModal';
+import {InventoryModal} from './InventoryModal';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -84,6 +84,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const [events, setEvents] = useState<GameEvent[]>([]);
   const [itemCatalog, setItemCatalog] = useState<GameItem[]>([]);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [activeInventoryItemBgm, setActiveInventoryItemBgm] = useState<string | undefined>(undefined);
   const [eventPhaseReady, setEventPhaseReady] = useState(false);
   const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
   const eventPhaseRunRef = useRef<string | null>(null);
@@ -174,15 +175,20 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     return () => intervals.forEach(clearInterval);
   }, [engine?.getState()?.currentPassage?.id]);
 
-  // BGM: play when passage has backgroundMusic, intro done, and event phase done (event phase uses event's BGM)
+  // BGM priority: battle/event > character > inventory-item > scene
   useEffect(() => {
     const passage = engine?.getState()?.currentPassage;
-    const url = passage?.metadata?.backgroundMusic as string | undefined;
+    const sceneBgm = passage?.metadata?.backgroundMusic as string | undefined;
+    const characterBgm = selectedCharId
+      ? characters.find((c) => c.id === selectedCharId)?.backgroundMusic
+      : undefined;
+    const url = characterBgm || activeInventoryItemBgm || sceneBgm;
     const opening = passage?.metadata?.openingAnimation as string | undefined;
     const shouldPlay =
       url &&
       (!opening || introPlayedRef.current.has(passage?.id ?? '')) &&
       eventPhaseReady &&
+      !battleOpen &&
       !audioMuted;
     const audio = bgmRef.current;
     if (audio) {
@@ -198,7 +204,17 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         audio.play().catch(() => {});
       }
     }
-  }, [engine?.getState()?.currentPassage?.id, introVisible, eventPhaseReady, audioMuted, gameId]);
+  }, [
+    engine?.getState()?.currentPassage?.id,
+    introVisible,
+    eventPhaseReady,
+    audioMuted,
+    gameId,
+    selectedCharId,
+    characters,
+    activeInventoryItemBgm,
+    battleOpen,
+  ]);
 
   useEffect(() => {
     if (!audioMuted) return;
@@ -403,7 +419,6 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const inventoryIds = state.inventory;
   const showActionRow = characterIds.length > 0 || inventoryIds.length > 0;
   const showBackpack = inventoryIds.length > 0;
-  const inventoryDisplayNames = resolveInventoryNames(inventoryIds, itemCatalog);
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
   const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
@@ -625,24 +640,16 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         <h1 style={styles.title}>{readableStoryTitle}</h1>
       </header>
 
-      {(state.inventory.length > 0 || Object.keys(state.reputation).length > 0) && (
+      {Object.keys(state.reputation).length > 0 && (
         <aside style={styles.statusPanel}>
-          {state.inventory.length > 0 && (
-            <section>
-              <strong style={styles.statusLabel}>物品</strong>
-              <span style={styles.statusValue}>{inventoryDisplayNames.join(' · ')}</span>
-            </section>
-          )}
-          {Object.keys(state.reputation).length > 0 && (
-            <section>
-              <strong style={styles.statusLabel}>声誉</strong>
-              <span style={styles.statusValue}>
-                {Object.entries(state.reputation)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join(' · ')}
-              </span>
-            </section>
-          )}
+          <section>
+            <strong style={styles.statusLabel}>声誉</strong>
+            <span style={styles.statusValue}>
+              {Object.entries(state.reputation)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(' · ')}
+            </span>
+          </section>
         </aside>
       )}
 
@@ -827,6 +834,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         inventoryIds={inventoryIds}
         catalog={itemCatalog}
         gameId={gameId}
+        onActiveBackgroundMusicChange={setActiveInventoryItemBgm}
         onClose={() => setInventoryOpen(false)}
       />
 

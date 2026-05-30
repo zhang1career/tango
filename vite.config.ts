@@ -41,6 +41,20 @@ export default defineConfig(({ mode }) => {
     }
   }
 
+  function readDirectoryFilesRecursive(dir: string, relativePrefix = ''): Array<{relativePath: string; content: Buffer}> {
+    const out: Array<{relativePath: string; content: Buffer}> = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const rel = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+      const abs = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...readDirectoryFilesRecursive(abs, rel));
+      } else if (entry.isFile()) {
+        out.push({ relativePath: rel, content: readFileSync(abs) });
+      }
+    }
+    return out;
+  }
+
   return {
   resolve: {
     alias: { '@': resolve(cwd, 'src') },
@@ -120,6 +134,11 @@ export default defineConfig(({ mode }) => {
                 return;
               }
               const gameDirPath = resolve(cwd, gamesBasePath, gameId);
+              const preservedCustomMedia = (() => {
+                const customMediaDirPath = resolve(gameDirPath, 'media-custom');
+                if (!existsSync(customMediaDirPath)) return [] as Array<{relativePath: string; content: Buffer}>;
+                return readDirectoryFilesRecursive(customMediaDirPath, 'media-custom');
+              })();
               if (existsSync(gameDirPath)) rmSync(gameDirPath, { recursive: true, force: true });
               mkdirSync(gameDirPath, { recursive: true });
               for (const file of payload.files) {
@@ -138,6 +157,12 @@ export default defineConfig(({ mode }) => {
                 mkdirSync(dirname(outPath), { recursive: true });
                 const contentBase64 = String(file.contentBase64 ?? '');
                 writeFileSync(outPath, Buffer.from(contentBase64, 'base64'));
+              }
+              for (const file of preservedCustomMedia) {
+                const outPath = resolve(gameDirPath, file.relativePath);
+                if (!outPath.startsWith(gameDirPath)) throw new Error(`非法路径: ${file.relativePath}`);
+                mkdirSync(dirname(outPath), { recursive: true });
+                writeFileSync(outPath, file.content);
               }
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: true }));

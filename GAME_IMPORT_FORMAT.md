@@ -9,7 +9,8 @@
 - 文件路径必须满足 `<gameId>/...`。
 - 系统会解压该 zip，并将文件写入 `assets/games/{识别出的gameId}/`。
 - 写入前会先清空目标游戏目录，然后按压缩包内容重建。
-- 因此，导入后该目录中的文件集合与压缩包内文件集合一致（允许缺失部分文件）。
+- **例外**：`assets/games/{gameId}/media-custom/` 会在重建前自动保留，导入完成后恢复，不会被覆盖。
+- 因此，导入后除 `media-custom/` 外，目录文件集合与压缩包内文件集合一致（允许缺失部分文件）。
 
 ## 压缩包内路径规范
 
@@ -33,11 +34,16 @@
 ## 多媒体文件导入说明
 
 - 导入不限制文件扩展名：只要在 zip 内路径合法（不含 `..`）即可写入目标目录。
-- 建议将图片/音频/视频统一放在 `<gameId>/media/` 目录下，便于管理（也可使用任意子目录）。
+- 上游导入媒体固定目录：`<gameId>/media/`（例如 `media/bg/forest.png`）。
+- 本地自定义媒体固定目录：`assets/games/{gameId}/media-custom/`（zip 导入不会覆盖该目录）。
+- 运行时会严格按字段填写路径解析（例如填写 `media/xxx.png` 就读取 `media/`，填写 `media-custom/xxx.png` 就读取 `media-custom/`）。
 - 运行时引用媒体时，建议在相关字段中填写相对路径，例如：
   - `openingAnimation: "media/beach.mp4"`
   - `backgroundMusic: "media/frog.mp3"`
   - `images: ["media/flower.png"]`
+- 若使用本地自定义媒体，可填写：
+  - `avatar: "media-custom/chars/hero.png"`
+  - `backgroundMusic: "media-custom/bgm/custom_theme.mp3"`
 - 若项目配置了 `VITE_MEDIA_BASE_URL`，相对路径会按该基地址解析；未配置时将按页面相对地址加载。
 - 构建产物会保留游戏目录下的全部文件（包含 `media/` 及其他附加资源）。
 
@@ -52,7 +58,9 @@
   - `story-scenes.json > scene.backgroundMusic`：场景背景音乐
   - `story-scenes.json > scene.images[]`：场景图片轮播
   - `story-events.json > event.openingAnimation / endingAnimation / backgroundMusic`：事件媒体
+  - `story-characters.json > character.avatar / backgroundMusic`：人物头像与人物专属 BGM
   - `story-items.json > item.images[]`：物品配图（背包查看）
+  - `story-items.json > item.backgroundMusic`：物品专属 BGM（背包查看物品详情时）
 - 若 `story.tw` passage metadata 中也写了 `openingAnimation/images/backgroundMusic`，运行时同样可识别，建议与 `story-scenes.json` 保持一致。
 
 ## 物品目录（`story-items.json`）
@@ -67,6 +75,7 @@
 | `name` | 是 | 展示名称（状态栏、背包列表） |
 | `description` | 否 | 查看时的文字描述；无配图时作为主要展示内容 |
 | `images` | 否 | 配图路径数组（相对路径或完整 URL）；背包详情页展示首张，支持后续扩展轮播 |
+| `backgroundMusic` | 否 | 物品专属背景音乐（在背包中打开该物品详情时覆盖场景 BGM） |
 
 ### 示例
 

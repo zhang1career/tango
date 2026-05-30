@@ -1306,7 +1306,7 @@ export function FrameworkEditor({
               <h2 style={styles.modalTitle}>确认导入</h2>
             </div>
             <p style={{margin: '0 0 16px', fontSize: 14, color: '#e8e8e8'}}>
-              识别到压缩包顶层目录为 {importPendingData?.sourceGameId}。你可以修改导入目标游戏ID（保存目录名），导入时会重建目标目录（共 {importPendingData?.files.length ?? 0} 个文件）。
+              识别到压缩包顶层目录为 {importPendingData?.sourceGameId}。你可以修改导入目标游戏ID（保存目录名），导入时会重建目标目录（共 {importPendingData?.files.length ?? 0} 个文件），并保留已存在的 media-custom 自定义媒体目录。
             </p>
             <div style={styles.section}>
               <label style={styles.label}>目标游戏ID（保存目录名）</label>

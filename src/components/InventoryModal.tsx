@@ -116,6 +116,7 @@ interface InventoryModalProps {
   inventoryIds: string[];
   catalog: GameItem[];
   gameId?: string;
+  onActiveBackgroundMusicChange?: (bgm: string | undefined) => void;
   onClose: () => void;
 }
 
@@ -124,6 +125,7 @@ export function InventoryModal({
   inventoryIds,
   catalog,
   gameId,
+  onActiveBackgroundMusicChange,
   onClose,
 }: InventoryModalProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -157,6 +159,14 @@ export function InventoryModal({
   const heldItems = inventoryIds.map((id) => resolveInventoryItem(id, catalog));
   const selected = selectedId ? resolveInventoryItem(selectedId, catalog) : null;
   const selectedImages = (selected?.images ?? []).map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
+
+  useEffect(() => {
+    if (!open) {
+      onActiveBackgroundMusicChange?.(undefined);
+      return;
+    }
+    onActiveBackgroundMusicChange?.(selected?.backgroundMusic);
+  }, [open, selected?.backgroundMusic, onActiveBackgroundMusicChange]);
 
   return (
     <div ref={overlayRef} style={styles.overlay} onClick={handleOverlayClick}>

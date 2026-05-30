@@ -10,7 +10,7 @@ import type {StoryFramework} from '../schema/story-framework';
 import type {GameItem} from '../schema/game-item';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
-import {MediaCarouselField} from './ui/MediaFields';
+import {MediaCarouselField, MediaUrlField} from './ui/MediaFields';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -121,6 +121,9 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
         {imgs.length > 0 && (
           <p style={{margin: '0 0 8px'}}><strong>配图：</strong>{imgs.join(', ')}</p>
         )}
+        {item.backgroundMusic && (
+          <p style={{margin: '0 0 8px'}}><strong>背景音乐：</strong>{item.backgroundMusic}</p>
+        )}
       </div>
     );
   }
@@ -155,6 +158,12 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
         label="配图"
         value={item.images}
         onChange={(v) => onUpdate((x) => ({...x, images: v.length ? v : undefined}))}
+        editable={true}
+      />
+      <MediaUrlField
+        label="背景音乐"
+        value={item.backgroundMusic}
+        onChange={(v) => onUpdate((x) => ({...x, backgroundMusic: v}))}
         editable={true}
       />
     </div>

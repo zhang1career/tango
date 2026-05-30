@@ -65,4 +65,6 @@ export interface GameCharacter {
   inLocations?: string[];
   /** 头像 URL */
   avatar?: string;
+  /** 人物专属背景音乐 URL */
+  backgroundMusic?: string;
 }

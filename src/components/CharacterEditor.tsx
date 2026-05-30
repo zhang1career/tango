@@ -501,6 +501,12 @@ function CharacterFormContent({
         onChange={(v) => onUpdate?.((c) => ({...c, avatar: v}))}
         editable={editable && !!onUpdate}
       />
+      <MediaUrlField
+        label="背景音乐"
+        value={char.backgroundMusic}
+        onChange={(v) => onUpdate?.((c) => ({...c, backgroundMusic: v}))}
+        editable={editable && !!onUpdate}
+      />
       <CollapsibleSection title="属性" expanded={expanded.has('attr')} onToggle={() => toggle('attr')}>
         <AttributeValuesCard
           attributeDefs={attributeDefs}
