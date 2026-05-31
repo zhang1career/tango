@@ -5,6 +5,7 @@
 
 import type {Passage, PassageLink, Story} from '@/types';
 import {toCascadedSubId} from './cascadedId';
+import {inferSceneTitleForPassage} from './passage-display-title';
 import {splitTextIntoChunks} from './text-chunks';
 
 const PAGE_STEP = 100;
@@ -46,6 +47,12 @@ export function paginatePassageText(
   const originalLinks: PassageLink[] = (p.links ?? []).map((l) =>
     ({ ...l, displayText: stripPrefix(l.displayText) })
   );
+  const sceneTitle = inferSceneTitleForPassage(p);
+  const sharedMetadata = sceneTitle
+    ? {...(p.metadata ?? {}), sceneTitle}
+    : p.metadata;
+  if (sceneTitle) p.metadata = sharedMetadata;
+
   const firstSubId = toCascadedSubId(passageId, 'p', PAGE_STEP);
   p.text = chunks[0]!;
   p.links = [{displayText: '继续', passageName: firstSubId}];
@@ -63,7 +70,7 @@ export function paginatePassageText(
       name: subId,
       text: chunks[i]!,
       links: subLinks,
-      metadata: p.metadata,
+      metadata: sharedMetadata,
     };
     story.passages.set(subId, subP);
   }

@@ -282,6 +282,7 @@ export function frameworkToStory(fw: StoryFramework): Story {
     if (validImages?.length) metadata.images = validImages.map((u) => u.trim());
     if (scene.backgroundMusic) metadata.backgroundMusic = scene.backgroundMusic;
     if (terminalFailure) {
+      metadata.branchTerminal = true;
       const failureBgm = fw.features?.branchFailureEnding?.backgroundMusic?.trim();
       if (failureBgm) metadata.backgroundMusic = failureBgm;
       const failureImages = fw.features?.branchFailureEnding?.images

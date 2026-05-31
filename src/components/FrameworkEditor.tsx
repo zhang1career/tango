@@ -20,7 +20,10 @@ import {useAuth} from '@/context/AuthContext';
 import {frameworkToStory, parseTwee, serializeStorySugarcube, storyToBundle, syncStoryTitleFromFramework} from '@/engine';
 
 import {formatJsonCompact} from '../utils/json-format';
-import {paginatePassageText, removeSceneSubPassages} from '../utils/paginate-passage';
+import {
+  applyScenePassageFullText,
+  collectSceneFullText,
+} from '../utils/scene-passage-text';
 import {collectPrecedingRawTexts, stripAiTextOverlappingRaw} from '../utils/strip-ai-raw-overlap';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
@@ -706,19 +709,25 @@ function applySceneTextToStory(
   sceneText: string
 ): void {
   const pid = toPassageId(chapterIndex, scene.id);
-  removeSceneSubPassages(story, pid);
   const template = fullStory.passages.get(pid);
   if (!template) throw new Error(`未找到 passage 模板: ${pid}`);
 
   // 场景正文模板可能注入了“支线失败结局统一媒体预设”；模板元数据优先，避免被场景默认媒体覆盖。
   const meta = {...sceneAuthoritativeMetadata(scene, fw), ...(template.metadata ?? {})};
-  story.passages.set(pid, {
-    ...template,
-    id: pid,
-    name: template.name ?? scene.name ?? pid,
-    metadata: Object.keys(meta).length ? meta : undefined,
+  const lookupKeys = getScenePassageLookupKeys(fw, chapterIndex, scene.id);
+  applyScenePassageFullText(story, {
+    sceneId: scene.id,
+    paginationBaseId: pid,
+    lookupKeys,
+    rootPassage: {
+      ...template,
+      name: template.name ?? scene.name ?? pid,
+      metadata: Object.keys(meta).length ? meta : undefined,
+    },
+    fullText: sceneText,
+    minChars: getPassagePageCharsMin(),
+    maxChars: getPassagePageCharsMax(),
   });
-  paginatePassageText(story, pid, sceneText, getPassagePageCharsMin(), getPassagePageCharsMax());
 
   story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
   syncStoryTitleFromFramework(story, fw);
@@ -1175,14 +1184,15 @@ export function FrameworkEditor({
         const res = await fetch(contentUrl);
         const raw = res.ok ? await res.text() : '';
         const story = parseTwee(raw);
-        const passage = lookupKeys.map((k) => story.passages.get(k)).find((p) => !!p);
+        const pid = toPassageId(chi, entry.sceneId);
+        const fullText = collectSceneFullText(story, entry.sceneId, pid, lookupKeys);
         const fallbackScene = sceneMap.get(entry.sceneId);
         const fallback = fallbackScene ? sceneContextSummary(fallbackScene) : '';
         setEditingSceneText((prev) => ({
           ...prev,
-          [entryKey]: passage?.text ?? fallback,
+          [entryKey]: fullText || fallback,
         }));
-        if (!passage) addNotification('info', '未找到已有正文，已载入场景正文块摘要作为编辑初稿');
+        if (!fullText) addNotification('info', '未找到已有正文，已载入场景正文块摘要作为编辑初稿');
       } catch (e) {
         setJsonError((e as Error).message || '读取正文失败');
       } finally {
@@ -1223,21 +1233,24 @@ export function FrameworkEditor({
         const res = await fetch(contentUrl);
         const raw = res.ok ? await res.text() : '';
         const story = parseTwee(raw);
-        const existingKey = lookupKeys.find((k) => story.passages.has(k));
-        const existing = existingKey ? story.passages.get(existingKey) : undefined;
-        if (existing && existingKey) {
-          story.passages.set(existingKey, {...existing, text});
-        } else {
-          const template = frameworkToStory(fw).passages.get(pid);
-          if (!template) throw new Error(`未找到场景 passage 模板: ${pid}`);
-          const canonicalKey = normalizePassageKey(template.name || pid);
-          story.passages.set(canonicalKey, {
+        const fullStory = frameworkToStory(fw);
+        const template = fullStory.passages.get(pid);
+        if (!template) throw new Error(`未找到场景 passage 模板: ${pid}`);
+        if (!scene) throw new Error(`未找到场景 ${entry.sceneId}`);
+        const meta = {...sceneAuthoritativeMetadata(scene, fw), ...(template.metadata ?? {})};
+        applyScenePassageFullText(story, {
+          sceneId: entry.sceneId,
+          paginationBaseId: pid,
+          lookupKeys,
+          rootPassage: {
             ...template,
-            id: canonicalKey,
-            name: template.name ?? scene?.name ?? pid,
-            text,
-          });
-        }
+            name: template.name ?? scene.name ?? pid,
+            metadata: Object.keys(meta).length ? meta : undefined,
+          },
+          fullText: text,
+          minChars: getPassagePageCharsMin(),
+          maxChars: getPassagePageCharsMax(),
+        });
         syncStoryTitleFromFramework(story, fw);
         await saveStoryTw(gameId, story);
         addNotification('info', '场景正文已保存到 story.tw');
@@ -1315,7 +1328,7 @@ export function FrameworkEditor({
               <h2 style={styles.modalTitle}>确认导入</h2>
             </div>
             <p style={{margin: '0 0 16px', fontSize: 14, color: '#e8e8e8'}}>
-              识别到压缩包顶层目录为 {importPendingData?.sourceGameId}。你可以修改导入目标游戏ID（保存目录名），导入时会重建目标目录（共 {importPendingData?.files.length ?? 0} 个文件），并保留已存在的 media-custom 自定义媒体目录。
+              识别到压缩包顶层目录为 {importPendingData?.sourceGameId}。你可以修改导入目标游戏ID（保存目录名），导入时会重建目标目录（共 {importPendingData?.files.length ?? 0} 个文件）。项目级自定义媒体目录 assets/media_custom 不受导入影响。
             </p>
             <div style={styles.section}>
               <label style={styles.label}>目标游戏ID（保存目录名）</label>
@@ -1737,7 +1750,7 @@ function ChapterBlock({
                       </div>
                     </div>
                     <div style={styles.row}>
-                      <label style={styles.label}>生成正文（story.tw passage，可手动覆盖）</label>
+                      <label style={styles.label}>生成正文（story.tw，多页自动合并编辑，保存时重新分页）</label>
                       <div style={{display: 'flex', gap: 8, marginBottom: 8}}>
                         <button
                           type="button"
@@ -1759,7 +1772,7 @@ function ChapterBlock({
                       <textarea
                         value={textDraft}
                         onChange={(e) => onSceneTextDraftChange(entryKey, e.target.value)}
-                        placeholder="可手动编辑该场景在 story.tw 中的正文内容"
+                        placeholder="该场景在 story.tw 中的完整正文（含全部分页，保存时自动拆分）"
                         style={{...styles.input, ...styles.textarea, minHeight: 170}}
                       />
                     </div>

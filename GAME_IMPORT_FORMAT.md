@@ -9,8 +9,7 @@
 - 文件路径必须满足 `<gameId>/...`。
 - 系统会解压该 zip，并将文件写入 `assets/games/{识别出的gameId}/`。
 - 写入前会先清空目标游戏目录，然后按压缩包内容重建。
-- **例外**：`assets/games/{gameId}/media-custom/` 会在重建前自动保留，导入完成后恢复，不会被覆盖。
-- 因此，导入后除 `media-custom/` 外，目录文件集合与压缩包内文件集合一致（允许缺失部分文件）。
+- 因此，导入后目录文件集合与压缩包内文件集合一致（允许缺失部分文件）。
 
 ## 压缩包内路径规范
 
@@ -31,21 +30,30 @@
 - 由项目仓库维护，不由上游导入包传递；
 - 本文档仅说明其与导入格式的边界，不展开其内部内容规范。
 
+## 项目级自定义媒体（`assets/media_custom/`）
+
+`assets/media_custom/` 是**项目级**本地自定义媒体目录，与 `assets/policy.json` 类似：
+
+- 不放在 zip 压缩包中；
+- 不放在 `assets/games/{gameId}/` 下；
+- 由本地项目维护，zip 导入游戏时不会被覆盖或删除；
+- 在 JSON 字段中通过 `media_custom/...` 相对路径引用（见下文「多媒体文件导入说明」）。
+
 ## 多媒体文件导入说明
 
 - 导入不限制文件扩展名：只要在 zip 内路径合法（不含 `..`）即可写入目标目录。
 - 上游导入媒体固定目录：`<gameId>/media/`（例如 `media/bg/forest.png`）。
-- 本地自定义媒体固定目录：`assets/games/{gameId}/media-custom/`（zip 导入不会覆盖该目录）。
-- 运行时会严格按字段填写路径解析（例如填写 `media/xxx.png` 就读取 `media/`，填写 `media-custom/xxx.png` 就读取 `media-custom/`）。
+- 本地自定义媒体固定目录：`assets/media_custom/`（**项目级**，不属于某个 `gameId`；不放在 zip 中，zip 导入也不会覆盖）。
+- 运行时会严格按字段填写路径解析（例如填写 `media/xxx.png` 就读取游戏目录下的 `media/`，填写 `media_custom/xxx.png` 就读取 `assets/media_custom/`）。
 - 运行时引用媒体时，建议在相关字段中填写相对路径，例如：
   - `openingAnimation: "media/beach.mp4"`
   - `backgroundMusic: "media/frog.mp3"`
   - `images: ["media/flower.png"]`
 - 若使用本地自定义媒体，可填写：
-  - `avatar: "media-custom/chars/hero.png"`
-  - `backgroundMusic: "media-custom/bgm/custom_theme.mp3"`
-- 若项目配置了 `VITE_MEDIA_BASE_URL`，相对路径会按该基地址解析；未配置时将按页面相对地址加载。
-- 构建产物会保留游戏目录下的全部文件（包含 `media/` 及其他附加资源）。
+  - `avatar: "media_custom/chars/hero.png"`
+  - `backgroundMusic: "media_custom/bgm/custom_theme.mp3"`
+- 若 `VITE_MEDIA_BASE_URL` 配置了 CDN，相对路径会按该基地址解析；未配置时将按页面相对地址加载。
+- 构建产物会保留游戏目录下的全部文件（包含 `media/` 及其他附加资源），并复制 `assets/media_custom/` 到产物目录。
 
 ### 多媒体引用方式（字段级规范）
 

@@ -2,6 +2,9 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve, dirname, normalize } from 'node:path';
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import {normalizeMediaSavePath, CUSTOM_MEDIA_FS_DIR} from './src/config/media-paths';
 import { formatJsonCompact } from './src/utils/json-format';
 
 const DEFAULT_GAMES_BASE_PATH = 'assets/games';
@@ -27,6 +30,42 @@ export default defineConfig(({ mode }) => {
     return resolve(cwd, gamesBasePath, gameId, gameAssetFileName(resource));
   }
 
+  function fetchBinaryUrl(url: string): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const client = url.startsWith('https:') ? httpsRequest : httpRequest;
+      client(url, (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          fetchBinaryUrl(res.headers.location).then(resolve).catch(reject);
+          return;
+        }
+        if (res.statusCode !== 200) {
+          reject(new Error(`下载失败 HTTP ${res.statusCode}`));
+          res.resume();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject).end();
+    });
+  }
+
+  function validateGameRelativePath(inputPath: string, gameDirPath: string): string {
+    const normalizedPath = normalize(inputPath.replace(/\\/g, '/').replace(/^\/+/, ''));
+    if (
+      !normalizedPath ||
+      normalizedPath.startsWith('..') ||
+      normalizedPath.includes('/../') ||
+      normalizedPath.includes('\\..\\')
+    ) {
+      throw new Error(`非法路径: ${inputPath}`);
+    }
+    const outPath = resolve(gameDirPath, normalizedPath);
+    if (!outPath.startsWith(gameDirPath)) throw new Error(`非法路径: ${inputPath}`);
+    return outPath;
+  }
+
   function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
     mkdirSync(dstDir, { recursive: true });
     for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
@@ -39,20 +78,6 @@ export default defineConfig(({ mode }) => {
         copyFileSync(src, dst);
       }
     }
-  }
-
-  function readDirectoryFilesRecursive(dir: string, relativePrefix = ''): Array<{relativePath: string; content: Buffer}> {
-    const out: Array<{relativePath: string; content: Buffer}> = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const rel = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
-      const abs = resolve(dir, entry.name);
-      if (entry.isDirectory()) {
-        out.push(...readDirectoryFilesRecursive(abs, rel));
-      } else if (entry.isFile()) {
-        out.push({ relativePath: rel, content: readFileSync(abs) });
-      }
-    }
-    return out;
   }
 
   return {
@@ -112,6 +137,47 @@ export default defineConfig(({ mode }) => {
             }
           });
         });
+        server.middlewares.use('/api/games', (req, res, next) => {
+          const mediaMatch = req.url?.match(/^\/([^/]+)\/media(?:\?|$)/);
+          if (!mediaMatch || req.method !== 'POST') return next();
+          const gameId = mediaMatch[1];
+          if (!gameId) return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const payload = JSON.parse(body) as {
+                path?: string;
+                contentBase64?: string;
+                sourceUrl?: string;
+              };
+              const inputPath = String(payload.path ?? '').trim();
+              if (!inputPath) throw new Error('path 不能为空');
+              const {fsSubPath, root} = normalizeMediaSavePath(inputPath);
+              const baseDir = root === 'custom'
+                ? resolve(cwd, CUSTOM_MEDIA_FS_DIR)
+                : resolve(cwd, gamesBasePath, gameId);
+              if (root === 'game') mkdirSync(baseDir, { recursive: true });
+              const outPath = validateGameRelativePath(fsSubPath, baseDir);
+              mkdirSync(dirname(outPath), { recursive: true });
+              if (payload.sourceUrl) {
+                const url = String(payload.sourceUrl).trim();
+                if (!/^https?:\/\//i.test(url)) throw new Error('sourceUrl 必须是 http(s) URL');
+                const buf = await fetchBinaryUrl(url);
+                writeFileSync(outPath, buf);
+              } else if (payload.contentBase64) {
+                writeFileSync(outPath, Buffer.from(String(payload.contentBase64), 'base64'));
+              } else {
+                throw new Error('contentBase64 或 sourceUrl 至少提供一个');
+              }
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true }));
+            } catch (e) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
+            }
+          });
+        });
         server.middlewares.use('/api/games/import-zip', (req, res, next) => {
           if (req.method !== 'POST') return next();
           let body = '';
@@ -134,11 +200,6 @@ export default defineConfig(({ mode }) => {
                 return;
               }
               const gameDirPath = resolve(cwd, gamesBasePath, gameId);
-              const preservedCustomMedia = (() => {
-                const customMediaDirPath = resolve(gameDirPath, 'media-custom');
-                if (!existsSync(customMediaDirPath)) return [] as Array<{relativePath: string; content: Buffer}>;
-                return readDirectoryFilesRecursive(customMediaDirPath, 'media-custom');
-              })();
               if (existsSync(gameDirPath)) rmSync(gameDirPath, { recursive: true, force: true });
               mkdirSync(gameDirPath, { recursive: true });
               for (const file of payload.files) {
@@ -157,12 +218,6 @@ export default defineConfig(({ mode }) => {
                 mkdirSync(dirname(outPath), { recursive: true });
                 const contentBase64 = String(file.contentBase64 ?? '');
                 writeFileSync(outPath, Buffer.from(contentBase64, 'base64'));
-              }
-              for (const file of preservedCustomMedia) {
-                const outPath = resolve(gameDirPath, file.relativePath);
-                if (!outPath.startsWith(gameDirPath)) throw new Error(`非法路径: ${file.relativePath}`);
-                mkdirSync(dirname(outPath), { recursive: true });
-                writeFileSync(outPath, file.content);
               }
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: true }));
@@ -266,6 +321,11 @@ export default defineConfig(({ mode }) => {
             mkdirSync(gameDst, { recursive: true });
             copyDirectoryRecursive(gameSrc, gameDst);
           }
+        }
+        const srcCustomMediaDir = resolve(cwd, CUSTOM_MEDIA_FS_DIR);
+        const distCustomMediaDir = resolve(outDir, CUSTOM_MEDIA_FS_DIR);
+        if (existsSync(srcCustomMediaDir)) {
+          copyDirectoryRecursive(srcCustomMediaDir, distCustomMediaDir);
         }
       },
     },

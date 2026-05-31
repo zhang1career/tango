@@ -12,7 +12,10 @@ import type {GameBehavior} from '../schema/game-behavior';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {AttributeValuesCard} from './cards/AttributeValuesCard';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
-import {MediaUrlField, MediaCarouselField} from './ui/MediaFields';
+import {MediaUrlField} from './ui/MediaFields';
+import {SceneBackgroundImageField, SceneBackgroundMusicField} from './ui/SceneMediaFields';
+import type {SceneMediaPromptContext} from '../utils/scene-media-prompt';
+import {buildSceneMediaPromptContext} from '../utils/scene-media-prompt';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
@@ -91,6 +94,8 @@ async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok
 type SceneFormProps = {
   scene: GameScene;
   editable: boolean;
+  gameId: string;
+  mediaPromptContext: SceneMediaPromptContext;
   attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
   items: import('../schema/game-item').GameItem[];
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
@@ -104,6 +109,8 @@ type SceneFormProps = {
 function SceneFormContent({
                             scene,
                             editable,
+                            gameId,
+                            mediaPromptContext,
                             attributeDefs,
                             items,
                             mapNodeIds,
@@ -573,14 +580,18 @@ function SceneFormContent({
         onChange={(v) => onUpdate?.((s) => ({...s, openingAnimation: v}))}
         editable={editable && !!onUpdate}
       />
-      <MediaCarouselField
-        label="配图"
+      <SceneBackgroundImageField
+        scene={scene}
+        promptContext={mediaPromptContext}
+        gameId={gameId}
         value={scene.images}
-        onChange={(v) => onUpdate?.((s) => ({...s, images: v.length ? v : undefined}))}
+        onChange={(v) => onUpdate?.((s) => ({...s, images: v?.length ? v : undefined}))}
         editable={editable && !!onUpdate}
       />
-      <MediaUrlField
-        label="背景音乐"
+      <SceneBackgroundMusicField
+        scene={scene}
+        promptContext={mediaPromptContext}
+        gameId={gameId}
         value={scene.backgroundMusic}
         onChange={(v) => onUpdate?.((s) => ({...s, backgroundMusic: v}))}
         editable={editable && !!onUpdate}
@@ -691,6 +702,16 @@ export function SceneEditor({
     else setEditIndex(null);
   };
 
+  const mediaContextOptions = {
+    storyBackground: fw.background,
+    writingRules: fw.rules,
+    mapNodeIds,
+    characters: fw.characters ?? [],
+    events: fw.events ?? [],
+  };
+  const buildMediaCtx = (scene: GameScene): SceneMediaPromptContext =>
+    buildSceneMediaPromptContext(scene, mediaContextOptions);
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -739,6 +760,8 @@ export function SceneEditor({
           <SceneFormContent
             scene={scenes[detailIndex]}
             editable={false}
+            gameId={gameId}
+            mediaPromptContext={buildMediaCtx(scenes[detailIndex])}
             attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
@@ -760,6 +783,8 @@ export function SceneEditor({
           <SceneFormContent
             scene={scenes[editIndex]}
             editable={true}
+            gameId={gameId}
+            mediaPromptContext={buildMediaCtx(scenes[editIndex])}
             attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
@@ -782,6 +807,8 @@ export function SceneEditor({
           <SceneFormContent
             scene={newScene}
             editable={true}
+            gameId={gameId}
+            mediaPromptContext={buildMediaCtx(newScene)}
             attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}

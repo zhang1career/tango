@@ -27,6 +27,7 @@ import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUr
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {resolveSceneIdFromPassage} from '@/utils/scene-id';
+import {resolvePassageDisplayTitle} from '@/utils/passage-display-title';
 import {
   BehaviorInteractionModal,
   type BehaviorHistoryEntry,
@@ -443,20 +444,13 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   };
 
   const technicalIdRe = /^ch\d+\.scene_\d+(?:\.p_\d+)?$/;
+  const technicalIdLooseRe = /^ch\d+\.[a-zA-Z0-9_-]+(?:\.p_\d+)?$/;
 
-  const getReadablePassageName = (name: string): string => {
-    const trimmed = name.trim();
-    if (!technicalIdRe.test(trimmed)) return trimmed;
-    const baseId = trimmed.replace(/\.p_\d+$/, '');
-    const basePassage = state.story.passages.get(baseId);
-    if (basePassage?.name && !technicalIdRe.test(basePassage.name.trim())) {
-      return basePassage.name.trim();
-    }
-    return '';
-  };
+  const getReadablePassageName = (target: import('@/types').Passage | null | undefined): string =>
+    resolvePassageDisplayTitle(state.story, target);
 
-  const readablePassageName = getReadablePassageName(passage?.name ?? '');
-  const readableStoryTitle = technicalIdRe.test(state.story.title.trim())
+  const readablePassageName = getReadablePassageName(passage);
+  const readableStoryTitle = technicalIdLooseRe.test(state.story.title.trim())
     ? '未命名故事'
     : state.story.title;
 
@@ -467,7 +461,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     const stripped = raw.startsWith('前往') ? raw.replace(/^前往\s*/, '').trim() : raw;
     if (technicalIdRe.test(stripped)) {
       const target = engine.getPassage(link.passageName);
-      const targetReadable = getReadablePassageName(target?.name ?? '') || getReadablePassageName(target?.id ?? '');
+      const targetReadable = getReadablePassageName(target);
       return targetReadable ? `前往 ${targetReadable}` : '继续';
     }
     return raw.startsWith('前往') ? raw : `前往 ${raw}`;
@@ -481,6 +475,19 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     if (!ok && /^ch\d+\.scene_\d+$/.test(passageName.trim())) {
       // 兼容历史数据：章节入口常写 base id，实际首屏是 .p_100
       ok = engine.goTo(`${passageName.trim()}.p_100`, link ?? undefined);
+    }
+    // 支线末端返回主线时，自动越过“纯继续分页”，减少不必要点击。
+    const shouldAutoAdvanceOnReturn =
+      !!(passage?.metadata as { branchTerminal?: boolean } | undefined)?.branchTerminal;
+    if (ok && shouldAutoAdvanceOnReturn) {
+      for (let i = 0; i < 50; i++) {
+        const visible = engine.getVisibleLinks();
+        if (visible.length !== 1) break;
+        const only = visible[0];
+        const label = (only.displayText ?? '').trim();
+        if (label !== '继续') break;
+        if (!engine.goTo(only.passageName, only)) break;
+      }
     }
     if (!ok) {
       setNavWarning('该选项暂时无法跳转：目标场景不存在或数据未同步。');
