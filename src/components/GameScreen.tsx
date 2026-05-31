@@ -23,7 +23,7 @@ import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
 import type {GameItem} from '@/schema/game-item';
 import type {SceneCharacterOverride} from '@/schema/game-scene';
-import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl} from '@/config';
+import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl, getAppMode} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {resolveSceneIdFromPassage} from '@/utils/scene-id';
@@ -62,6 +62,7 @@ function applySceneOverridesToCharacters(
 
 export function GameScreen({fetchContent, className, audioMuted = false}: GameScreenProps) {
   const {gameId} = useGameId();
+  const isProdMode = getAppMode() === 'prod';
   const [engine, setEngine] = useState<GameEngine | null>(null);
   const [characters, setCharacters] = useState<GameCharacter[]>([]);
   const [rules, setRules] = useState<GameRule[]>([]);
@@ -107,9 +108,20 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       .then((story) => {
         if (cancelled) return;
         setEngine(new GameEngine(story));
-        const meta = story.metadata as { characters?: unknown[]; gameRules?: unknown[] } | undefined;
+        const meta = story.metadata as {
+          characters?: unknown[];
+          gameRules?: unknown[];
+          events?: unknown[];
+          items?: unknown[];
+          features?: { battle?: { backgroundMusic?: string } };
+        } | undefined;
         setCharacters(Array.isArray(meta?.characters) ? (meta.characters as GameCharacter[]) : []);
         setRules(Array.isArray(meta?.gameRules) ? (meta.gameRules as GameRule[]) : []);
+        if (isProdMode) {
+          setEvents(Array.isArray(meta?.events) ? (meta.events as GameEvent[]) : []);
+          setItemCatalog(Array.isArray(meta?.items) ? (meta.items as GameItem[]) : []);
+          setFeaturesConfig(meta?.features ?? null);
+        }
         setLoading(false);
       })
       .catch((e) => {
@@ -121,34 +133,35 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     return () => {
       cancelled = true;
     };
-  }, [fetchContent]);
+  }, [fetchContent, isProdMode]);
 
-  // 加载事件
+  // 开发模式：从独立 JSON 加载（编辑器维护）；prod 已在 story.tw StoryData 中
   useEffect(() => {
+    if (isProdMode) return;
     const url = getEventsFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((d: unknown) => setEvents(Array.isArray(d) ? d : []))
       .catch(() => setEvents([]));
-  }, [gameId]);
+  }, [gameId, isProdMode]);
 
-  // 加载物品目录
   useEffect(() => {
+    if (isProdMode) return;
     const url = getItemsFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((d: unknown) => setItemCatalog(Array.isArray(d) ? d : []))
       .catch(() => setItemCatalog([]));
-  }, [gameId]);
+  }, [gameId, isProdMode]);
 
-  // 加载功能板块配置（战斗背景音乐等）
   useEffect(() => {
+    if (isProdMode) return;
     const url = getFeaturesFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : {}))
       .then((d: { battle?: { backgroundMusic?: string } } | null) => setFeaturesConfig(d ?? null))
       .catch(() => setFeaturesConfig(null));
-  }, [gameId]);
+  }, [gameId, isProdMode]);
 
   useEffect(() => {
     const el = passageContentRef.current;

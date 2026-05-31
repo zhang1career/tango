@@ -20,7 +20,7 @@ import {LoginPage} from './components/LoginPage';
 import {useGameId} from './context/GameIdContext';
 import {useNotification} from './context/NotificationContext';
 import {AuthProvider, useAuth} from './context/AuthContext';
-import {getAppMode, getContentPath, getGameContentUrl, getStoryFmFetchUrl, DEFAULT_GAME_ID} from './config';
+import {getAppMode, getContentPath, getGameContentUrl, getStoryFmFetchUrl, toFetchUrl, DEFAULT_GAME_ID} from './config';
 import {fromPersistedFramework, migrateFramework} from './schema/story-framework';
 import type {StoryFramework} from './schema/story-framework';
 
@@ -111,7 +111,7 @@ async function fetchContentForGame(gameId: string, pathOverride?: string): Promi
     if (!res.ok) throw new Error(`加载失败: ${res.status}`);
     return res.text();
   }
-  const url = import.meta.env.DEV ? getGameContentUrl(gameId) : (p.startsWith('/') ? p : `/${p}`);
+  const url = import.meta.env.DEV ? getGameContentUrl(gameId) : toFetchUrl(p);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`加载失败: ${res.status} ${p}`);
   return res.text();
@@ -133,7 +133,6 @@ export default function App() {
         const res = await fetch(url);
         if (!res.ok) {
           if (res.status === 404) {
-            setGameId(DEFAULT_GAME_ID);
             addNotification('error', `剧情文件不存在：${targetGameId}/story-fm.json`);
           } else {
             addNotification('error', `加载失败: ${res.status}`);
@@ -166,9 +165,11 @@ export default function App() {
 
   const handleGameSelect = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
-      loadStoryFm(e.target.value);
+      const id = e.target.value;
+      setGameId(id);
+      if (!isProd) void loadStoryFm(id);
     },
-    [loadStoryFm]
+    [setGameId, loadStoryFm]
   );
 
   return (
@@ -182,6 +183,7 @@ export default function App() {
         gameId={gameId}
         gameIds={gameIds}
         handleGameSelect={handleGameSelect}
+        setGameId={setGameId}
         fw={fw}
         updateFw={updateFw}
         fetchContent={fetchContent}
@@ -197,6 +199,7 @@ type AppBodyProps = {
   gameId: string;
   gameIds: string[];
   handleGameSelect: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  setGameId: (id: string) => void;
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
   fetchContent: (path?: string) => Promise<string>;
@@ -211,6 +214,7 @@ function AppBody({
   gameId,
   gameIds,
   handleGameSelect,
+  setGameId,
   fw,
   updateFw,
   fetchContent,
@@ -230,10 +234,11 @@ function AppBody({
   const handleLoginSuccess = useCallback(() => {
     if (returnTo) {
       setMode(returnTo.mode as ModeType);
-      loadStoryFm(returnTo.gameId);
+      setGameId(returnTo.gameId);
+      if (!isProd) void loadStoryFm(returnTo.gameId);
       clearReturnTo();
     }
-  }, [returnTo, clearReturnTo, setMode, loadStoryFm]);
+  }, [returnTo, clearReturnTo, setMode, setGameId, loadStoryFm]);
 
   if (!user) {
     return (

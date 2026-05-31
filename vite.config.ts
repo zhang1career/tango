@@ -6,6 +6,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import {normalizeMediaSavePath, CUSTOM_MEDIA_FS_DIR} from './src/config/media-paths';
 import { formatJsonCompact } from './src/utils/json-format';
+import { bundleStoryTwForProd } from './src/utils/bundle-game-for-prod';
 
 const DEFAULT_GAMES_BASE_PATH = 'assets/games';
 
@@ -20,6 +21,9 @@ export default defineConfig(({ mode }) => {
   const gamesBasePath = env.GAMES_BASE_PATH ?? env.VITE_GAMES_BASE_PATH ?? DEFAULT_GAMES_BASE_PATH;
   const portRaw = env.PORT ?? env.VITE_PORT;
   const port = portRaw ? (parseInt(portRaw, 10) || undefined) : undefined;
+  const baseRaw = env.VITE_BASE_PATH ?? './';
+  const base = baseRaw === './' ? './' : (baseRaw.endsWith('/') ? baseRaw : `${baseRaw}/`);
+  const isProdBuild = (env.VITE_APP_MODE?.trim() || 'dev') === 'prod';
   const cwd = process.cwd();
 
   function gamesDir(): string {
@@ -81,6 +85,9 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+  build: {
+    emptyOutDir: true,
+  },
   resolve: {
     alias: { '@': resolve(cwd, 'src') },
   },
@@ -313,23 +320,37 @@ export default defineConfig(({ mode }) => {
         const outDir = resolve(cwd, 'dist');
         const srcGamesDir = gamesDir();
         const distGamesDir = resolve(outDir, gamesBasePath);
+        if (existsSync(distGamesDir)) {
+          rmSync(distGamesDir, { recursive: true, force: true });
+        }
         mkdirSync(distGamesDir, { recursive: true });
         if (existsSync(srcGamesDir)) {
           for (const gid of readdirSync(srcGamesDir, { withFileTypes: true }).filter((d: { isDirectory: () => boolean }) => d.isDirectory()).map((d: { name: string }) => d.name)) {
             const gameSrc = resolve(srcGamesDir, gid);
             const gameDst = resolve(distGamesDir, gid);
             mkdirSync(gameDst, { recursive: true });
-            copyDirectoryRecursive(gameSrc, gameDst);
+            if (isProdBuild) {
+              writeFileSync(resolve(gameDst, 'story.tw'), bundleStoryTwForProd(gameSrc), 'utf-8');
+              const mediaSrc = resolve(gameSrc, 'media');
+              if (existsSync(mediaSrc)) {
+                copyDirectoryRecursive(mediaSrc, resolve(gameDst, 'media'));
+              }
+            } else {
+              copyDirectoryRecursive(gameSrc, gameDst);
+            }
           }
         }
         const srcCustomMediaDir = resolve(cwd, CUSTOM_MEDIA_FS_DIR);
         const distCustomMediaDir = resolve(outDir, CUSTOM_MEDIA_FS_DIR);
+        if (existsSync(distCustomMediaDir)) {
+          rmSync(distCustomMediaDir, { recursive: true, force: true });
+        }
         if (existsSync(srcCustomMediaDir)) {
           copyDirectoryRecursive(srcCustomMediaDir, distCustomMediaDir);
         }
       },
     },
   ],
-  base: './',
+  base,
   };
 });

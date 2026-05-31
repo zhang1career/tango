@@ -9,6 +9,13 @@ const env = import.meta.env;
 
 export const DEFAULT_GAME_ID = 'default';
 
+/** 构建时配置的默认游戏 ID（无 URL 参数时使用） */
+export function getConfiguredDefaultGameId(): string {
+  const envId = (env.VITE_DEFAULT_GAME_ID ?? '') as string;
+  if (envId && /^[a-zA-Z0-9_-]+$/.test(envId)) return envId;
+  return DEFAULT_GAME_ID;
+}
+
 /** 游戏数据根路径（如 assets/games），可从 VITE_GAMES_BASE_PATH 或 GAMES_BASE_PATH 配置 */
 export function getGamesBasePath(): string {
   const v = (import.meta.env.VITE_GAMES_BASE_PATH ?? import.meta.env.GAMES_BASE_PATH ?? 'assets/games') as string;
@@ -52,9 +59,9 @@ export function getPassagePageCharsMax(): number {
   return Number.isNaN(n) || n < min ? min + 200 : n;
 }
 
-/** dev: 显示编辑菜单；prod: 仅提供游戏，不提供时间线/地图/人物/事件/物品/元信息。配置 VITE_APP_MODE 或 APP_MODE */
+/** dev: 编辑菜单；prod: 仅游戏页。由 .env 或构建命令中的 VITE_APP_MODE 控制 */
 export function getAppMode(): 'dev' | 'prod' {
-  const v = (env.VITE_APP_MODE ?? env.APP_MODE ?? 'dev') as string;
+  const v = (env.VITE_APP_MODE ?? 'dev') as string;
   return v === 'prod' ? 'prod' : 'dev';
 }
 
@@ -75,8 +82,13 @@ export function getBehaviorHistoryPageSize(): number {
   return Number.isNaN(n) || n < 1 ? getBehaviorListLimit() : n;
 }
 
-function toFetchUrl(relativePath: string): string {
-  return relativePath.startsWith('/') || /^https?:\/\//i.test(relativePath) ? relativePath : `/${relativePath}`;
+/** 静态资源 fetch URL：生产环境会加上 Vite base（如 /tango/），避免子路径部署时请求到站点根目录 */
+export function toFetchUrl(relativePath: string): string {
+  if (/^https?:\/\//i.test(relativePath)) return relativePath;
+  const normalized = relativePath.replace(/^\//, '');
+  const base = import.meta.env.BASE_URL ?? '/';
+  if (base === './') return `/${normalized}`;
+  return `${base}${normalized}`.replace(/([^:]\/)\/+/g, '$1');
 }
 
 /** 人物数据请求 URL（dev 走 api，prod 走静态资源）。gameId 用于多游戏隔离 */

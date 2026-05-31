@@ -21,6 +21,10 @@ npm run dev
 
 构建：`npm run build`，预览：`npm run preview`。
 
+静态部署子路径示例：`VITE_BASE_PATH=/tango/ npm run build`，访问 `https://example.com/tango/?game=lin_zexu` 加载对应游戏。
+
+`VITE_APP_MODE=prod` 构建时，`dist/assets/games/{gameId}/` 仅包含 `story.tw`（含合并后的运行时数据）与 `media/`；编辑器用的 `story-*.json` 不会进入 dist。
+
 ## 配置
 
 `.env`：
