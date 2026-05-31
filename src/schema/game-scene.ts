@@ -93,6 +93,8 @@ export interface GameScene {
   images?: string[];
   /** 背景音乐 URL */
   backgroundMusic?: string;
+  /** 场景消息列表（标题右侧滚动展示） */
+  messages?: string[];
   /** 主线场景分出的支线选项（仅主线场景填写） */
   branchOptions?: SceneBranchOption[];
 }

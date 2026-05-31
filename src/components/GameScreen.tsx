@@ -16,14 +16,18 @@ import {
   resumeEventExecution,
   type BehaviorInteractionContext,
   type PendingEventBattle,
+  triggerSetOnRules,
 } from '@/engine';
 import type {GameCharacter} from '@/schema/game-character';
 import type {GameRule} from '@/schema/game-rule';
 import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
 import type {GameItem} from '@/schema/game-item';
+import type {GameActionRef} from '@/schema/action-ref';
 import type {SceneCharacterOverride} from '@/schema/game-scene';
-import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl, getAppMode} from '@/config';
+import type {GameScene} from '@/schema/game-scene';
+import type {JournalEntry} from '@/types';
+import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl, getScenesFetchUrl, getAppMode} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {resolveSceneIdFromPassage} from '@/utils/scene-id';
@@ -35,6 +39,7 @@ import {
 import {BattleModal, type BattleResult} from './BattleModal';
 import {BattleSettlementModal} from './BattleSettlementModal';
 import {InventoryModal} from './InventoryModal';
+import {JournalModal} from './JournalModal';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -84,16 +89,22 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const pendingBattleRef = useRef<{ charId: string; b: GameBehavior } | null>(null);
   const [featuresConfig, setFeaturesConfig] = useState<{ battle?: { backgroundMusic?: string } } | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
+  const [scenes, setScenes] = useState<GameScene[]>([]);
   const [itemCatalog, setItemCatalog] = useState<GameItem[]>([]);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [activeInventoryItemBgm, setActiveInventoryItemBgm] = useState<string | undefined>(undefined);
   const [eventPhaseReady, setEventPhaseReady] = useState(false);
   const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
   const eventPhaseRunRef = useRef<string | null>(null);
   const [eventMediaOverlay, setEventMediaOverlay] = useState<{ type: 'opening' | 'ending'; url: string; event: GameEvent } | null>(null);
   const [navWarning, setNavWarning] = useState<string | null>(null);
+  const [tickerIndex, setTickerIndex] = useState(0);
   const eventBgmRef = useRef<HTMLAudioElement | null>(null);
   const runEventPhaseRef = useRef<() => void>(() => {});
+  const journalOnceKeysRef = useRef<Set<string>>(new Set());
+  const initialSceneTriggerRef = useRef<string | null>(null);
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const passageContentRef = useRef<HTMLDivElement>(null);
@@ -118,7 +129,11 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         setCharacters(Array.isArray(meta?.characters) ? (meta.characters as GameCharacter[]) : []);
         setRules(Array.isArray(meta?.gameRules) ? (meta.gameRules as GameRule[]) : []);
         if (isProdMode) {
+          const prodScenes = Array.isArray((meta as { scenes?: unknown[] } | undefined)?.scenes)
+            ? (((meta as { scenes?: unknown[] }).scenes ?? []) as GameScene[])
+            : [];
           setEvents(Array.isArray(meta?.events) ? (meta.events as GameEvent[]) : []);
+          setScenes(prodScenes);
           setItemCatalog(Array.isArray(meta?.items) ? (meta.items as GameItem[]) : []);
           setFeaturesConfig(meta?.features ?? null);
         }
@@ -135,7 +150,53 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     };
   }, [fetchContent, isProdMode]);
 
+  const appendJournalEntry = useCallback((entry: JournalEntry, onceKey?: string) => {
+    if (onceKey && journalOnceKeysRef.current.has(onceKey)) return;
+    if (onceKey) journalOnceKeysRef.current.add(onceKey);
+    setJournalEntries((prev) => [...prev, entry]);
+  }, []);
+
+  const handleGameAction = useCallback(
+    (actionRef: GameActionRef) => {
+      if (!engine || rules.length === 0) return;
+      const s = engine.getState();
+      triggerSetOnRules({
+        actionRef,
+        rules,
+        state: {variables: s.variables, inventory: s.inventory, reputation: s.reputation},
+        applyActions: (actions) => engine.applyActions(actions),
+        appendJournal: appendJournalEntry,
+      });
+      refresh();
+    },
+    [appendJournalEntry, engine, refresh, rules]
+  );
+
+  useEffect(() => {
+    if (!engine) return;
+    return engine.onAction(handleGameAction);
+  }, [engine, handleGameAction]);
+
+  useEffect(() => {
+    if (!engine) return;
+    if (initialSceneTriggerRef.current === engine.getState().story.startPassageId) return;
+    const current = engine.getState().currentPassage;
+    const sceneId = resolveSceneIdFromPassage(current) ?? current?.id;
+    if (!sceneId) return;
+    initialSceneTriggerRef.current = engine.getState().story.startPassageId;
+    handleGameAction({type: 'scene.enter', sceneId});
+  }, [engine, handleGameAction]);
+
   // 开发模式：从独立 JSON 加载（编辑器维护）；prod 已在 story.tw StoryData 中
+  useEffect(() => {
+    if (isProdMode) return;
+    const url = getScenesFetchUrl(gameId);
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((d: unknown) => setScenes(Array.isArray(d) ? (d as GameScene[]) : []))
+      .catch(() => setScenes([]));
+  }, [gameId, isProdMode]);
+
   useEffect(() => {
     if (isProdMode) return;
     const url = getEventsFetchUrl(gameId);
@@ -283,9 +344,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
       applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine!.applyActions(a),
       usedEventIds: engine!.usedEventIds,
       usedBehaviorIds: engine!.usedBehaviorIds,
+      onAction: handleGameAction,
     };
   },
-    [engine, events, characters, rules, featuresConfig]
+    [engine, events, characters, rules, featuresConfig, handleGameAction]
   );
 
   const doExecuteEventAndMaybeEnding = useCallback(
@@ -431,7 +493,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
 
   const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
   const inventoryIds = state.inventory;
-  const showActionRow = characterIds.length > 0 || inventoryIds.length > 0;
+  const showActionRow = true;
   const showBackpack = inventoryIds.length > 0;
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
   const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
@@ -439,6 +501,41 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
 
   const currentSceneId = resolveSceneIdFromPassage(passage);
+  const sceneMetaMessages = ((passage?.metadata?.messages as string[] | undefined) ?? [])
+    .map((m) => String(m).trim())
+    .filter(Boolean);
+  const sceneJsonMessages = currentSceneId
+    ? (scenes.find((s) => s.id === currentSceneId)?.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
+    : [];
+  const sceneMessages = sceneMetaMessages.length > 0 ? sceneMetaMessages : sceneJsonMessages;
+  const sceneEventIds = ((passage?.metadata?.eventIds as string[] | undefined) ?? []).filter(Boolean);
+  const sceneEvents = sceneEventIds
+    .map((eid) => events.find((evt) => evt.id === eid))
+    .filter(Boolean) as GameEvent[];
+  const eventMessages = sceneEvents.flatMap((evt) =>
+    (evt.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
+  );
+  const hasEventContext = sceneEventIds.length > 0;
+  const tickerMessages =
+    hasEventContext
+      ? eventMessages
+      : sceneMessages;
+  const tickerText =
+    tickerMessages.length > 0
+      ? tickerMessages[tickerIndex % tickerMessages.length]
+      : '';
+
+  useEffect(() => {
+    setTickerIndex(0);
+  }, [passageId]);
+
+  useEffect(() => {
+    if (tickerMessages.length <= 1) return;
+    const timer = setInterval(() => {
+      setTickerIndex((prev) => (prev + 1) % tickerMessages.length);
+    }, 3600);
+    return () => clearInterval(timer);
+  }, [tickerMessages]);
 
   const behaviorCtx: BehaviorInteractionContext = {
     characters: activeCharacters,
@@ -454,6 +551,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     applyActions: (actions) => engine.applyActions(actions),
     usedBehaviorIds: engine.usedBehaviorIds,
     currentSceneId,
+    onAction: handleGameAction,
   };
 
   const technicalIdRe = /^ch\d+\.scene_\d+(?:\.p_\d+)?$/;
@@ -524,7 +622,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     setBehaviorList([]);
     setLastResponse(null);
     setBehaviorHistory([]);
+    setJournalEntries([]);
+    setJournalOpen(false);
     behaviorSeqRef.current = 0;
+    journalOnceKeysRef.current.clear();
     introPlayedRef.current.clear();
     engine.restart();
     refresh();
@@ -594,6 +695,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine.applyActions(a),
         usedEventIds: engine.usedEventIds,
         usedBehaviorIds: engine.usedBehaviorIds,
+        onAction: handleGameAction,
       };
       const resumeResult = resumeEventExecution(pendingEvt, result, evtCtx);
       if (!resumeResult.completed && resumeResult.pendingBattle) {
@@ -639,6 +741,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         applyActions: (actions) => engine.applyActions(actions),
         usedBehaviorIds: engine.usedBehaviorIds,
         currentSceneId: resolveSceneIdFromPassage(engine.getState().currentPassage),
+        onAction: handleGameAction,
       };
       executeBattleWriteback(bid, pending.b, result, ctx);
       refresh();
@@ -656,8 +759,23 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
 
   return (
     <div className={`game-container ${className ?? ''}`} style={styles.container}>
+      <style>{`
+        @keyframes ticker-scroll {
+          0% { transform: translateX(100%); }
+          100% { transform: translateX(-100%); }
+        }
+      `}</style>
       <header style={styles.header}>
         <h1 style={styles.title}>{readableStoryTitle}</h1>
+        <div style={styles.messageTickerWrap} aria-live="polite">
+          {tickerText ? (
+            <div style={styles.messageTickerTrack}>
+              <span style={styles.messageTickerText}>{tickerText}</span>
+            </div>
+          ) : (
+            <span style={styles.messageTickerEmpty}>当前无消息</span>
+          )}
+        </div>
       </header>
 
       {Object.keys(state.reputation).length > 0 && (
@@ -768,6 +886,14 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
                       </>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    style={styles.journalButton}
+                    onClick={() => setJournalOpen(true)}
+                  >
+                    心迹
+                    {journalEntries.length > 0 ? ` (${journalEntries.length})` : ''}
+                  </button>
                   {showBackpack && (
                     <button
                       type="button"
@@ -858,6 +984,12 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         onClose={() => setInventoryOpen(false)}
       />
 
+      <JournalModal
+        open={journalOpen}
+        entries={journalEntries}
+        onClose={() => setJournalOpen(false)}
+      />
+
       <BattleSettlementModal
         open={settlementOpen}
         result={battleResult}
@@ -878,6 +1010,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 20,
   },
   header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
     marginBottom: 16,
     paddingBottom: 12,
     borderBottom: '1px solid #333',
@@ -892,6 +1028,38 @@ const styles: Record<string, React.CSSProperties> = {
   statusLabel: {color: '#a78bfa', marginRight: 8},
   statusValue: {color: '#c4b5fd'},
   title: {fontSize: 18, color: '#e8e8e8', fontWeight: 600, margin: 0},
+  messageTickerWrap: {
+    flex: 1,
+    maxWidth: 420,
+    minWidth: 160,
+    height: 22,
+    borderRadius: 999,
+    border: '1px solid #3a3a5a',
+    backgroundColor: '#24243c',
+    padding: '0 10px',
+    overflow: 'hidden',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  messageTickerTrack: {
+    width: '100%',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+  },
+  messageTickerText: {
+    display: 'inline-block',
+    color: '#c7c7ef',
+    fontSize: 12,
+    lineHeight: '22px',
+    paddingRight: 36,
+    animation: 'ticker-scroll 12s linear infinite',
+  },
+  messageTickerEmpty: {
+    color: '#7f7faa',
+    fontSize: 12,
+    lineHeight: '22px',
+  },
   scroll: {flex: 1, overflow: 'auto', paddingBottom: 40},
   passageName: {fontSize: 14, color: '#888', marginBottom: 12},
   passageText: {fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap'},
@@ -960,6 +1128,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #444',
     borderRadius: 6,
     color: '#c4b5fd',
+    fontSize: 14,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  journalButton: {
+    padding: '6px 14px',
+    backgroundColor: '#2f2848',
+    border: '1px solid #5a4a94',
+    borderRadius: 6,
+    color: '#d7ccff',
     fontSize: 14,
     cursor: 'pointer',
     flexShrink: 0,

@@ -4,15 +4,21 @@
 
 import type {RuntimeState} from '@/types';
 
+interface StateManagerOptions {
+  onItemObtained?: (itemId: string) => void;
+}
+
 export class StateManager {
   private state: RuntimeState;
+  private options: StateManagerOptions;
 
-  constructor(initial?: Partial<RuntimeState>) {
+  constructor(initial?: Partial<RuntimeState>, options?: StateManagerOptions) {
     this.state = {
       variables: initial?.variables ?? {},
       inventory: initial?.inventory ? [...initial.inventory] : [],
       reputation: initial?.reputation ? {...initial.reputation} : {},
     };
+    this.options = options ?? {};
   }
 
   getState(): RuntimeState {
@@ -27,6 +33,7 @@ export class StateManager {
   addItem(item: string): void {
     if (!this.state.inventory.includes(item)) {
       this.state.inventory.push(item);
+      this.options.onItemObtained?.(item);
     }
   }
 

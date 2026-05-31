@@ -585,7 +585,7 @@ lzx-twine-import.zip
 
 ## 准入规则约定（`story-rules.json`）
 
-本节为上游内容生成方的**硬性契约**。约定大于实现：运行时只识别 id 为 `rule_0001` 的规则，**不会**根据 `judgeExpr` / `writebackExpr` 的语义自动匹配其他 id。
+本节为上游内容生成方的**硬性契约**。约定大于实现：`rule_0001` 承担 onlyOnce 语义；`rule_0002`（可选）承担动作触发型 setOn 语义；其余规则仅在被显式引用时生效。
 
 ### 规范定义：`rule_0001`（onlyOnce）
 
@@ -636,6 +636,81 @@ lzx-twine-import.zip
 - [ ] `judgeExpr` 精确为 `!$entity.is_used`，`writebackExpr` 精确为 `$entity.is_used = true`。
 - [ ] 未使用其他 id 承载 onlyOnce 语义。
 - [ ] 若 `story.tw` 内嵌 `gameRules`，同样包含与规范定义一致的 `rule_0001` 条目。
+
+### 规范定义：`rule_0002`（setOn）
+
+**语义**：当命中指定动作（`actionRef`）且规则条件通过时，执行“赋值 + 心迹追加”。
+
+启用约束：
+
+- 若某游戏包启用了“心迹/备忘触发写入”能力，**MUST** 在 `story-rules.json` 提供 `rule_0002`；
+- 若 `story.tw` 的 `:: StoryData` 内嵌 `gameRules`，启用该能力时 **MUST** 同步包含 `rule_0002`；
+- 若未启用该能力，可不提供 `rule_0002`。
+
+字段示例：
+
+```json
+{
+  "id": "rule_0002",
+  "name": "setOn",
+  "judgeExpr": "true",
+  "writebackExpr": "",
+  "setOn": [
+    {
+      "when": {"type": "event.complete", "eventId": "evt_08"},
+      "set": {"memo.afterHumen": true},
+      "journalAppend": {
+        "id": "memo_evt_08",
+        "title": "高光之后",
+        "content": "虎门销烟不是终局，而是战备起点。",
+        "onceKey": "memo.evt_08"
+      }
+    }
+  ]
+}
+```
+
+字段约定：
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `setOn` | 否 | 可为对象或对象数组；每项独立匹配触发 |
+| `setOn[].when` | 是 | 动作匹配器（`actionRef`） |
+| `setOn[].set` | 否 | 命中后写入变量（`Record<string, string\\|number\\|boolean>`） |
+| `setOn[].journalAppend` | 否 | 命中后追加心迹条目（对象或数组） |
+| `journalAppend.onceKey` | 否 | 幂等键；同键只追加一次 |
+
+#### `actionRef` 抽象（当前支持）
+
+| `type` | 语义 | 可选字段 |
+|--------|------|----------|
+| `scene.enter` | 进入场景 | `sceneId` |
+| `event.complete` | 事件完成 | `eventId` |
+| `behavior.execute` | 完成一次人物交互行为 | `behaviorId`, `sceneId` |
+| `item.obtain` | 获得物品 | `itemId`, `sceneId` |
+
+> 设计原则：统一动作建模，新增动作只扩展 `type`，不破坏既有规则结构。
+
+### 场景/事件消息（标题右侧滚动）
+
+为支持游戏页标题右侧单行滚动消息，新增以下可选字段：
+
+| 文件 | 字段 | 类型 |
+|------|------|------|
+| `story-scenes.json` | `scene.messages` | `string[]` |
+| `story-events.json` | `event.messages` | `string[]` |
+
+运行时优先级（严格）：
+
+1. 当前场景存在事件上下文时：**只播放事件消息**；
+2. 若该事件消息为空：**不回退场景消息**（显示“当前无消息”）；
+3. 仅当场景无事件上下文时，播放场景消息。
+
+### 心迹（Journal）入口约定
+
+- 游戏页在“攀谈”和“背包”之间提供“心迹”入口；
+- `journalAppend` 条目用于记录“人生感悟、难忘回忆、价值信条”等；
+- 推荐每条 `content` 控制在 `40-120` 字，便于回看。
 
 ## 最小可用示例（可直接作为导出参考）
 
@@ -698,3 +773,7 @@ lzx-twine-import.zip
 - [ ] 所有 `type: "ai"` 正文块已按需要填写 `wordCount`（避免“默认无限制生成”）。
 - [ ] 已根据目标体验配置分页阈值（`VITE_PASSAGE_PAGE_CHARS_MIN/MAX`）。
 - [ ] 实际产物抽检 3 个场景：无“单页超长墙文本”，每页信息点数量可控。
+- [ ] 对话信息优先放入人物 `behaviorLibrary`；正文仅保留必要叙事引语，避免大段对白混入场景主叙述。
+- [ ] 若启用 `rule_0002 setOn`，已覆盖至少一个 `actionRef` 触发并验证变量赋值生效。
+- [ ] `journalAppend` 配置了 `onceKey` 的条目，重复触发时不会重复入账。
+- [ ] 已验证消息优先级：存在事件时只播放事件消息；事件无消息时不回退场景消息。

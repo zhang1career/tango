@@ -7,6 +7,7 @@ import type {RuntimeState} from '@/types';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
 import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
+import type {GameActionRef} from '../schema/action-ref';
 import {admissionCalc} from './AdmissionCalculator';
 import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
@@ -39,6 +40,7 @@ export interface BehaviorInteractionContext {
   usedBehaviorIds: Set<string>;
   /** 当前 passage 对应的场景 id；用于 sceneIds 过滤 */
   currentSceneId?: string;
+  onAction?: (action: GameActionRef) => void;
 }
 
 function behaviorMatchesScene(behavior: GameBehavior, currentSceneId: string | undefined): boolean {
@@ -134,6 +136,11 @@ export function executeBehavior(
   });
 
   if (!passed) return { ok: false, response: UNAVAILABLE_RESPONSE };
+  ctx.onAction?.({
+    type: 'behavior.execute',
+    behaviorId,
+    sceneId: ctx.currentSceneId,
+  });
   return { ok: true, response: b.a };
 }
 

@@ -7,6 +7,7 @@ import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameCharacter} from '../schema/game-character';
 import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
 import type {GameBehavior} from '../schema/game-behavior';
+import type {GameActionRef} from '../schema/action-ref';
 import type {RuntimeState} from '@/types';
 import {admissionCalc} from './AdmissionCalculator';
 import {shouldOpenBattle, executeBattleWriteback} from './BehaviorInteraction';
@@ -26,6 +27,7 @@ export interface EventExecutionContext {
   }) => void;
   usedEventIds: Set<string>;
   usedBehaviorIds: Set<string>;
+  onAction?: (action: GameActionRef) => void;
 }
 
 function withOnlyOnceRuleIds(ruleIds: string[] | undefined): string[] {
@@ -101,6 +103,10 @@ export function executeEvent(
   }
 
   ctx.usedEventIds.add(event.id);
+  ctx.onAction?.({
+    type: 'event.complete',
+    eventId: event.id,
+  });
   return { ok: true, completed: true };
 }
 
@@ -189,5 +195,9 @@ export function resumeEventExecution(
   }
 
   ctx.usedEventIds.add(event.id);
+  ctx.onAction?.({
+    type: 'event.complete',
+    eventId: event.id,
+  });
   return { ok: true, completed: true };
 }

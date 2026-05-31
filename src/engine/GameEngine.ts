@@ -5,6 +5,7 @@
 import type {InitialRuntimeState, Passage, PassageLink, PassageStateActions, Story} from '@/types';
 import {StateManager} from './StateManager';
 import {evaluateCondition} from './ConditionEvaluator';
+import type {GameActionRef} from '@/schema/action-ref';
 
 export interface GameState {
   story: Story;
@@ -61,6 +62,7 @@ export class GameEngine {
     isEnding: boolean;
   };
   private stateManager: StateManager;
+  private actionListeners = new Set<(action: GameActionRef) => void>();
   /** 已使用的行为 id 集合，用于 onlyOnce 等准入规则 */
   usedBehaviorIds = new Set<string>();
   /** 已使用的事件 id 集合，用于事件准入（onlyOnce 等） */
@@ -76,7 +78,31 @@ export class GameEngine {
       history: [],
       isEnding: startPassage ? startPassage.links.length === 0 : false,
     };
-    this.stateManager = new StateManager(initRuntime);
+    this.stateManager = new StateManager(initRuntime, {
+      onItemObtained: (itemId) => {
+        this.emitAction({
+          type: 'item.obtain',
+          itemId,
+          sceneId: this.getCurrentSceneId(),
+        });
+      },
+    });
+  }
+
+  private getCurrentSceneId(): string | undefined {
+    const current = this.state.currentPassage;
+    const metaSceneId = current?.metadata?.['sceneId'];
+    if (typeof metaSceneId === 'string' && metaSceneId.trim()) return metaSceneId.trim();
+    return current?.id;
+  }
+
+  private emitAction(action: GameActionRef): void {
+    for (const listener of this.actionListeners) listener(action);
+  }
+
+  onAction(listener: (action: GameActionRef) => void): () => void {
+    this.actionListeners.add(listener);
+    return () => this.actionListeners.delete(listener);
   }
 
   getState(): GameState {
@@ -156,6 +182,10 @@ export class GameEngine {
     }
     this.state.currentPassage = passage;
     this.state.isEnding = passage.links.length === 0;
+    this.emitAction({
+      type: 'scene.enter',
+      sceneId: this.getCurrentSceneId(),
+    });
     return true;
   }
 
@@ -166,6 +196,10 @@ export class GameEngine {
     if (!passage) return false;
     this.state.currentPassage = passage;
     this.state.isEnding = false;
+    this.emitAction({
+      type: 'scene.enter',
+      sceneId: this.getCurrentSceneId(),
+    });
     return true;
   }
 
@@ -181,6 +215,10 @@ export class GameEngine {
     this.state.isEnding = false;
     this.usedBehaviorIds.clear();
     this.usedEventIds.clear();
+    this.emitAction({
+      type: 'scene.enter',
+      sceneId: this.getCurrentSceneId(),
+    });
   }
 
   /** 应用状态变更（供行为交互系统执行回写） */

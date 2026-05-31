@@ -22,4 +22,5 @@ export {
   type EventExecuteResult,
   type PendingEventBattle,
 } from './EventExecutor';
+export {triggerSetOnRules} from './SetOnRule';
 export {parseCascadedId} from '../utils/cascadedId';

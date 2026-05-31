@@ -281,6 +281,8 @@ export function frameworkToStory(fw: StoryFramework): Story {
     const validImages = scene.images?.filter((u) => u?.trim());
     if (validImages?.length) metadata.images = validImages.map((u) => u.trim());
     if (scene.backgroundMusic) metadata.backgroundMusic = scene.backgroundMusic;
+    const sceneMessages = scene.messages?.map((m) => m?.trim()).filter(Boolean) as string[] | undefined;
+    if (sceneMessages?.length) metadata.messages = sceneMessages;
     if (terminalFailure) {
       metadata.branchTerminal = true;
       const failureBgm = fw.features?.branchFailureEnding?.backgroundMusic?.trim();
@@ -378,6 +380,10 @@ export function frameworkToStory(fw: StoryFramework): Story {
     reputation: (fw.initialState as { reputation?: Record<string, number> })?.reputation ?? {},
     characters: fw.characters ?? [],
     gameRules: fw.gameRules ?? [],
+    events: fw.events ?? [],
+    scenes: fw.scenes ?? [],
+    items: fw.items ?? [],
+    features: fw.features ?? null,
   };
 
   return {
