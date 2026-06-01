@@ -328,6 +328,23 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const sceneCharacterOverrides = (passage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined;
   const activeCharacters = applySceneOverridesToCharacters(characters, sceneCharacterOverrides);
 
+  const currentSceneId = resolveSceneIdFromPassage(passage);
+  const sceneMetaMessages = ((passage?.metadata?.messages as string[] | undefined) ?? [])
+    .map((m) => String(m).trim())
+    .filter(Boolean);
+  const sceneJsonMessages = currentSceneId
+    ? (scenes.find((s) => s.id === currentSceneId)?.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
+    : [];
+  const sceneMessages = sceneMetaMessages.length > 0 ? sceneMetaMessages : sceneJsonMessages;
+  const sceneEventIds = ((passage?.metadata?.eventIds as string[] | undefined) ?? []).filter(Boolean);
+  const sceneEvents = sceneEventIds
+    .map((eid) => events.find((evt) => evt.id === eid))
+    .filter(Boolean) as GameEvent[];
+  const eventMessages = sceneEvents.flatMap((evt) =>
+    (evt.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
+  );
+  const tickerMessages = sceneEventIds.length > 0 ? eventMessages : sceneMessages;
+
   const buildEvtCtx = useCallback(
     () => {
       const currentPassage = engine?.getState()?.currentPassage ?? null;
@@ -466,6 +483,18 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     runEventPhase();
   }, [passageId, introVisible, runEventPhase]);
 
+  useEffect(() => {
+    setTickerIndex(0);
+  }, [passageId]);
+
+  useEffect(() => {
+    if (tickerMessages.length <= 1) return;
+    const timer = setInterval(() => {
+      setTickerIndex((prev) => (prev + 1) % tickerMessages.length);
+    }, 3600);
+    return () => clearInterval(timer);
+  }, [tickerMessages]);
+
   if (loading) {
     return (
       <div className={`game-container ${className ?? ''}`} style={styles.container}>
@@ -500,42 +529,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
   const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
 
-  const currentSceneId = resolveSceneIdFromPassage(passage);
-  const sceneMetaMessages = ((passage?.metadata?.messages as string[] | undefined) ?? [])
-    .map((m) => String(m).trim())
-    .filter(Boolean);
-  const sceneJsonMessages = currentSceneId
-    ? (scenes.find((s) => s.id === currentSceneId)?.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
-    : [];
-  const sceneMessages = sceneMetaMessages.length > 0 ? sceneMetaMessages : sceneJsonMessages;
-  const sceneEventIds = ((passage?.metadata?.eventIds as string[] | undefined) ?? []).filter(Boolean);
-  const sceneEvents = sceneEventIds
-    .map((eid) => events.find((evt) => evt.id === eid))
-    .filter(Boolean) as GameEvent[];
-  const eventMessages = sceneEvents.flatMap((evt) =>
-    (evt.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
-  );
-  const hasEventContext = sceneEventIds.length > 0;
-  const tickerMessages =
-    hasEventContext
-      ? eventMessages
-      : sceneMessages;
   const tickerText =
     tickerMessages.length > 0
       ? tickerMessages[tickerIndex % tickerMessages.length]
       : '';
-
-  useEffect(() => {
-    setTickerIndex(0);
-  }, [passageId]);
-
-  useEffect(() => {
-    if (tickerMessages.length <= 1) return;
-    const timer = setInterval(() => {
-      setTickerIndex((prev) => (prev + 1) % tickerMessages.length);
-    }, 3600);
-    return () => clearInterval(timer);
-  }, [tickerMessages]);
 
   const behaviorCtx: BehaviorInteractionContext = {
     characters: activeCharacters,
@@ -760,9 +757,15 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   return (
     <div className={`game-container ${className ?? ''}`} style={styles.container}>
       <style>{`
-        @keyframes ticker-scroll {
-          0% { transform: translateX(100%); }
-          100% { transform: translateX(-100%); }
+        @keyframes ticker-slide-up {
+          from {
+            transform: translateY(100%);
+            opacity: 0.4;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
         }
       `}</style>
       <header style={styles.header}>
@@ -770,7 +773,9 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         <div style={styles.messageTickerWrap} aria-live="polite">
           {tickerText ? (
             <div style={styles.messageTickerTrack}>
-              <span style={styles.messageTickerText}>{tickerText}</span>
+              <span key={tickerIndex} style={styles.messageTickerText}>
+                {tickerText}
+              </span>
             </div>
           ) : (
             <span style={styles.messageTickerEmpty}>当前无消息</span>
@@ -1034,7 +1039,6 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 160,
     height: 22,
     borderRadius: 999,
-    border: '1px solid #3a3a5a',
     backgroundColor: '#24243c',
     padding: '0 10px',
     overflow: 'hidden',
@@ -1044,16 +1048,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   messageTickerTrack: {
     width: '100%',
+    height: '100%',
     overflow: 'hidden',
-    whiteSpace: 'nowrap',
+    position: 'relative',
   },
   messageTickerText: {
-    display: 'inline-block',
+    display: 'block',
+    width: '100%',
     color: '#c7c7ef',
     fontSize: 12,
     lineHeight: '22px',
-    paddingRight: 36,
-    animation: 'ticker-scroll 12s linear infinite',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    animation: 'ticker-slide-up 0.45s ease-out',
   },
   messageTickerEmpty: {
     color: '#7f7faa',

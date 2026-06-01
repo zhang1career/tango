@@ -46,17 +46,17 @@ export function getAIGCApiUrl(): string {
   return env.AIGC_API_URL ?? env.VITE_AIGC_API_URL ?? '';
 }
 
-/** 剧情生成自动分页：每页最少字数 */
+/** 剧情生成自动分页：每页最少字数（默认轻量互动 160） */
 export function getPassagePageCharsMin(): number {
   const n = Number(env.VITE_PASSAGE_PAGE_CHARS_MIN);
-  return Number.isNaN(n) || n < 1 ? 300 : n;
+  return Number.isNaN(n) || n < 1 ? 160 : n;
 }
 
-/** 剧情生成自动分页：每页最多字数 */
+/** 剧情生成自动分页：每页最多字数（默认轻量互动 220） */
 export function getPassagePageCharsMax(): number {
   const n = Number(env.VITE_PASSAGE_PAGE_CHARS_MAX);
   const min = getPassagePageCharsMin();
-  return Number.isNaN(n) || n < min ? min + 200 : n;
+  return Number.isNaN(n) || n < min ? min + 60 : n;
 }
 
 /** dev: 编辑菜单；prod: 仅游戏页。由 .env 或构建命令中的 VITE_APP_MODE 控制 */

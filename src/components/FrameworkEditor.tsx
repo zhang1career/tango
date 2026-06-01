@@ -25,6 +25,18 @@ import {
   collectSceneFullText,
 } from '../utils/scene-passage-text';
 import {collectPrecedingRawTexts, stripAiTextOverlappingRaw} from '../utils/strip-ai-raw-overlap';
+import {
+  AI_WORD_COUNT_MAX,
+  AI_WORD_COUNT_MIN,
+  DEFAULT_AI_WORD_COUNT,
+  addAiBlock,
+  formatAiWordCountPrompt,
+  getAiBlocks,
+  getLeadingRawBlock,
+  removeAiBlock,
+  upsertAiBlock,
+  upsertLeadingRaw,
+} from '../utils/passage-blocks';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
 type ImportZipFile = {path: string; contentBase64: string};
@@ -118,6 +130,97 @@ function truncatePathForDisplay(name: string, maxLen = 28): string {
 
 function getScenePassageBlocks(scene: GameScene): ScenePassageBlock[] {
   return Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
+}
+
+function ScenePassageBlocksEditor({
+  scene,
+  onUpdateScene,
+}: {
+  scene: GameScene;
+  onUpdateScene: (fn: (s: GameScene) => GameScene) => void;
+}) {
+  const leadingRaw = getLeadingRawBlock(scene);
+  const aiBlocks = getAiBlocks(scene);
+
+  return (
+    <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+      <div>
+        <label style={{...styles.label, display: 'block', marginBottom: 6}}>
+          [raw] 定调 / 史料（passageBlocks[0]，单块宜 ≤{AI_WORD_COUNT_MAX} 字）
+        </label>
+        <textarea
+          value={leadingRaw?.text ?? ''}
+          onChange={(e) => onUpdateScene((s) => upsertLeadingRaw(s, e.target.value))}
+          style={{...styles.input, ...styles.textarea, minHeight: 72}}
+          placeholder="本场景唯一 leading raw"
+        />
+      </div>
+      {aiBlocks.map((block, aiIndex) => (
+        <div
+          key={`${scene.id}-ai-${aiIndex}`}
+          style={{border: '1px solid #444', borderRadius: 6, padding: 10}}
+        >
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
+            <span style={{fontSize: 13, color: '#bbb'}}>AI 块 {aiIndex + 1}</span>
+            {aiBlocks.length > 1 && (
+              <button
+                type="button"
+                style={styles.btnSmall}
+                onClick={() => onUpdateScene((s) => removeAiBlock(s, aiIndex))}
+              >
+                删除此 AI 块
+              </button>
+            )}
+          </div>
+          <label style={{...styles.label, display: 'block', marginBottom: 4}}>summary</label>
+          <textarea
+            value={block.summary ?? ''}
+            onChange={(e) =>
+              onUpdateScene((s) =>
+                upsertAiBlock(s, aiIndex, (b) => ({...b, summary: e.target.value}))
+              )
+            }
+            style={{...styles.input, ...styles.textarea, minHeight: 56, marginBottom: 8}}
+          />
+          <label style={{...styles.label, display: 'block', marginBottom: 4}}>hints（可选）</label>
+          <input
+            value={block.hints ?? ''}
+            onChange={(e) =>
+              onUpdateScene((s) =>
+                upsertAiBlock(s, aiIndex, (b) => ({
+                  ...b,
+                  hints: e.target.value.trim() || undefined,
+                }))
+              )
+            }
+            style={{...styles.input, marginBottom: 8}}
+          />
+          <label style={{...styles.label, display: 'block', marginBottom: 4}}>
+            wordCount 上限（{AI_WORD_COUNT_MIN}–{AI_WORD_COUNT_MAX}）
+          </label>
+          <input
+            type="number"
+            min={AI_WORD_COUNT_MIN}
+            max={AI_WORD_COUNT_MAX}
+            value={block.wordCount ?? DEFAULT_AI_WORD_COUNT}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              onUpdateScene((s) =>
+                upsertAiBlock(s, aiIndex, (b) => ({
+                  ...b,
+                  wordCount: Number.isNaN(n) ? DEFAULT_AI_WORD_COUNT : n,
+                }))
+              );
+            }}
+            style={{...styles.input, width: 120}}
+          />
+        </div>
+      ))}
+      <button type="button" style={styles.btnSmall} onClick={() => onUpdateScene(addAiBlock)}>
+        + 添加 AI 块
+      </button>
+    </div>
+  );
 }
 
 function escapeHtml(text: string): string {
@@ -452,20 +555,22 @@ async function generateAiPassageBlockText(
 - 创作可能性资源：用于提供可引用的素材池（故事背景、章节事件、人物资源字典等），可以引用但不是必须全部使用。
 - behaviorLibraryPreview 是玩家互动对话素材，不要把其中的 q/a 原文嵌入 passage 正文。
 - 创作范围约束：用于限定事实边界（写作规则、章节标题/主题、前序场景摘要、当前块 summary 等），必须优先服从。
-- 场景中 type=raw 的正文块会原样插入成稿并与 AI 块拼接展示。读者已能看到这些 raw 原文，AI 正文严禁复述、摘抄或同义改写 raw 内容。
+- 场景中 type=raw 的正文块会原样插入成稿并与 AI 块拼接展示。读者已能看到这些 raw 原文，AI 正文严禁复述、摘抄或同义改写 raw 内容；尤其不得重复 raw 中已有的对白、诏书原句、史料摘录。
 
-输出必须包含三类内容：
-1. 人物对话：角色之间的对白，用引号标出
-2. 旁白：叙述者视角的交代与说明
-3. 描写性文字：场景、动作、心理等细节描写
+文风（必须遵守）：
+- 以白描为主：场景、动作、体感、心理承载情绪与背景；节奏适中，既不要快剪流水账，也不要长篇议论。
+- 旁白与描写优先；完整问答、可反复阅读的角色台词应留给玩家互动层，不要写进 passage。
+- 对白宜少：默认不写对白；仅当 summary 明确要求出现某句关键台词时，才可写少量对白（通常不超过 2 轮一问一答）。
+- 若必须写对白：每一句发言单独成行（问一行、答一行），不要把多轮对话挤在同一段；引号内为原话。
 
 硬性约束（必须遵守）：
 - 以 summary 的事实为主干，只能在其范围内做细节补全，不得改写核心事实。
-- 只扩写本块 summary：用对话、旁白、描写补足细节，从 summary 的新角度切入，不要重述 raw 已写过的句子。
+- 只扩写本块 summary：用旁白、描写补足细节，从 summary 的新角度切入，不要重述 raw 已写过的句子。
 - 正文开头不得复用 raw 原文的首句、关键短语或史料摘录。
 - 不得新增 summary 未出现且上下文也未出现的关键设定（新人物、新地点、新组织、新事件主线、新世界观规则）。
 - 允许补充少量过渡句、动作细节、情绪描写，但不得引入会改变剧情走向的新信息。
 - 若 summary 信息不足，优先保守表达，不要臆造。
+- 若提供了字数要求，全文不得超过该字数（含标点）。
 
 写作规则：${rules || '- 简洁有力，适合文字冒险'}
 
@@ -484,11 +589,11 @@ ${aiCtx.constraintContext}
 正文块：第 ${blockIndex + 1} 块 / AI 生成
 场景概要（最高优先级，必须严格围绕此内容扩写）：${block.summary}
 ${block.hints ? `写作提示：${block.hints}` : ''}
-${block.wordCount != null && block.wordCount > 0 ? `字数要求：约${block.wordCount}字` : ''}
+${formatAiWordCountPrompt(block)}
 
-重要：本场景已有 ${precedingRawTexts.length} 段 raw 原文展示在本 AI 块之前。只做 summary 的增量扩写，不要重复 raw 原文，也不要从 raw 首句起笔。
+重要：本场景已有 ${precedingRawTexts.length} 段 raw 原文展示在本 AI 块之前。只做 summary 的增量扩写，不要重复 raw 原文（尤其不要重复 raw 中的对白），也不要从 raw 首句起笔。
 
-请生成该场景的剧情正文（须包含人物对话、旁白、描写性文字；且仅做有限演义扩写）：`;
+请生成该场景的剧情正文（白描为主，旁白与描写优先，对白极少且须分行；仅做有限演义扩写）：`;
 
   const res = await fetch(`${apiUrl}/chat/completions`, {
     method: 'POST',
@@ -1610,7 +1715,7 @@ function ChapterBlock({
       {isExpanded && (
         <div style={styles.chapterBody}>
           <div style={styles.row}>
-            <label style={styles.label}>标题</label>
+            <label style={styles.label}>治理标题（仅编辑/治理用，建议与地图节点 name 一致）</label>
             <input
               type="text"
               value={ch.title}
@@ -1618,7 +1723,7 @@ function ChapterBlock({
                 updateChapter((c) => ({...c, title: e.target.value}))
               }
               style={{...styles.input, flex: 1}}
-              placeholder="章节标题"
+              placeholder="如：福州·夜雨（勿写「第一章：…」长标题）"
             />
           </div>
           <div style={styles.row}>
@@ -1634,7 +1739,7 @@ function ChapterBlock({
             />
           </div>
           <div style={styles.row}>
-            <label style={styles.label}>起点（地图节点）</label>
+            <label style={styles.label}>起始地图节点（本章剧情发生地）</label>
             <select
               value={ch.startMapNodeId ?? ''}
               onChange={(e) =>
@@ -1651,7 +1756,7 @@ function ChapterBlock({
             </select>
           </div>
           <div style={styles.row}>
-            <label style={styles.label}>终点（地图节点）</label>
+            <label style={styles.label}>终止地图节点（本章结束后玩家可前往）</label>
             <select
               value={ch.endMapNodeId ?? ''}
               onChange={(e) =>
@@ -1735,20 +1840,15 @@ function ChapterBlock({
                 </div>
                 {isEntryExpanded && (
                   <div style={styles.sceneBody}>
-                    <div style={styles.row}>
-                      <label style={styles.label}>场景正文块（story-scenes.json {'>'} passageBlocks）</label>
-                      <div style={{...styles.input, minHeight: 90, whiteSpace: 'pre-wrap', lineHeight: 1.5}}>
-                        {scene
-                          ? getScenePassageBlocks(scene).map((block, idx) => (
-                            <div key={`${scene.id}-block-${idx}`}>
-                              {block.type === 'raw'
-                                ? `[${idx + 1}] raw: ${(block.text ?? '').slice(0, 80)}`
-                                : `[${idx + 1}] ai: ${(block.summary ?? '').slice(0, 80)}`}
-                            </div>
-                          ))
-                          : '-'}
+                    {scene && (
+                      <div style={styles.row}>
+                        <label style={styles.label}>正文块（story-scenes.json {'>'} passageBlocks）</label>
+                        <ScenePassageBlocksEditor
+                          scene={scene}
+                          onUpdateScene={(fn) => updateScene(scene.id, fn)}
+                        />
                       </div>
-                    </div>
+                    )}
                     <div style={styles.row}>
                       <label style={styles.label}>生成正文（story.tw，多页自动合并编辑，保存时重新分页）</label>
                       <div style={{display: 'flex', gap: 8, marginBottom: 8}}>

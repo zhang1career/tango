@@ -31,14 +31,15 @@ export interface SceneEntry {
   compiledFingerprint?: string;
 }
 
-/** 章节：可选的逻辑分组 */
+/** 章节：地图节点级叙事单元（title 仅治理用，宜与 maps.nodes[].name 一致） */
 export interface FrameworkChapter {
   id: string;
+  /** 仅编辑/治理用，建议与 story-maps.json 节点 name 同步，勿用「第×章」长标题 */
   title: string;
   theme?: string;
-  /** 章节起点的地图节点 id */
+  /** 本章剧情发生地（地图节点 id） */
   startMapNodeId?: string;
-  /** 章节终点的地图节点 id */
+  /** 本章结束后玩家可前往的地图节点 id（须与 start 不同） */
   endMapNodeId?: string;
   /** 本章节采用的场景（多选，每项可配准入规则和规则引用） */
   sceneEntries: SceneEntry[];
@@ -107,7 +108,10 @@ export function migrateFramework(parsed: StoryFramework): void {
           scenes.push({
             id: s.id,
             name: s.name ?? s.id,
-            passageBlocks: [{type: 'ai', summary: s.summary ?? ''}],
+            passageBlocks: [
+              {type: 'raw', text: ''},
+              {type: 'ai', summary: s.summary ?? '', wordCount: 200},
+            ],
           });
           sceneMap.set(s.id, scenes[scenes.length - 1]);
         }
@@ -120,6 +124,12 @@ export function migrateFramework(parsed: StoryFramework): void {
       if (seen.has(e.sceneId)) return false;
       seen.add(e.sceneId);
       return true;
+    });
+    ch.sceneEntries = ch.sceneEntries.map((e) => {
+      const legacy = e as SceneEntry & { wordCount?: number };
+      if (legacy.wordCount === undefined) return e;
+      const {wordCount: _wc, ...rest} = legacy;
+      return rest;
     });
   }
   parsed.scenes = scenes;
@@ -174,6 +184,11 @@ export function validateFramework(fw: StoryFramework): { valid: boolean; errors:
   const sceneIds = new Set((fw.scenes ?? []).map((s) => s.id));
   const errors: string[] = [];
   for (const ch of fw.chapters ?? []) {
+    if (ch.startMapNodeId && ch.endMapNodeId && ch.startMapNodeId === ch.endMapNodeId) {
+      errors.push(
+        `章节 "${ch.title}" 的 startMapNodeId 与 endMapNodeId 不能相同（${ch.startMapNodeId}）`
+      );
+    }
     for (const entry of ch.sceneEntries ?? []) {
       if (!sceneIds.has(entry.sceneId)) {
         errors.push(`章节 "${ch.title}" 引用了不存在的场景: ${entry.sceneId}`);

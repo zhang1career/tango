@@ -13,39 +13,23 @@ import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {AttributeValuesCard} from './cards/AttributeValuesCard';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {MediaUrlField} from './ui/MediaFields';
-import {SceneBackgroundImageField, SceneBackgroundMusicField} from './ui/SceneMediaFields';
-import type {SceneMediaPromptContext} from '../utils/scene-media-prompt';
-import {buildSceneMediaPromptContext} from '../utils/scene-media-prompt';
+import {defaultSceneBgmSavePath, defaultSceneImageSavePath} from '@/config/media-paths';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
-
-function getFirstAiBlock(scene: GameScene): {summary: string; hints?: string; wordCount?: number} | null {
-  const blocks = Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
-  const block = blocks.find((it) => it.type === 'ai');
-  return block && block.type === 'ai' ? block : null;
-}
-
-function upsertFirstAiBlock(
-  scene: GameScene,
-  patch: (block: {type: 'ai'; summary: string; hints?: string; wordCount?: number}) => {
-    type: 'ai';
-    summary: string;
-    hints?: string;
-    wordCount?: number;
-  }
-): GameScene {
-  const blocks = Array.isArray(scene.passageBlocks) ? [...scene.passageBlocks] : [];
-  const index = blocks.findIndex((it) => it.type === 'ai');
-  if (index >= 0) {
-    const existing = blocks[index];
-    if (existing.type === 'ai') blocks[index] = patch(existing);
-  } else {
-    blocks.push(patch({type: 'ai', summary: ''}));
-  }
-  return {...scene, passageBlocks: blocks};
-}
+import {
+  AI_WORD_COUNT_MAX,
+  AI_WORD_COUNT_MIN,
+  DEFAULT_AI_WORD_COUNT,
+  addAiBlock,
+  defaultPassageBlocks,
+  getAiBlocks,
+  getLeadingRawBlock,
+  removeAiBlock,
+  upsertAiBlock,
+  upsertLeadingRaw,
+} from '../utils/passage-blocks';
 
 function FieldRow({
                     label,
@@ -94,8 +78,6 @@ async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok
 type SceneFormProps = {
   scene: GameScene;
   editable: boolean;
-  gameId: string;
-  mediaPromptContext: SceneMediaPromptContext;
   attributeDefs: import('../schema/metadata').CharacterAttributeDef[];
   items: import('../schema/game-item').GameItem[];
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
@@ -109,8 +91,6 @@ type SceneFormProps = {
 function SceneFormContent({
                             scene,
                             editable,
-                            gameId,
-                            mediaPromptContext,
                             attributeDefs,
                             items,
                             mapNodeIds,
@@ -119,7 +99,8 @@ function SceneFormContent({
                             ruleIds: ruleList,
                             onUpdate,
                           }: SceneFormProps) {
-  const firstAi = getFirstAiBlock(scene);
+  const leadingRaw = getLeadingRawBlock(scene);
+  const aiBlocks = getAiBlocks(scene);
   const overrideMap = scene.characterOverrides ?? {};
   const overrideCharacterIds = Object.keys(overrideMap);
   const toBehaviorId = (charId: string) =>
@@ -161,26 +142,80 @@ function SceneFormContent({
           placeholder="市集"
         />
       </FieldRow>
-      <FieldRow label="AI 概要（第一个 ai 块）" value={firstAi?.summary ?? ''} editable={editable && !!onUpdate}>
+      <FieldRow
+        label="定调 / 史料（leading raw）"
+        value={leadingRaw?.text ?? ''}
+        editable={editable && !!onUpdate}
+      >
         <textarea
-          value={firstAi?.summary ?? ''}
-          onChange={(e) => onUpdate!((s) => upsertFirstAiBlock(s, (block) => ({...block, summary: e.target.value})))}
-          style={{...styles.input, ...styles.textarea, minHeight: 60}}
-          placeholder="该场景第一个 AI 块的概要"
+          value={leadingRaw?.text ?? ''}
+          onChange={(e) => onUpdate!((s) => upsertLeadingRaw(s, e.target.value))}
+          style={{...styles.input, ...styles.textarea, minHeight: 72}}
+          placeholder="本场景唯一 raw 块"
         />
       </FieldRow>
-      <FieldRow label="写作提示（第一个 ai 块）" value={firstAi?.hints ?? ''} editable={editable && !!onUpdate}>
-        <input
-          value={firstAi?.hints ?? ''}
-          onChange={(e) =>
-            onUpdate!((s) =>
-              upsertFirstAiBlock(s, (block) => ({...block, hints: e.target.value || undefined}))
-            )
-          }
-          style={styles.input}
-          placeholder="可选"
-        />
-      </FieldRow>
+
+      {aiBlocks.map((block, aiIndex) => (
+        <div key={`ai-${aiIndex}`} style={{marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6}}>
+          <div style={{fontSize: 13, color: '#bbb', marginBottom: 8}}>AI 块 {aiIndex + 1}</div>
+          <FieldRow label="summary" value={block.summary} editable={editable && !!onUpdate}>
+            <textarea
+              value={block.summary ?? ''}
+              onChange={(e) =>
+                onUpdate!((s) => upsertAiBlock(s, aiIndex, (b) => ({...b, summary: e.target.value})))
+              }
+              style={{...styles.input, ...styles.textarea, minHeight: 56}}
+            />
+          </FieldRow>
+          <FieldRow label="hints" value={block.hints ?? ''} editable={editable && !!onUpdate}>
+            <input
+              value={block.hints ?? ''}
+              onChange={(e) =>
+                onUpdate!((s) =>
+                  upsertAiBlock(s, aiIndex, (b) => ({
+                    ...b,
+                    hints: e.target.value.trim() || undefined,
+                  }))
+                )
+              }
+              style={styles.input}
+              placeholder="可选"
+            />
+          </FieldRow>
+          <FieldRow
+            label={`wordCount（${AI_WORD_COUNT_MIN}–${AI_WORD_COUNT_MAX}）`}
+            value={String(block.wordCount ?? DEFAULT_AI_WORD_COUNT)}
+            editable={editable && !!onUpdate}
+          >
+            <input
+              type="number"
+              min={AI_WORD_COUNT_MIN}
+              max={AI_WORD_COUNT_MAX}
+              value={block.wordCount ?? DEFAULT_AI_WORD_COUNT}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                onUpdate!((s) =>
+                  upsertAiBlock(s, aiIndex, (b) => ({
+                    ...b,
+                    wordCount: Number.isNaN(n) ? DEFAULT_AI_WORD_COUNT : n,
+                  }))
+                );
+              }}
+              style={{...styles.input, width: 120}}
+            />
+          </FieldRow>
+          {editable && onUpdate && aiBlocks.length > 1 && (
+            <button type="button" style={styles.btnSmall} onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}>
+              删除此 AI 块
+            </button>
+          )}
+        </div>
+      ))}
+      {editable && onUpdate && (
+        <button type="button" style={{...styles.btnSmall, marginBottom: 12}} onClick={() => onUpdate(addAiBlock)}>
+          + 添加 AI 块
+        </button>
+      )}
 
       <div style={styles.row}>
         <label style={styles.label}>关联地图节点</label>
@@ -580,20 +615,18 @@ function SceneFormContent({
         onChange={(v) => onUpdate?.((s) => ({...s, openingAnimation: v}))}
         editable={editable && !!onUpdate}
       />
-      <SceneBackgroundImageField
-        scene={scene}
-        promptContext={mediaPromptContext}
-        gameId={gameId}
-        value={scene.images}
-        onChange={(v) => onUpdate?.((s) => ({...s, images: v?.length ? v : undefined}))}
+      <MediaUrlField
+        label="配图"
+        value={scene.images?.[0]}
+        onChange={(v) => onUpdate?.((s) => ({...s, images: v ? [v] : undefined}))}
+        placeholder={defaultSceneImageSavePath(scene.id)}
         editable={editable && !!onUpdate}
       />
-      <SceneBackgroundMusicField
-        scene={scene}
-        promptContext={mediaPromptContext}
-        gameId={gameId}
+      <MediaUrlField
+        label="背景音乐"
         value={scene.backgroundMusic}
         onChange={(v) => onUpdate?.((s) => ({...s, backgroundMusic: v}))}
+        placeholder={defaultSceneBgmSavePath(scene.id)}
         editable={editable && !!onUpdate}
       />
     </div>
@@ -669,11 +702,11 @@ export function SceneEditor({
   const [newScene, setNewScene] = useState<GameScene>(() => ({
     id: `scene_${Date.now()}`,
     name: '新场景',
-    passageBlocks: [{type: 'ai', summary: ''}],
+    passageBlocks: defaultPassageBlocks(),
   }));
 
   const openAddModal = () => {
-    setNewScene({id: `scene_${Date.now()}`, name: '新场景', passageBlocks: [{type: 'ai', summary: ''}]});
+    setNewScene({id: `scene_${Date.now()}`, name: '新场景', passageBlocks: defaultPassageBlocks()});
     setAddModalOpen(true);
   };
 
@@ -701,16 +734,6 @@ export function SceneEditor({
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
-
-  const mediaContextOptions = {
-    storyBackground: fw.background,
-    writingRules: fw.rules,
-    mapNodeIds,
-    characters: fw.characters ?? [],
-    events: fw.events ?? [],
-  };
-  const buildMediaCtx = (scene: GameScene): SceneMediaPromptContext =>
-    buildSceneMediaPromptContext(scene, mediaContextOptions);
 
   return (
     <div style={styles.container}>
@@ -760,8 +783,6 @@ export function SceneEditor({
           <SceneFormContent
             scene={scenes[detailIndex]}
             editable={false}
-            gameId={gameId}
-            mediaPromptContext={buildMediaCtx(scenes[detailIndex])}
             attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
@@ -783,8 +804,6 @@ export function SceneEditor({
           <SceneFormContent
             scene={scenes[editIndex]}
             editable={true}
-            gameId={gameId}
-            mediaPromptContext={buildMediaCtx(scenes[editIndex])}
             attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}
@@ -807,8 +826,6 @@ export function SceneEditor({
           <SceneFormContent
             scene={newScene}
             editable={true}
-            gameId={gameId}
-            mediaPromptContext={buildMediaCtx(newScene)}
             attributeDefs={attributeDefs}
             items={items}
             mapNodeIds={mapNodeIds}

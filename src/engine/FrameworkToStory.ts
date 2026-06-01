@@ -323,11 +323,6 @@ export function frameworkToStory(fw: StoryFramework): Story {
     }
 
     if (!ch.endMapNodeId || !nextCh.startMapNodeId) continue;
-    if (chapterLast.scene.mapNodeId !== ch.endMapNodeId) {
-      throw new Error(
-        `章节 ${ch.id} 的最后一个主线场景 ${chapterLast.scene.id} 的 mapNodeId(${String(chapterLast.scene.mapNodeId ?? '')}) 必须等于 endMapNodeId(${ch.endMapNodeId})`
-      );
-    }
     const nextMainline = chapterMainlineEntries.get(ci + 1) ?? [];
     const nextStart = nextMainline.find((x) => x.scene.mapNodeId === nextCh.startMapNodeId);
     if (!nextStart) {

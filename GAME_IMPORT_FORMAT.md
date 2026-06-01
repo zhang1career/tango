@@ -166,66 +166,99 @@ lzx-twine-import.zip
 - zip 中识别出的游戏目录名必须合法：`^[a-zA-Z0-9_-]+$`。
 - 导入会覆盖（重建）目标目录，请先备份。
 
-## 地图节点与场景绑定（默认游戏参考）
+## 章节、地图节点与场景（推荐模型）
 
-当前版本中，**主线场景顺序默认由 `story-fm.json > chapters[].sceneEntries[]` 的顺序驱动**，不再按 `story-maps.json > edges` 自动生成章内跳转。
+运行时玩家**不看到「章节」标题**，只会经历地图节点与分页后的 passage。`story-fm.json > chapters[]` 与编辑器「剧情 → 章节」主要用于**治理与编排**；推荐按**地图节点**拆章，减轻文字墙并便于分块编辑。
 
-上游录入时，核心是把这三层数据对齐：
+### 三层关系
 
-1. **场景落点（scene -> map node）**
-   - 文件：`story-scenes.json`
-   - 字段：`scene.mapNodeId`
-   - 含义：该场景发生在哪个地图节点。
+| 层级 | 文件 | 含义 |
+|------|------|------|
+| **章节** | `story-fm.json > chapters[]` | 一段可游玩的叙事单元；由 `startMapNodeId` / `endMapNodeId` 界定在地图上的起止 |
+| **场景** | `story-scenes.json` + `chapters[].sceneEntries[]` | 章内叙事节拍；顺序由 `sceneEntries` 决定 |
+| **正文块** | `scene.passageBlocks[]` | 导出时拼接为单个 passage，再按现有规则自动分页（`.p_100`…） |
 
-2. **地图连通（map node -> map node）**
-   - 文件：`story-maps.json`
-   - 字段：`map.edges[].from / to / displayText / condition`
-   - 含义：章节边界（跨章）可选校验关系，不再作为章内主线导航来源。
+### 章节与地图节点（`story-fm.json`）
 
-3. **章节使用的场景集合**
-   - 文件：`story-fm.json`
-   - 字段：`chapters[].sceneEntries[].sceneId`
-   - 含义：同一个章节内主线场景的实际播放顺序来源。
+- **推荐**：**一个地图节点对应一个章节**（含子节点如 `n02a`、`n03a` 亦**独立成章**）。
+- `chapters[].title`：**仅编辑/治理用**，建议与 `story-maps.json > nodes[].name` **完全一致**（如 `福州·夜雨`）。**不要**写「第一章：寒门与入局」等长标题，避免编辑菜单噪音。
+- `startMapNodeId`：本章剧情**发生地**（玩家在本章内主要停留的节点）。
+- `endMapNodeId`：本章**结束后**玩家可前往的地图节点（通常为沿地图主路径的下一节点）。
+- **MUST**：若同时填写 `startMapNodeId` 与 `endMapNodeId`，二者**不得相同**（否则无法表达「结束后前往下一节点」）。
+- `sceneEntries[]`：仅含 `sceneId`、可选 `ruleIds`、可选 `compiledFingerprint`。**不要**再填写已废弃的 `wordCount` 字段。
+
+`sceneEntries` 示例：
+
+```json
+{
+  "id": "ch_n02a",
+  "title": "京师·宣南",
+  "theme": "宣南消寒",
+  "startMapNodeId": "n02a",
+  "endMapNodeId": "n03",
+  "sceneEntries": [
+    {"sceneId": "scene_1015"},
+    {"sceneId": "scene_1015_b1"}
+  ]
+}
+```
+
+### 场景与地图节点（`story-scenes.json`）
+
+- `scene.mapNodeId`：场景叙事落点；**不强制**与章内其他 scene 相同，但实践中**一般与**该章 `startMapNodeId` **一致**。
+- 章内主线顺序以 `sceneEntries` 为准，**不要**用地图边表达章内「继续」。
+- **支线 scene**（如 `scene_*_b1`）仍收录在**同一章**的 `sceneEntries` 中（规则/链接不同，见「支线剧情选项」）。
 
 ### 运行时主线跳转规则（重要）
 
-- 章内主线默认按 `sceneEntries` 顺序生成“继续”链接；
-- 只有在章节边界（跨章）且两侧都配置了节点时，才会读取地图边：
-  - 前一章要求填写 `endMapNodeId`；
-  - 后一章要求填写 `startMapNodeId`；
-  - 前一章最后一个主线场景的 `mapNodeId` 必须等于该章 `endMapNodeId`；
+- 章内主线：按 `sceneEntries` 顺序生成「继续」链接。
+- 跨章：当本章配置了 `endMapNodeId`、下一章配置了 `startMapNodeId` 时：
   - `story-maps.json` 必须存在 `endMapNodeId -> next.startMapNodeId` 连边；
-  - 满足后才生成“前往 下一章”跳转（可合并边条件与目标场景准入条件）。
+  - 下一章须存在 `mapNodeId === next.startMapNodeId` 的**主线**场景（作为跨章入口）；
+  - 在**本章最后一个主线场景** passage 上生成「前往 …」链接（**不要求**该场景 `mapNodeId === endMapNodeId`）。
 
 ### 默认游戏中的实际映射（`assets/games/default`）
 
-- `story-scenes.json` 中：
-  - `游历市井` 绑定 `xuanyangmen`（宣阳门）
-  - `政见纷争` 绑定 `taimiao`（太庙）
-  - `寺中祷告` 绑定 `jinglesi`（景乐寺）
-  - `河阴丕变` 绑定 `guozixue`（国子学）
-- `story-maps.json` 中的边主要用于跨章节点衔接校验，不再直接决定章内跳转选项。
+- `story-scenes.json` 中各场景绑定具体 `mapNodeId`（如 `xuanyangmen`）。
+- `story-maps.json` 的边用于**跨章**衔接校验，不决定章内顺序。
 
 ### 上游录入建议（避免常见坑）
 
-- `scene.mapNodeId` 必须填写且能在 `story-maps.json` 的 `nodes[].id` 找到；
-- `scene.passageBlocks` 必填，且按数组顺序生成对应 passage 正文（`raw` 透传 + `ai` 生成混排）；
-- `scene.passageBlocks` 中每个 `ai` 块都应提供清晰 `summary`（事实性概要：人物、地点、事件、情绪、关键台词），避免模型自由补全导致偏移；
-- 章内主线顺序以 `sceneEntries` 为准，不要再依赖地图边表达章内流程；
-- 若需要跨章“前往 下一章”，请同时配置 `endMapNodeId`、`next.startMapNodeId` 与对应地图边；
-- 支线剧情与地图边解耦，按 `branchOptions` 规则录入（见“支线剧情选项”章节）。
+- `scene.mapNodeId` 必须能在 `story-maps.json > nodes[].id` 中找到；
+- `passageBlocks` 结构见下文（**首块 raw，其余 ai**）；
+- 跨章须配置 `endMapNodeId`、`next.startMapNodeId` 与对应地图边；
+- 支线与地图边解耦，按 `branchOptions` 录入。
+
+### `game_export` 迁移示例（由上游重导，勿手改仓库 json）
+
+旧版将多节点（如 `n01`–`n04`）合在一章 `ch0` 中。推荐拆为**每节点一章**，例如：
+
+| 新章节 id（示例） | title（= 节点 name） | start | end | sceneEntries（示意） |
+|------------------|----------------------|-------|-----|----------------------|
+| `ch_n01` | 福州·夜雨 | n01 | n02 | scene_1000 |
+| `ch_n02` | 京师·入局 | n02 | n02a | scene_1010 |
+| `ch_n02a` | 京师·宣南 | n02a | n03 | scene_1015, scene_1015_b1（若有支线） |
+| `ch_n03` | 江南·林青天 | n03 | n03a | scene_1020 |
+| … | … | … | … | … |
+
+同一节点上多个主线 scene（如 `n06` 上多场戏）仍放在**同一章**的 `sceneEntries` 中按序排列。拆章后请删除 `sceneEntries[].wordCount`，并将 `passageBlocks` 整理为 **raw + 多个 ai**（见下节）。
 
 ### `story-scenes.json` 里 `passageBlocks` 字段规范（必填）
 
 - 字段位置：`story-scenes.json > scene.passageBlocks`（数组，**必填**）
-- 生成规则：按数组顺序拼接为 `story.tw` 对应 passage 正文。
-  - `type: "raw"`：`text` 直接透传，不经过模型；
-  - `type: "ai"`：调用 OpenAI 兼容接口生成正文片段。
+- **结构（硬性）**：
+  - **有且仅有一个** leading `type: "raw"`，且必须为数组**首项**（定调 / 史料）；
+  - 其余项**必须**为 `type: "ai"`（**禁止** `raw-ai-raw` 交替；旧式中间 raw 应拆成独立 scene 或合并进 leading raw）。
+- **生成与存储**：
+  - 按数组顺序**拼接**为 `story.tw` 中该场景对应 passage 的正文；
+  - **块级元数据**（`summary` / `hints` / `wordCount`）只存在于 JSON；**生成后的正文只写入 `story.tw`**，不在 JSON 中重复存全文。
+  - 拼接后仍使用引擎**现有**自动分页（`VITE_PASSAGE_PAGE_CHARS_MIN/MAX`），**不新增**块级分页 API。
 - `ai` 块字段：
-  - `summary`（必填）：该块扩写依据；
-  - `hints`（可选）：该块风格/语气提示；
-  - `wordCount`（可选）：该块目标字数。
-- 推荐将一个场景拆成 2-6 个正文块，按“事实片段 -> 扩写片段 -> 事实片段”组织，便于控制叙事节奏。
+  - `summary`（必填）；
+  - `hints`（可选，强烈建议）；
+  - `wordCount`（**必填**）：该块扩写**上限**（建议 **160–220**，默认 **200**）。
+- 文风、对白分工见「AI 正文文风与对白约定」。
+- 推荐每 scene：**1 个 raw + 2–4 个 ai**；单块宜控制在约一页阅读量内，避免拼接后再被拆成过多子页造成文字墙。
 
 示例：
 
@@ -242,27 +275,97 @@ lzx-twine-import.zip
     {
       "type": "ai",
       "summary": "费穆初入市井，心怀投机与上升期待，见闻繁华后情绪高涨。",
-      "hints": "第一人称，短句，压迫感逐步增强",
-      "wordCount": 260
+      "hints": "第一人称白描；对白极少；勿复述 raw",
+      "wordCount": 200
     },
     {
-      "type": "raw",
-      "text": "旁白：若早知终局，是否仍会走向同一条路？"
+      "type": "ai",
+      "summary": "人流中与旧识擦肩，短暂停步后仍被人潮推向前方。",
+      "hints": "短句；段末留悬念",
+      "wordCount": 180
     }
   ]
 }
 ```
 
+### AI 正文文风与对白约定（`type: "ai"`，上游必遵）
+
+引擎在导出 `story.tw` 时，会按本节约束调用 OpenAI 兼容接口扩写 `type: "ai"` 块。上游在生成 `story-scenes.json` 时，应使 `summary`、`hints`、`wordCount` 与下列约定一致，避免正文过长、对白堆叠、与 `raw` 重复。
+
+#### 体裁与节奏
+
+- **推荐白描**：以场景、动作、体感、心理为主，用具体画面承载情绪与背景；节奏宜适中，既不要快剪式流水账，也不要长篇议论或报告体。
+- **旁白与描写优先**：默认输出以叙述者视角的旁白 + 描写性文字为主；不在正文中堆砌背景百科。
+- **对白宜少**：完整问答、可反复触发的角色台词应写入 `story-characters.json > behaviorLibrary`（玩家通过人物弹窗阅读）。passage 正文**仅保留**推进本场叙事所必需的少量引语（通常 0–2 轮，每轮一问一答）。
+
+#### `raw` 与 `ai` 分工（避免重复扩写）
+
+- `type: "raw"` 的 `text` 会原样展示；若其中已含史料摘录、殿议台词、诏书原句等，**同一信息不得**在相邻 `ai` 块中复述、摘抄或同义改写。
+- 承接型 `ai` 块（紧跟含台词的 `raw` 之后）应只写 **新信息**：环境变化、身体感受、心理余波、行动后果等，**不要**再扩写 `raw` 里已有的对白。
+- `summary` 中**避免**使用会诱导模型写长对白的表述，例如：“连续对话”“对白交锋”“殿议全文”“消化这句材料并外化对白”等。应改为事实性白描概要，例如：“退朝后夜路湿冷，肩上千钧，回想殿上最后一句的压力”。
+
+#### `summary` / `hints` / `wordCount` 填写规范
+
+| 字段 | 要求 |
+|------|------|
+| `summary` | 事实性概要：人物、地点、事件、情绪、关键结果；不写“必须写几轮对话”类指令 |
+| `hints` | 风格与禁区；建议包含「白描为主」「对白极少」；若允许少量对白，写明「问答各占一行」 |
+| `wordCount` | **必填**（建议每个 `ai` 块都填）；表示该块**上限**，宜偏紧（见下表） |
+
+**推荐 `hints` 片段（可拼入 `hints` 字段）：**
+
+```text
+第一人称限知；白描为主；对白极少；若必须写对白则问一句一行、答一句一行；勿复述相邻 raw 中的台词
+```
+
+#### 对白排版（引擎与上游一致）
+
+当正文不可避免地出现对白时：
+
+- 每一句发言**单独成行**（问一行、答一行）；不要把多轮对话挤在同一段。
+- 引号内为角色原话；叙述性说明（“他说”“我答”）可单独成行，宜短。
+- 示例（引擎期望形态）：
+
+```text
+殿上静了一息。
+道光帝问：“谁去做，谁肯担？”
+我答：“臣不敢言必胜，只敢言不退。”
+退朝时檐角还在滴水。
+```
+
+#### 篇幅（单块 `wordCount`，轻量互动默认）
+
+- **仅**在 `passageBlocks[].wordCount`（`ai` 块）配置上限；**不要**在 `sceneEntries[]` 写场景总字数（已废弃）。
+- 推荐区间（汉字，含标点，**上限**）：
+
+| 块角色 | 建议 `wordCount` |
+|--------|------------------|
+| 常规 ai 块 | `160`–`220`（默认 `200`） |
+| 失败支线收束（若用 ai 块） | `160`–`200` |
+
+- leading `raw` 宜 **≤220 字**（约 2–3 句），避免单块拼接后占满多页。
+- 单 scene 若有 3 个 `ai` 块，AI 总量宜 **≤660**；仍过长则增加 scene 或下调各块 `wordCount`。
+
+#### 上游自检补充（文风维度）
+
+- [ ] 每个 `ai` 块均填写 `wordCount`，且落在上述单块区间内。
+- [ ] `summary` 未要求“连续对话 / 对白交锋”；对白需求已迁移至 `behaviorLibrary` 的，正文不再重复。
+- [ ] 含殿议、诏书、史料台词的 `raw` 之后，`ai` 块 `summary` 仅写环境与心理，不扩写 `raw` 台词。
+- [ ] `hints` 含白描与对白排版约束（或等价表述）。
+- [ ] 抽检导出正文：无大段无换行对白墙；单段不宜超过约 4 句。
+
 ### 上游交付前自检清单（5条）
 
 - [ ] **场景节点完整性**：`story-scenes.json` 中每个参与流程的场景都填写了 `mapNodeId`。
 - [ ] **正文块完整性**：每个场景都提供了非空 `passageBlocks[]`，且块顺序符合预期叙事节奏。
-- [ ] **AI 块摘要质量**：每个 `type: "ai"` 块都包含明确 `summary`（避免空泛描述）。
+- [ ] **AI 块摘要质量**：每个 `type: "ai"` 块都包含明确 `summary`（避免空泛描述），并符合「AI 正文文风与对白约定」。
 - [ ] **节点引用有效性**：所有 `scene.mapNodeId` 都能在 `story-maps.json > nodes[].id` 中找到。
 - [ ] **连通可达性**：希望互相可跳转的场景，其 `mapNodeId` 在 `story-maps.json > edges` 中存在连通关系。
 - [ ] **章节收录一致性**：`story-fm.json > chapters[].sceneEntries[].sceneId` 已包含需要参与该章节导航的场景。
 - [ ] **章节末场景显式可识别**：每章最后一个主线场景必须在 `sceneEntries` 顺序中明确可识别（建议作为该章 `sceneEntries` 末项），避免跨章边界校验歧义。
-- [ ] **一节点一主场景**：当前版本避免将多个主流程场景绑定到同一个 `mapNodeId`（多场景同节点分流暂未稳定支持）。
+- [ ] **同节点多场景**：同一 `mapNodeId` 上可有多个主线 scene，应放在**同一章**的 `sceneEntries` 中按序排列。
+- [ ] **章节起止节点**：`startMapNodeId` ≠ `endMapNodeId`；`title` 与地图节点 `name` 一致，无「第×章」长前缀。
+- [ ] **passageBlocks 结构**：每 scene 首块为唯一 `raw`，其余为 `ai`；每个 `ai` 块填写 `wordCount`（160–220）。
 
 ### 支线剧情选项（`story-scenes.json`，用于失败结局分支）
 
@@ -732,48 +835,32 @@ lzx-twine-import.zip
 - 手写 passage 未带 `sceneId`，且 passage id 不符合 `ch{N}.{sceneId}` 格式，导致 `sceneIds` 过滤无法识别当前场景。
 - `story-rules.json` 或 `StoryData.gameRules` 中缺少 `rule_0001`，或 `rule_0001` 的 id / 表达式不符合「准入规则约定」。
 
-## 篇幅、段落与分页建议（建议纳入上游规范）
+## 篇幅、段落与分页（轻量互动，默认）
 
-为降低阅读压力（尤其是“短视频化节奏”的交互小说/轻量 RPG），建议上游在导出时同时约束三层尺度：
+为降低**文字墙**，上游与运行时应同时约束：
 
-1. **场景总字数**（控制单场信息体量）  
-   - 字段：`story-scenes.json > scene.passageBlocks[].wordCount`（仅 `type: "ai"` 块生效）
-   - 说明：建议按块配置字数目标，再由多个块累加得到场景总量。
+1. **块级上限**（`passageBlocks` 中每个 `ai` 的 `wordCount`，及 leading `raw` 字数）  
+2. **自动分页阈值**（现有能力，不新增块级分页）  
+3. **段落密度**（每段 2–3 句；对白极少）
 
-2. **每页字数范围**（控制单页阅读负担）  
-   - 环境变量：`VITE_PASSAGE_PAGE_CHARS_MIN` / `VITE_PASSAGE_PAGE_CHARS_MAX`
-   - 默认值：`300 / 500`
-   - 说明：正文会自动分页为主 passage + `继续` 子页（如 `.p_100/.p_200`）。
+### 默认配置（手机竖屏、偏轻量互动）
 
-3. **信息分布密度**（控制节奏与停留时长）  
-   - 建议每页只承载 1 个核心情绪点 + 1 个新信息点，避免单页塞入过多背景解释。
+| 项 | 值 |
+|----|-----|
+| 每 `ai` 块 `wordCount` | **160–220**（推荐 **200**） |
+| leading `raw` | ≤220 字，2–3 句 |
+| `VITE_PASSAGE_PAGE_CHARS_MIN` / `MAX` | **160** / **220**（引擎与 `.env.example` 默认值） |
+| 段落 | 叙述段 2–3 句；对白问答各占一行 |
 
-### 推荐区间（按体验目标）
-
-- **短视频感（强节奏）**
-  - `wordCount`: `250-450` / 场景
-  - `VITE_PASSAGE_PAGE_CHARS_MIN`: `120`
-  - `VITE_PASSAGE_PAGE_CHARS_MAX`: `220`
-  - 预期：单场约 3-6 页，节奏快，阅读压力低
-
-- **平衡叙事（默认推荐）**
-  - `wordCount`: `400-700` / 场景
-  - `VITE_PASSAGE_PAGE_CHARS_MIN`: `160`
-  - `VITE_PASSAGE_PAGE_CHARS_MAX`: `280`
-  - 预期：单场约 3-5 页，叙事与节奏平衡
-
-- **剧情深读（文本向）**
-  - `wordCount`: `700-1200` / 场景
-  - `VITE_PASSAGE_PAGE_CHARS_MIN`: `220`
-  - `VITE_PASSAGE_PAGE_CHARS_MAX`: `360`
-  - 预期：单场约 4-7 页，适合重剧情用户
+说明：块按顺序拼接为 passage 后，仍由 `paginatePassageText` 在句号/换行处切分为 `.p_100` 子页。控制块字数 + 分页阈值，使**多数块拼接后约 1–2 屏**，避免整场景一次露出过长正文。
 
 ### 上游自检补充（篇幅维度）
 
-- [ ] 所有 `type: "ai"` 正文块已按需要填写 `wordCount`（避免“默认无限制生成”）。
-- [ ] 已根据目标体验配置分页阈值（`VITE_PASSAGE_PAGE_CHARS_MIN/MAX`）。
-- [ ] 实际产物抽检 3 个场景：无“单页超长墙文本”，每页信息点数量可控。
-- [ ] 对话信息优先放入人物 `behaviorLibrary`；正文仅保留必要叙事引语，避免大段对白混入场景主叙述。
+- [ ] 每个 `ai` 块已填 `wordCount`（160–220）；`sceneEntries` 中**无**废弃字段 `wordCount`。
+- [ ] 每 scene 仅一个 leading `raw`，无 `raw-ai-raw` 交替。
+- [ ] 部署环境分页阈值为 160/220（或与目标体验一致）。
+- [ ] 抽检 3 个场景导出正文：无连续超长无换行段；单页约 1 情绪点 + 1 信息点。
+- [ ] 对白在 `behaviorLibrary`；正文不重复 leading `raw` 已有台词。
 - [ ] 若启用 `rule_0002 setOn`，已覆盖至少一个 `actionRef` 触发并验证变量赋值生效。
 - [ ] `journalAppend` 配置了 `onceKey` 的条目，重复触发时不会重复入账。
 - [ ] 已验证消息优先级：存在事件时只播放事件消息；事件无消息时不回退场景消息。

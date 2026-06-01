@@ -2,9 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve, dirname, normalize } from 'node:path';
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
-import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
-import {normalizeMediaSavePath, CUSTOM_MEDIA_FS_DIR} from './src/config/media-paths';
+import {CUSTOM_MEDIA_FS_DIR} from './src/config/media-paths';
 import { formatJsonCompact } from './src/utils/json-format';
 import { bundleStoryTwForProd } from './src/utils/bundle-game-for-prod';
 
@@ -32,42 +30,6 @@ export default defineConfig(({ mode }) => {
 
   function gameAssetPath(gameId: string, resource: string): string {
     return resolve(cwd, gamesBasePath, gameId, gameAssetFileName(resource));
-  }
-
-  function fetchBinaryUrl(url: string): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const client = url.startsWith('https:') ? httpsRequest : httpRequest;
-      client(url, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          fetchBinaryUrl(res.headers.location).then(resolve).catch(reject);
-          return;
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`下载失败 HTTP ${res.statusCode}`));
-          res.resume();
-          return;
-        }
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-        res.on('error', reject);
-      }).on('error', reject).end();
-    });
-  }
-
-  function validateGameRelativePath(inputPath: string, gameDirPath: string): string {
-    const normalizedPath = normalize(inputPath.replace(/\\/g, '/').replace(/^\/+/, ''));
-    if (
-      !normalizedPath ||
-      normalizedPath.startsWith('..') ||
-      normalizedPath.includes('/../') ||
-      normalizedPath.includes('\\..\\')
-    ) {
-      throw new Error(`非法路径: ${inputPath}`);
-    }
-    const outPath = resolve(gameDirPath, normalizedPath);
-    if (!outPath.startsWith(gameDirPath)) throw new Error(`非法路径: ${inputPath}`);
-    return outPath;
   }
 
   function copyDirectoryRecursive(srcDir: string, dstDir: string): void {
@@ -136,47 +98,6 @@ export default defineConfig(({ mode }) => {
                 return;
               }
               mkdirSync(dirPath, { recursive: true });
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
-            }
-          });
-        });
-        server.middlewares.use('/api/games', (req, res, next) => {
-          const mediaMatch = req.url?.match(/^\/([^/]+)\/media(?:\?|$)/);
-          if (!mediaMatch || req.method !== 'POST') return next();
-          const gameId = mediaMatch[1];
-          if (!gameId) return next();
-          let body = '';
-          req.on('data', (chunk) => { body += chunk; });
-          req.on('end', async () => {
-            try {
-              const payload = JSON.parse(body) as {
-                path?: string;
-                contentBase64?: string;
-                sourceUrl?: string;
-              };
-              const inputPath = String(payload.path ?? '').trim();
-              if (!inputPath) throw new Error('path 不能为空');
-              const {fsSubPath, root} = normalizeMediaSavePath(inputPath);
-              const baseDir = root === 'custom'
-                ? resolve(cwd, CUSTOM_MEDIA_FS_DIR)
-                : resolve(cwd, gamesBasePath, gameId);
-              if (root === 'game') mkdirSync(baseDir, { recursive: true });
-              const outPath = validateGameRelativePath(fsSubPath, baseDir);
-              mkdirSync(dirname(outPath), { recursive: true });
-              if (payload.sourceUrl) {
-                const url = String(payload.sourceUrl).trim();
-                if (!/^https?:\/\//i.test(url)) throw new Error('sourceUrl 必须是 http(s) URL');
-                const buf = await fetchBinaryUrl(url);
-                writeFileSync(outPath, buf);
-              } else if (payload.contentBase64) {
-                writeFileSync(outPath, Buffer.from(String(payload.contentBase64), 'base64'));
-              } else {
-                throw new Error('contentBase64 或 sourceUrl 至少提供一个');
-              }
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {

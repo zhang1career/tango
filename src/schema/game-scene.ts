@@ -16,7 +16,7 @@ export interface ScenePassageAiBlock {
   summary: string;
   /** 可选：块级写作提示 */
   hints?: string;
-  /** 可选：块级字数要求 */
+  /** 块级字数上限（建议 160–220，默认 200） */
   wordCount?: number;
 }
 
@@ -67,7 +67,7 @@ export interface GameScene {
   id: string;
   /** 展示用名称 */
   name: string;
-  /** passage 正文块（有序），按数组顺序混排：raw 透传 + ai 生成 */
+  /** passage 正文块（有序）：首块必为 raw，其余为 ai；生成结果写入 story.tw */
   passageBlocks: ScenePassageBlock[];
   /** 进入该场景时的状态变更（仅物品、声誉） */
   stateActions?: SceneStateActions;
