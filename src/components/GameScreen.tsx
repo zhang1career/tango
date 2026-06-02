@@ -40,6 +40,7 @@ import {BattleModal, type BattleResult} from './BattleModal';
 import {BattleSettlementModal} from './BattleSettlementModal';
 import {InventoryModal} from './InventoryModal';
 import {JournalModal} from './JournalModal';
+import {MessageTicker} from './MessageTicker';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
@@ -100,7 +101,6 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const eventPhaseRunRef = useRef<string | null>(null);
   const [eventMediaOverlay, setEventMediaOverlay] = useState<{ type: 'opening' | 'ending'; url: string; event: GameEvent } | null>(null);
   const [navWarning, setNavWarning] = useState<string | null>(null);
-  const [tickerIndex, setTickerIndex] = useState(0);
   const eventBgmRef = useRef<HTMLAudioElement | null>(null);
   const runEventPhaseRef = useRef<() => void>(() => {});
   const journalOnceKeysRef = useRef<Set<string>>(new Set());
@@ -483,18 +483,6 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     runEventPhase();
   }, [passageId, introVisible, runEventPhase]);
 
-  useEffect(() => {
-    setTickerIndex(0);
-  }, [passageId]);
-
-  useEffect(() => {
-    if (tickerMessages.length <= 1) return;
-    const timer = setInterval(() => {
-      setTickerIndex((prev) => (prev + 1) % tickerMessages.length);
-    }, 3600);
-    return () => clearInterval(timer);
-  }, [tickerMessages]);
-
   if (loading) {
     return (
       <div className={`game-container ${className ?? ''}`} style={styles.container}>
@@ -528,11 +516,6 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
   const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
-
-  const tickerText =
-    tickerMessages.length > 0
-      ? tickerMessages[tickerIndex % tickerMessages.length]
-      : '';
 
   const behaviorCtx: BehaviorInteractionContext = {
     characters: activeCharacters,
@@ -756,31 +739,9 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
 
   return (
     <div className={`game-container ${className ?? ''}`} style={styles.container}>
-      <style>{`
-        @keyframes ticker-slide-up {
-          from {
-            transform: translateY(100%);
-            opacity: 0.4;
-          }
-          to {
-            transform: translateY(0);
-            opacity: 1;
-          }
-        }
-      `}</style>
       <header style={styles.header}>
         <h1 style={styles.title}>{readableStoryTitle}</h1>
-        <div style={styles.messageTickerWrap} aria-live="polite">
-          {tickerText ? (
-            <div style={styles.messageTickerTrack}>
-              <span key={tickerIndex} style={styles.messageTickerText}>
-                {tickerText}
-              </span>
-            </div>
-          ) : (
-            <span style={styles.messageTickerEmpty}>当前无消息</span>
-          )}
-        </div>
+        <MessageTicker messages={tickerMessages} />
       </header>
 
       {Object.keys(state.reputation).length > 0 && (
@@ -1033,41 +994,6 @@ const styles: Record<string, React.CSSProperties> = {
   statusLabel: {color: '#a78bfa', marginRight: 8},
   statusValue: {color: '#c4b5fd'},
   title: {fontSize: 18, color: '#e8e8e8', fontWeight: 600, margin: 0},
-  messageTickerWrap: {
-    flex: 1,
-    maxWidth: 420,
-    minWidth: 160,
-    height: 22,
-    borderRadius: 999,
-    backgroundColor: '#24243c',
-    padding: '0 10px',
-    overflow: 'hidden',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-  },
-  messageTickerTrack: {
-    width: '100%',
-    height: '100%',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  messageTickerText: {
-    display: 'block',
-    width: '100%',
-    color: '#c7c7ef',
-    fontSize: 12,
-    lineHeight: '22px',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    animation: 'ticker-slide-up 0.45s ease-out',
-  },
-  messageTickerEmpty: {
-    color: '#7f7faa',
-    fontSize: 12,
-    lineHeight: '22px',
-  },
   scroll: {flex: 1, overflow: 'auto', paddingBottom: 40},
   passageName: {fontSize: 14, color: '#888', marginBottom: 12},
   passageText: {fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap'},

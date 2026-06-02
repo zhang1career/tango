@@ -2,7 +2,7 @@
  * 物品编辑界面
  */
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {getItemsFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
@@ -176,6 +176,18 @@ export function ItemsEditorPage({fw, updateFw}: {
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
+
+  useEffect(() => {
+    fetch(getItemsFetchUrl(gameId))
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        updateFw((d) => ({...d, items: list as GameItem[]}));
+      })
+      .catch(() => {
+      });
+  }, [updateFw, gameId]);
+
   const items = fw.items ?? [];
   const setItems = (fn: (i: GameItem[]) => GameItem[]) =>
     updateFw((d) => ({...d, items: fn(d.items ?? [])}));

@@ -3,6 +3,9 @@
  */
 import type React from 'react';
 
+/** 详情/编辑弹窗最大宽度（与编辑页内容区一致） */
+export const EDIT_MODAL_MAX_WIDTH = 720;
+
 export const editorStyles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
   header: {

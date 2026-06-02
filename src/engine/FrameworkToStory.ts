@@ -330,10 +330,19 @@ export function frameworkToStory(fw: StoryFramework): Story {
         `章节 ${nextCh.id} 未找到 mapNodeId=${nextCh.startMapNodeId} 的主线场景，无法建立跨章连接`
       );
     }
-    const edge = (edgesByFrom.get(ch.endMapNodeId) ?? []).find((e) => e.to === nextCh.startMapNodeId);
+    const endNode = ch.endMapNodeId;
+    const nextStartNode = nextCh.startMapNodeId;
+    const sharedBoundary = endNode === nextStartNode;
+    const edgeFrom = sharedBoundary
+      ? (ch.startMapNodeId ?? chapterLast.scene.mapNodeId ?? endNode)
+      : endNode;
+    const edgeTo = sharedBoundary ? endNode : nextStartNode;
+    const edge = (edgesByFrom.get(edgeFrom) ?? []).find((e) => e.to === edgeTo);
     if (!edge) {
       throw new Error(
-        `章节边界缺少地图连边：${ch.endMapNodeId} -> ${nextCh.startMapNodeId}`
+        sharedBoundary
+          ? `章节边界缺少地图连边：${edgeFrom} -> ${edgeTo}（本章起点至终点，用于跨章「前往」文案）`
+          : `章节边界缺少地图连边：${edgeFrom} -> ${edgeTo}`
       );
     }
     const nextAccess = buildAccessCondition(nextStart.entry, nextStart.scene, ruleMap);

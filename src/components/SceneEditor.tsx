@@ -13,6 +13,7 @@ import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {AttributeValuesCard} from './cards/AttributeValuesCard';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {MediaUrlField} from './ui/MediaFields';
+import {normalizeStringList, StringListField} from './ui/StringListField';
 import {defaultSceneBgmSavePath, defaultSceneImageSavePath} from '@/config/media-paths';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
@@ -609,6 +610,17 @@ function SceneFormContent({
         readOnly={!editable || !onUpdate}
       />
 
+      <StringListField
+        label="消息列表"
+        hint="无关联事件时，游戏标题区滚动展示；场景已关联事件时由事件消息接管。"
+        value={scene.messages}
+        onChange={(messages) =>
+          onUpdate?.((s) => ({...s, messages: messages.length === 0 ? undefined : messages}))
+        }
+        editable={editable && !!onUpdate}
+        placeholder="滚动消息"
+      />
+
       <MediaUrlField
         label="开场动画"
         value={scene.openingAnimation}
@@ -711,7 +723,7 @@ export function SceneEditor({
   };
 
   const confirmAddScene = async () => {
-    const next = [...scenes, newScene];
+    const next = [...scenes, {...newScene, messages: normalizeStringList(newScene.messages)}];
     setScenes(() => next);
     const result = await saveScenesToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
@@ -730,7 +742,9 @@ export function SceneEditor({
   const removeSceneWithAuth = (index: number) => checkAuthForSave(() => removeScene(index));
 
   const saveScenes = async () => {
-    const result = await saveScenesToPreset(scenes, gameId);
+    const normalized = scenes.map((s) => ({...s, messages: normalizeStringList(s.messages)}));
+    setScenes(() => normalized);
+    const result = await saveScenesToPreset(normalized, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };

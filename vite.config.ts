@@ -10,7 +10,6 @@ const DEFAULT_GAMES_BASE_PATH = 'assets/games';
 
 function gameAssetFileName(resource: string): string {
   if (resource === 'game-content') return 'story.tw';
-  if (resource === 'story-bundle') return 'story_bundle.json';
   return `${resource}.json`;
 }
 

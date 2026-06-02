@@ -4,6 +4,7 @@
  */
 
 import React, { useEffect } from 'react';
+import { EDIT_MODAL_MAX_WIDTH } from '../../styles/editorStyles';
 
 const modalStyles: Record<string, React.CSSProperties> = {
   overlay: {
@@ -19,7 +20,7 @@ const modalStyles: Record<string, React.CSSProperties> = {
     backgroundColor: '#1e1e32',
     borderRadius: 12,
     padding: 24,
-    maxWidth: 520,
+    maxWidth: EDIT_MODAL_MAX_WIDTH,
     width: '90%',
     maxHeight: '85vh',
     overflow: 'auto',

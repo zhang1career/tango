@@ -13,30 +13,20 @@ import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getStoryBundleFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
+import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
 import {useAuth} from '@/context/AuthContext';
-import {frameworkToStory, parseTwee, serializeStorySugarcube, storyToBundle, syncStoryTitleFromFramework} from '@/engine';
+import {frameworkToStory, parseTwee, serializeStorySugarcube, syncStoryTitleFromFramework} from '@/engine';
 
+import {EDIT_MODAL_MAX_WIDTH} from '../styles/editorStyles';
 import {formatJsonCompact} from '../utils/json-format';
 import {
   applyScenePassageFullText,
   collectSceneFullText,
 } from '../utils/scene-passage-text';
 import {collectPrecedingRawTexts, stripAiTextOverlappingRaw} from '../utils/strip-ai-raw-overlap';
-import {
-  AI_WORD_COUNT_MAX,
-  AI_WORD_COUNT_MIN,
-  DEFAULT_AI_WORD_COUNT,
-  addAiBlock,
-  formatAiWordCountPrompt,
-  getAiBlocks,
-  getLeadingRawBlock,
-  removeAiBlock,
-  upsertAiBlock,
-  upsertLeadingRaw,
-} from '../utils/passage-blocks';
+import {formatAiWordCountPrompt} from '../utils/passage-blocks';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
 type ImportZipFile = {path: string; contentBase64: string};
@@ -130,97 +120,6 @@ function truncatePathForDisplay(name: string, maxLen = 28): string {
 
 function getScenePassageBlocks(scene: GameScene): ScenePassageBlock[] {
   return Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
-}
-
-function ScenePassageBlocksEditor({
-  scene,
-  onUpdateScene,
-}: {
-  scene: GameScene;
-  onUpdateScene: (fn: (s: GameScene) => GameScene) => void;
-}) {
-  const leadingRaw = getLeadingRawBlock(scene);
-  const aiBlocks = getAiBlocks(scene);
-
-  return (
-    <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
-      <div>
-        <label style={{...styles.label, display: 'block', marginBottom: 6}}>
-          [raw] 定调 / 史料（passageBlocks[0]，单块宜 ≤{AI_WORD_COUNT_MAX} 字）
-        </label>
-        <textarea
-          value={leadingRaw?.text ?? ''}
-          onChange={(e) => onUpdateScene((s) => upsertLeadingRaw(s, e.target.value))}
-          style={{...styles.input, ...styles.textarea, minHeight: 72}}
-          placeholder="本场景唯一 leading raw"
-        />
-      </div>
-      {aiBlocks.map((block, aiIndex) => (
-        <div
-          key={`${scene.id}-ai-${aiIndex}`}
-          style={{border: '1px solid #444', borderRadius: 6, padding: 10}}
-        >
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
-            <span style={{fontSize: 13, color: '#bbb'}}>AI 块 {aiIndex + 1}</span>
-            {aiBlocks.length > 1 && (
-              <button
-                type="button"
-                style={styles.btnSmall}
-                onClick={() => onUpdateScene((s) => removeAiBlock(s, aiIndex))}
-              >
-                删除此 AI 块
-              </button>
-            )}
-          </div>
-          <label style={{...styles.label, display: 'block', marginBottom: 4}}>summary</label>
-          <textarea
-            value={block.summary ?? ''}
-            onChange={(e) =>
-              onUpdateScene((s) =>
-                upsertAiBlock(s, aiIndex, (b) => ({...b, summary: e.target.value}))
-              )
-            }
-            style={{...styles.input, ...styles.textarea, minHeight: 56, marginBottom: 8}}
-          />
-          <label style={{...styles.label, display: 'block', marginBottom: 4}}>hints（可选）</label>
-          <input
-            value={block.hints ?? ''}
-            onChange={(e) =>
-              onUpdateScene((s) =>
-                upsertAiBlock(s, aiIndex, (b) => ({
-                  ...b,
-                  hints: e.target.value.trim() || undefined,
-                }))
-              )
-            }
-            style={{...styles.input, marginBottom: 8}}
-          />
-          <label style={{...styles.label, display: 'block', marginBottom: 4}}>
-            wordCount 上限（{AI_WORD_COUNT_MIN}–{AI_WORD_COUNT_MAX}）
-          </label>
-          <input
-            type="number"
-            min={AI_WORD_COUNT_MIN}
-            max={AI_WORD_COUNT_MAX}
-            value={block.wordCount ?? DEFAULT_AI_WORD_COUNT}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              onUpdateScene((s) =>
-                upsertAiBlock(s, aiIndex, (b) => ({
-                  ...b,
-                  wordCount: Number.isNaN(n) ? DEFAULT_AI_WORD_COUNT : n,
-                }))
-              );
-            }}
-            style={{...styles.input, width: 120}}
-          />
-        </div>
-      ))}
-      <button type="button" style={styles.btnSmall} onClick={() => onUpdateScene(addAiBlock)}>
-        + 添加 AI 块
-      </button>
-    </div>
-  );
 }
 
 function escapeHtml(text: string): string {
@@ -1192,47 +1091,6 @@ export function FrameworkEditor({
     }
   }, [gameId, addNotification]);
 
-  const handleExportBundle = useCallback(async () => {
-    try {
-      const contentUrl = getGameContentUrl(gameId);
-      const res = await fetch(contentUrl);
-      if (!res.ok) throw new Error(`读取剧情失败: ${res.status}`);
-      const raw = await res.text();
-      const story = parseTwee(raw);
-      const bundle = storyToBundle(story, {storyId: gameId});
-      const text = formatJsonCompact(bundle);
-
-      const putRes = await fetch(getStoryBundleFetchUrl(gameId), {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: text,
-      });
-      const putData = (await putRes.json()) as { ok?: boolean; error?: string };
-      if (!putRes.ok || !putData.ok) {
-        throw new Error(putData.error || `保存 Bundle 失败: ${putRes.status}`);
-      }
-
-      const blob = new Blob([text], {type: 'application/json'});
-      const filename = 'story_bundle.json';
-      if ('showSaveFilePicker' in window) {
-        const handle = await (window as Window & { showSaveFilePicker?: (opts?: { suggestedName?: string }) => Promise<FileSystemFileHandle> }).showSaveFilePicker!({suggestedName: filename});
-        const w = await handle.createWritable();
-        await w.write(blob);
-        await w.close();
-      } else {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-      setJsonError(null);
-      addNotification('info', 'Bundle 导出成功');
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
-    }
-  }, [gameId, addNotification]);
-
   const handleGenerateScene = useCallback(
     async (chi: number, si: number) => {
       const ch = fw.chapters[chi];
@@ -1413,9 +1271,6 @@ export function FrameworkEditor({
           </button>
           <button type="button" style={styles.btn} onClick={handleExport}>
             导出
-          </button>
-          <button type="button" style={styles.btn} onClick={handleExportBundle}>
-            导出 Bundle
           </button>
         </div>
       </header>
@@ -1684,13 +1539,6 @@ function ChapterBlock({
     }));
   };
 
-  const updateScene = (sceneId: string, fn: (s: GameScene) => GameScene) => {
-    updateFw((d) => ({
-      ...d,
-      scenes: (d.scenes ?? []).map((s) => (s.id === sceneId ? fn(s) : s)),
-    }));
-  };
-
   return (
     <div style={styles.chapter}>
       <div style={styles.chapterHead} onClick={() => toggleCh(ch.id)}>
@@ -1840,15 +1688,9 @@ function ChapterBlock({
                 </div>
                 {isEntryExpanded && (
                   <div style={styles.sceneBody}>
-                    {scene && (
-                      <div style={styles.row}>
-                        <label style={styles.label}>正文块（story-scenes.json {'>'} passageBlocks）</label>
-                        <ScenePassageBlocksEditor
-                          scene={scene}
-                          onUpdateScene={(fn) => updateScene(scene.id, fn)}
-                        />
-                      </div>
-                    )}
+                    <p style={styles.sceneEditHint}>
+                      正文块（定调 / AI summary 等）请在左侧「场景」菜单中编辑；生成游戏前请先保存场景。
+                    </p>
                     <div style={styles.row}>
                       <label style={styles.label}>生成正文（story.tw，多页自动合并编辑，保存时重新分页）</label>
                       <div style={{display: 'flex', gap: 8, marginBottom: 8}}>
@@ -1964,7 +1806,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#1e1e32',
     borderRadius: 12,
     padding: 24,
-    maxWidth: 520,
+    maxWidth: EDIT_MODAL_MAX_WIDTH,
     width: '90%',
     maxHeight: '80vh',
     overflow: 'auto',
@@ -2043,6 +1885,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sceneTitle: {fontSize: 14},
   sceneBody: {padding: '8px 0 0 0'},
+  sceneEditHint: {fontSize: 12, color: '#888', margin: '0 0 12px', lineHeight: 1.5},
   linksHead: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 8},
   linkRow: {
     display: 'flex',

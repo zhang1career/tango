@@ -183,8 +183,9 @@ lzx-twine-import.zip
 - **推荐**：**一个地图节点对应一个章节**（含子节点如 `n02a`、`n03a` 亦**独立成章**）。
 - `chapters[].title`：**仅编辑/治理用**，建议与 `story-maps.json > nodes[].name` **完全一致**（如 `福州·夜雨`）。**不要**写「第一章：寒门与入局」等长标题，避免编辑菜单噪音。
 - `startMapNodeId`：本章剧情**发生地**（玩家在本章内主要停留的节点）。
-- `endMapNodeId`：本章**结束后**玩家可前往的地图节点（通常为沿地图主路径的下一节点）。
-- **MUST**：若同时填写 `startMapNodeId` 与 `endMapNodeId`，二者**不得相同**（否则无法表达「结束后前往下一节点」）。
+- `endMapNodeId`：沿地图主路径，玩家**离开本章时**抵达的下一节点（与 `story-maps.json` 中 `startMapNodeId -> endMapNodeId` 的前进边一致）。
+- **MUST**：若同时填写 `startMapNodeId` 与 `endMapNodeId`，二者**不得相同**（章内须能表达「从发生地前往下一节点」；这与**相邻章**共用边界节点无关，见下节跨章规则）。
+- **MUST NOT**：在 `story-maps.json` 中增加 `from === to` 的自环边；地图边只表示节点之间的**前进**，不用于「同节点拆章」。
 - `sceneEntries[]`：仅含 `sceneId`、可选 `ruleIds`、可选 `compiledFingerprint`。**不要**再填写已废弃的 `wordCount` 字段。
 
 `sceneEntries` 示例：
@@ -213,20 +214,22 @@ lzx-twine-import.zip
 
 - 章内主线：按 `sceneEntries` 顺序生成「继续」链接。
 - 跨章：当本章配置了 `endMapNodeId`、下一章配置了 `startMapNodeId` 时：
-  - `story-maps.json` 必须存在 `endMapNodeId -> next.startMapNodeId` 连边；
   - 下一章须存在 `mapNodeId === next.startMapNodeId` 的**主线**场景（作为跨章入口）；
   - 在**本章最后一个主线场景** passage 上生成「前往 …」链接（**不要求**该场景 `mapNodeId === endMapNodeId`）。
+  - **地图连边（用于跨章链接文案与条件，禁止自环）**：
+    - 若 `endMapNodeId === next.startMapNodeId`（**推荐**：按「一节点一章」拆分时，上一章终点即下一章起点，如 `ch_n01` 的 `end=n02` 与 `ch_n02` 的 `start=n02`）：`story-maps.json` 须存在 **`本章 startMapNodeId -> 本章 endMapNodeId`** 的前进边（例：`n01 -> n02`「入京」）；**不要**要求 `n02 -> n02` 自环边。
+    - 若 `endMapNodeId !== next.startMapNodeId`（一章横跨多节点、或边界未对齐时）：须存在 **`endMapNodeId -> next.startMapNodeId`** 的前进边。
 
 ### 默认游戏中的实际映射（`assets/games/default`）
 
 - `story-scenes.json` 中各场景绑定具体 `mapNodeId`（如 `xuanyangmen`）。
-- `story-maps.json` 的边用于**跨章**衔接校验，不决定章内顺序。
+- `story-maps.json` 的边表示地图主路径上的**前进**；编译器用其校验跨章「前往」链接并取 `displayText`/`condition`，**不**决定章内 `sceneEntries` 顺序，**不**使用自环边。
 
 ### 上游录入建议（避免常见坑）
 
 - `scene.mapNodeId` 必须能在 `story-maps.json > nodes[].id` 中找到；
 - `passageBlocks` 结构见下文（**首块 raw，其余 ai**）；
-- 跨章须配置 `endMapNodeId`、`next.startMapNodeId` 与对应地图边；
+- 跨章须配置 `endMapNodeId`、`next.startMapNodeId`，并满足上节「地图连边」规则（边界重合时用 `本章 start -> 本章 end`，勿造自环边）；
 - 支线与地图边解耦，按 `branchOptions` 录入。
 
 ### `game_export` 迁移示例（由上游重导，勿手改仓库 json）
@@ -240,6 +243,8 @@ lzx-twine-import.zip
 | `ch_n02a` | 京师·宣南 | n02a | n03 | scene_1015, scene_1015_b1（若有支线） |
 | `ch_n03` | 江南·林青天 | n03 | n03a | scene_1020 |
 | … | … | … | … | … |
+
+相邻章边界示例：`ch_n01` 的 `end=n02` 与 `ch_n02` 的 `start=n02` **共用节点**；跨章链接取地图边 **`n01 -> n02`**（非 `n02 -> n02`）。
 
 同一节点上多个主线 scene（如 `n06` 上多场戏）仍放在**同一章**的 `sceneEntries` 中按序排列。拆章后请删除 `sceneEntries[].wordCount`，并将 `passageBlocks` 整理为 **raw + 多个 ai**（见下节）。
 
@@ -364,7 +369,8 @@ lzx-twine-import.zip
 - [ ] **章节收录一致性**：`story-fm.json > chapters[].sceneEntries[].sceneId` 已包含需要参与该章节导航的场景。
 - [ ] **章节末场景显式可识别**：每章最后一个主线场景必须在 `sceneEntries` 顺序中明确可识别（建议作为该章 `sceneEntries` 末项），避免跨章边界校验歧义。
 - [ ] **同节点多场景**：同一 `mapNodeId` 上可有多个主线 scene，应放在**同一章**的 `sceneEntries` 中按序排列。
-- [ ] **章节起止节点**：`startMapNodeId` ≠ `endMapNodeId`；`title` 与地图节点 `name` 一致，无「第×章」长前缀。
+- [ ] **章节起止节点**：每章 `startMapNodeId` ≠ `endMapNodeId`；`title` 与地图节点 `name` 一致，无「第×章」长前缀。
+- [ ] **跨章地图边**：若 `本章 end === 下一章 start`，须有 `本章 start -> 本章 end` 边；否则须有 `本章 end -> 下一章 start` 边；**禁止**自环 `from === to`。
 - [ ] **passageBlocks 结构**：每 scene 首块为唯一 `raw`，其余为 `ai`；每个 `ai` 块填写 `wordCount`（160–220）。
 
 ### 支线剧情选项（`story-scenes.json`，用于失败结局分支）
