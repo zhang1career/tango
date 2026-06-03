@@ -2,8 +2,10 @@
  * 场景编辑界面
  */
 
-import React, {useEffect, useState} from 'react';
-import {getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
+import React, {useEffect, useMemo, useState} from 'react';
+import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
+import {runGenerateAiBlock} from '@/services/scene-block-generation';
+import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
@@ -18,12 +20,16 @@ import {defaultSceneBgmSavePath, defaultSceneImageSavePath} from '@/config/media
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
+import {RuleUsageBindings} from './RuleUsageBindings';
 import {editorStyles as styles} from '../styles/editorStyles';
+import type {GameRule} from '../schema/game-rule';
+import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
 import {
   AI_WORD_COUNT_MAX,
   AI_WORD_COUNT_MIN,
   DEFAULT_AI_WORD_COUNT,
   addAiBlock,
+  aiIndexToPassageBlockIndex,
   defaultPassageBlocks,
   getAiBlocks,
   getLeadingRawBlock,
@@ -76,6 +82,31 @@ async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok
   return {ok: true};
 }
 
+async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
+  if (import.meta.env.DEV) {
+    try {
+      const res = await fetch(getRulesFetchUrl(gameId), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: formatJsonCompact(rules),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (res.ok && json.ok) return {ok: true};
+      return {ok: false, error: json.error || `HTTP ${res.status}`};
+    } catch (e) {
+      return {ok: false, error: String(e)};
+    }
+  }
+  const blob = new Blob([formatJsonCompact(rules)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'story-rules.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  return {ok: true};
+}
+
 type SceneFormProps = {
   scene: GameScene;
   editable: boolean;
@@ -85,9 +116,209 @@ type SceneFormProps = {
   characterIds: Array<{ id: string; name: string }>;
   eventIds: Array<{ id: string; name: string }>;
   ruleIds: Array<{ id: string; name: string }>;
+  gameRules: GameRule[];
+  onUpdateRule?: (ruleId: string, fn: (r: GameRule) => GameRule) => void;
+  onSaveRules?: () => void;
   onUpdate?: (fn: (s: GameScene) => GameScene) => void;
   collapsibleDefaultExpanded?: boolean;
+  fw?: StoryFramework;
+  gameId?: string;
+  onScenePatched?: (scene: GameScene) => void;
 };
+
+function parseLines(text: string): string[] | undefined {
+  const lines = text
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return lines.length ? lines : undefined;
+}
+
+function sortedIds(ids: string[]): string[] {
+  return [...ids].sort();
+}
+
+function idsEqual(a: string[], b: string[]): boolean {
+  const sa = sortedIds(a);
+  const sb = sortedIds(b);
+  return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+}
+
+function AiBlockFields({
+  block,
+  aiIndex,
+  editable,
+  generating,
+  sceneCharacterIds,
+  characterOptions,
+  onUpdate,
+  onGenerate,
+}: {
+  block: ScenePassageAiBlock;
+  aiIndex: number;
+  editable: boolean;
+  generating: boolean;
+  sceneCharacterIds: string[];
+  characterOptions: Array<{id: string; name: string}>;
+  onUpdate?: (fn: (b: ScenePassageAiBlock) => ScenePassageAiBlock) => void;
+  onGenerate?: () => void;
+}) {
+  const patch = (p: Partial<ScenePassageAiBlock>) =>
+    onUpdate?.((b) => ({...b, ...p}));
+
+  const pool = characterOptions.filter((c) => sceneCharacterIds.includes(c.id));
+  const selectedIds = block.characterIds !== undefined ? block.characterIds : sceneCharacterIds;
+  const inheritsScene = block.characterIds === undefined;
+  const displayValue = selectedIds.length
+    ? selectedIds.map((id) => pool.find((c) => c.id === id)?.name ?? id).join(', ')
+    : inheritsScene
+      ? '（继承场景出场人物，当前无）'
+      : '（本块无对白角色）';
+
+  const toggleBlockCharacter = (charId: string, checked: boolean) => {
+    const base = block.characterIds !== undefined ? [...block.characterIds] : [...sceneCharacterIds];
+    const next = checked ? (base.includes(charId) ? base : [...base, charId]) : base.filter((id) => id !== charId);
+    if (idsEqual(next, sceneCharacterIds)) {
+      patch({characterIds: undefined});
+    } else {
+      patch({characterIds: next});
+    }
+  };
+
+  return (
+    <>
+      <FieldRow label="summary *" value={block.summary} editable={editable && !!onUpdate}>
+        <textarea
+          value={block.summary ?? ''}
+          onChange={(e) => patch({summary: e.target.value})}
+          style={{...styles.input, ...styles.textarea, minHeight: 56}}
+        />
+      </FieldRow>
+      <FieldRow label="wordCount *" value={String(block.wordCount ?? DEFAULT_AI_WORD_COUNT)} editable={editable && !!onUpdate}>
+        <input
+          type="number"
+          min={AI_WORD_COUNT_MIN}
+          max={AI_WORD_COUNT_MAX}
+          value={block.wordCount ?? DEFAULT_AI_WORD_COUNT}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            patch({wordCount: Number.isNaN(n) ? DEFAULT_AI_WORD_COUNT : n});
+          }}
+          style={{...styles.input, width: 120}}
+        />
+      </FieldRow>
+      <FieldRow label="emotion" value={block.emotion ?? ''} editable={editable && !!onUpdate}>
+        <input value={block.emotion ?? ''} onChange={(e) => patch({emotion: e.target.value || undefined})} style={styles.input} />
+      </FieldRow>
+      <FieldRow label="perspective" value={block.perspective ?? ''} editable={editable && !!onUpdate}>
+        <input value={block.perspective ?? ''} onChange={(e) => patch({perspective: e.target.value || undefined})} style={styles.input} />
+      </FieldRow>
+      <FieldRow label="priority" value={block.priority ?? 'medium'} editable={editable && !!onUpdate}>
+        {editable && onUpdate ? (
+          <select
+            value={block.priority ?? 'medium'}
+            onChange={(e) => patch({priority: e.target.value as AiBlockPriority})}
+            style={styles.input}
+          >
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        ) : (
+          <div style={styles.readOnlyValue}>{block.priority ?? 'medium'}</div>
+        )}
+      </FieldRow>
+      <FieldRow label="style" value={block.style ?? ''} editable={editable && !!onUpdate}>
+        <input value={block.style ?? ''} onChange={(e) => patch({style: e.target.value || undefined})} style={styles.input} placeholder="白描为主" />
+      </FieldRow>
+      <FieldRow label="pacing" value={block.pacing ?? ''} editable={editable && !!onUpdate}>
+        <input value={block.pacing ?? ''} onChange={(e) => patch({pacing: e.target.value || undefined})} style={styles.input} />
+      </FieldRow>
+      <FieldRow label="voice" value={block.voice ?? ''} editable={editable && !!onUpdate}>
+        <input value={block.voice ?? ''} onChange={(e) => patch({voice: e.target.value || undefined})} style={styles.input} placeholder="第一人称限知" />
+      </FieldRow>
+      <div style={styles.row}>
+        <label style={styles.label}>本块可发言人物</label>
+        {editable && onUpdate ? (
+          <div>
+            <p style={{fontSize: 12, color: '#999', margin: '0 0 8px'}}>
+              仅限场景「出场人物」；不自定义时与出场人物一致，可缩小本块可发言范围。
+            </p>
+            {pool.length > 0 ? (
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                {pool.map((c) => (
+                  <label
+                    key={`ai${aiIndex}-${c.id}`}
+                    style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(c.id)}
+                      onChange={(e) => toggleBlockCharacter(c.id, e.target.checked)}
+                    />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p style={{fontSize: 12, color: '#888'}}>请先在下方勾选场景「出场人物」。</p>
+            )}
+            {!inheritsScene && (
+              <button
+                type="button"
+                style={{...styles.btnSmall, marginTop: 8}}
+                onClick={() => patch({characterIds: undefined})}
+              >
+                恢复继承场景人物
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={styles.readOnlyValue}>{displayValue}</div>
+        )}
+      </div>
+      <FieldRow label="anchors（每行一条）" value={(block.anchors ?? []).join('\n')} editable={editable && !!onUpdate}>
+        <textarea
+          value={(block.anchors ?? []).join('\n')}
+          onChange={(e) => patch({anchors: parseLines(e.target.value)})}
+          style={{...styles.input, ...styles.textarea, minHeight: 48}}
+        />
+      </FieldRow>
+      <FieldRow label="forbidden（每行一条）" value={(block.forbidden ?? []).join('\n')} editable={editable && !!onUpdate}>
+        <textarea
+          value={(block.forbidden ?? []).join('\n')}
+          onChange={(e) => patch({forbidden: parseLines(e.target.value)})}
+          style={{...styles.input, ...styles.textarea, minHeight: 40}}
+        />
+      </FieldRow>
+      <FieldRow label="constraints" value={block.constraints ?? ''} editable={editable && !!onUpdate}>
+        <textarea
+          value={block.constraints ?? ''}
+          onChange={(e) => patch({constraints: e.target.value || undefined})}
+          style={{...styles.input, ...styles.textarea, minHeight: 48}}
+          placeholder="勿复述 raw；对白格式等"
+        />
+      </FieldRow>
+      <FieldRow label="generatedText" value={block.generatedText ? `${block.generatedText.slice(0, 80)}…` : '（未生成）'} editable={false}>
+        {block.generatedText ? (
+          <textarea readOnly value={block.generatedText} style={{...styles.input, ...styles.textarea, minHeight: 100, opacity: 0.9}} />
+        ) : (
+          <div style={styles.readOnlyValue}>—</div>
+        )}
+      </FieldRow>
+      {editable && onGenerate && (
+        <button
+          type="button"
+          style={{...styles.btnSmall, marginTop: 8, opacity: generating ? 0.6 : 1}}
+          disabled={generating || !block.summary?.trim()}
+          onClick={onGenerate}
+        >
+          {generating ? '生成中…' : '生成内容'}
+        </button>
+      )}
+    </>
+  );
+}
 
 function SceneFormContent({
                             scene,
@@ -98,8 +329,49 @@ function SceneFormContent({
                             characterIds,
                             eventIds,
                             ruleIds: ruleList,
+                            gameRules,
+                            onUpdateRule,
+                            onSaveRules,
                             onUpdate,
+                            fw,
+                            gameId,
+                            onScenePatched,
                           }: SceneFormProps) {
+  const [generatingAiIndex, setGeneratingAiIndex] = useState<number | null>(null);
+  const [genError, setGenError] = useState<string | null>(null);
+
+  const handleGenerateBlock = async (aiIndex: number) => {
+    const block = aiBlocks[aiIndex];
+    if (!block?.summary?.trim()) {
+      alert('请先填写 summary');
+      return;
+    }
+    if (block.generatedText?.trim() && !window.confirm('该 AI 块已有生成正文，确认覆盖？')) return;
+    if (!getAIGCApiKey()?.trim()) {
+      alert('请配置 VITE_AIGC_API_KEY');
+      return;
+    }
+    if (!import.meta.env.DEV) {
+      alert('生成内容仅支持开发模式');
+      return;
+    }
+    if (!fw || !gameId || !onScenePatched) {
+      alert('生成上下文未就绪');
+      return;
+    }
+    const passageIdx = aiIndexToPassageBlockIndex(scene, aiIndex);
+    if (passageIdx == null) return;
+    setGeneratingAiIndex(aiIndex);
+    setGenError(null);
+    try {
+      const {scene: next} = await runGenerateAiBlock(gameId, fw, scene, passageIdx);
+      onScenePatched(next);
+    } catch (e) {
+      setGenError(String(e));
+    } finally {
+      setGeneratingAiIndex(null);
+    }
+  };
   const leadingRaw = getLeadingRawBlock(scene);
   const aiBlocks = getAiBlocks(scene);
   const overrideMap = scene.characterOverrides ?? {};
@@ -156,60 +428,44 @@ function SceneFormContent({
         />
       </FieldRow>
 
+      {genError && <p style={{color: '#f88', fontSize: 13}}>{genError}</p>}
       {aiBlocks.map((block, aiIndex) => (
         <div key={`ai-${aiIndex}`} style={{marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6}}>
-          <div style={{fontSize: 13, color: '#bbb', marginBottom: 8}}>AI 块 {aiIndex + 1}</div>
-          <FieldRow label="summary" value={block.summary} editable={editable && !!onUpdate}>
-            <textarea
-              value={block.summary ?? ''}
-              onChange={(e) =>
-                onUpdate!((s) => upsertAiBlock(s, aiIndex, (b) => ({...b, summary: e.target.value})))
-              }
-              style={{...styles.input, ...styles.textarea, minHeight: 56}}
-            />
-          </FieldRow>
-          <FieldRow label="hints" value={block.hints ?? ''} editable={editable && !!onUpdate}>
-            <input
-              value={block.hints ?? ''}
-              onChange={(e) =>
-                onUpdate!((s) =>
-                  upsertAiBlock(s, aiIndex, (b) => ({
-                    ...b,
-                    hints: e.target.value.trim() || undefined,
-                  }))
-                )
-              }
-              style={styles.input}
-              placeholder="可选"
-            />
-          </FieldRow>
-          <FieldRow
-            label={`wordCount（${AI_WORD_COUNT_MIN}–${AI_WORD_COUNT_MAX}）`}
-            value={String(block.wordCount ?? DEFAULT_AI_WORD_COUNT)}
-            editable={editable && !!onUpdate}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 8,
+              gap: 8,
+            }}
           >
-            <input
-              type="number"
-              min={AI_WORD_COUNT_MIN}
-              max={AI_WORD_COUNT_MAX}
-              value={block.wordCount ?? DEFAULT_AI_WORD_COUNT}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                onUpdate!((s) =>
-                  upsertAiBlock(s, aiIndex, (b) => ({
-                    ...b,
-                    wordCount: Number.isNaN(n) ? DEFAULT_AI_WORD_COUNT : n,
-                  }))
-                );
-              }}
-              style={{...styles.input, width: 120}}
-            />
-          </FieldRow>
-          {editable && onUpdate && aiBlocks.length > 1 && (
-            <button type="button" style={styles.btnSmall} onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}>
-              删除此 AI 块
-            </button>
-          )}
+            <div style={{fontSize: 13, color: '#bbb'}}>AI 块 {aiIndex + 1}</div>
+            {editable && onUpdate && (
+              <button
+                type="button"
+                style={{
+                  ...styles.btnIcon,
+                  ...(aiBlocks.length <= 1 ? {opacity: 0.45, cursor: 'not-allowed'} : {}),
+                }}
+                disabled={aiBlocks.length <= 1}
+                title={aiBlocks.length <= 1 ? '至少保留一个 AI 块' : '删除此 AI 块'}
+                onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <AiBlockFields
+            block={block}
+            aiIndex={aiIndex}
+            editable={editable}
+            generating={generatingAiIndex === aiIndex}
+            sceneCharacterIds={scene.characterIds ?? []}
+            characterOptions={characterIds}
+            onUpdate={onUpdate ? (fn) => onUpdate((s) => upsertAiBlock(s, aiIndex, fn)) : undefined}
+            onGenerate={() => void handleGenerateBlock(aiIndex)}
+          />
         </div>
       ))}
       {editable && onUpdate && (
@@ -580,6 +836,14 @@ function SceneFormContent({
         readOnly={!editable || !onUpdate}
         label="规则"
       />
+      <RuleUsageBindings
+        ruleIds={scene.ruleIds}
+        gameRules={gameRules}
+        context={{sceneId: scene.id}}
+        editable={editable}
+        onUpdateRule={onUpdateRule}
+        onSaveRules={onSaveRules}
+      />
       <FieldRow label="条件表达式" value={scene.conditions ?? ''} editable={editable && !!onUpdate}>
         <input
           value={scene.conditions ?? ''}
@@ -662,7 +926,10 @@ async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFrame
         const parsed = key === 'metadata'
           ? (data?.characterAttributes ? {characterAttributes: data.characterAttributes} : null)
           : (Array.isArray(data) ? data : null);
-        if (parsed) updateFw((d) => ({...d, [key]: parsed}));
+        if (parsed) {
+          const value = key === 'gameRules' ? normalizeGameRules(parsed as GameRule[]) : parsed;
+          updateFw((d) => ({...d, [key]: value}));
+        }
       }
     } catch {
       // ignore
@@ -681,6 +948,16 @@ export function SceneEditor({
   const {checkAuthForSave} = useAuth();
   useEffect(() => {
     preloadForScenes(updateFw, gameId);
+  }, [updateFw, gameId]);
+
+  useEffect(() => {
+    fetch(getRulesFetchUrl(gameId))
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? normalizeGameRules(data as GameRule[]) : [];
+        if (list.length) updateFw((d) => ({...d, gameRules: list}));
+      })
+      .catch(() => {});
   }, [updateFw, gameId]);
 
   useEffect(() => {
@@ -706,7 +983,8 @@ export function SceneEditor({
   }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
   const eventIds = (fw.events ?? []).map((e) => ({id: e.id, name: e.name}));
-  const ruleIds = (fw.gameRules ?? []).map((r) => ({id: r.id, name: r.name}));
+  const gameRules = useMemo(() => normalizeGameRules(fw.gameRules ?? []), [fw.gameRules]);
+  const ruleIds = gameRules.map((r) => ({id: r.id, name: r.name}));
 
   const [detailIndex, setDetailIndex] = useState<number | null>(null);
   const [editIndex, setEditIndex] = useState<number | null>(null);
@@ -747,6 +1025,33 @@ export function SceneEditor({
     const result = await saveScenesToPreset(normalized, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
+  };
+
+  const updateRule = (ruleId: string, fn: (r: GameRule) => GameRule) =>
+    updateFw((d) => {
+      const rules = normalizeGameRules(d.gameRules ?? []);
+      const idx = rules.findIndex((r) => r.id === ruleId);
+      if (idx < 0) return d;
+      return {
+        ...d,
+        gameRules: rules.map((r, i) => (i === idx ? normalizeGameRule(fn(r)) : r)),
+      };
+    });
+
+  const saveRules = async () => {
+    const result = await saveRulesToPreset(fw.gameRules ?? [], gameId);
+    if (!result.ok) alert(`保存规则失败: ${result.error}`);
+  };
+
+  const narrativeFormProps = {
+    fw,
+    gameId,
+    onScenePatched: (patched: GameScene) => {
+      if (editIndex !== null) {
+        updateScene(editIndex, () => patched);
+        void checkAuthForSave(saveScenes);
+      }
+    },
   };
 
   return (
@@ -803,6 +1108,7 @@ export function SceneEditor({
             characterIds={characterIds}
             eventIds={eventIds}
             ruleIds={ruleIds}
+            gameRules={gameRules}
             collapsibleDefaultExpanded
           />
         </DetailEditModal>
@@ -824,7 +1130,11 @@ export function SceneEditor({
             characterIds={characterIds}
             eventIds={eventIds}
             ruleIds={ruleIds}
+            gameRules={gameRules}
+            onUpdateRule={updateRule}
+            onSaveRules={() => checkAuthForSave(saveRules)}
             onUpdate={(fn) => updateScene(editIndex, fn)}
+            {...narrativeFormProps}
           />
         </DetailEditModal>
       )}
@@ -846,6 +1156,9 @@ export function SceneEditor({
             characterIds={characterIds}
             eventIds={eventIds}
             ruleIds={ruleIds}
+            gameRules={gameRules}
+            onUpdateRule={updateRule}
+            onSaveRules={() => checkAuthForSave(saveRules)}
             onUpdate={(fn) => setNewScene(fn(newScene))}
           />
         </DetailEditModal>

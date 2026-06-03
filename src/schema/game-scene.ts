@@ -10,14 +10,39 @@ export interface ScenePassageRawBlock {
   text: string;
 }
 
+export type AiBlockPriority = 'low' | 'medium' | 'high';
+
 export interface ScenePassageAiBlock {
   type: 'ai';
-  /** AI 扩写依据（块级） */
+  /** AI 扩写依据（块级，必填） */
   summary: string;
-  /** 可选：块级写作提示 */
-  hints?: string;
-  /** 块级字数上限（建议 160–220，默认 200） */
-  wordCount?: number;
+  /** 块级字数上限（建议 160–220，默认 200，必填） */
+  wordCount: number;
+  /** 本块情绪目标 */
+  emotion?: string;
+  /** 必须出现的情节点或关键对白（锚点） */
+  anchors?: string[];
+  /** 禁止写入的内容（剧透、复述禁区等） */
+  forbidden?: string[];
+  /** 叙述视角 / 限知范围 */
+  perspective?: string;
+  /** 叙事权重 */
+  priority?: AiBlockPriority;
+  /** 文风（原 hints 中的体裁描述） */
+  style?: string;
+  /** 节奏 */
+  pacing?: string;
+  /** 人称 / 语态 */
+  voice?: string;
+  /** 硬性禁区与格式约束 */
+  constraints?: string;
+  /**
+   * 本块可参与对白的人物 id（多选）。
+   * 省略时继承 scene.characterIds；空数组表示本块不写具名对白。
+   */
+  characterIds?: string[];
+  /** 引擎生成后的正文（仅存于 story-scenes.json，汇编时写入 story.tw） */
+  generatedText?: string;
 }
 
 export type ScenePassageBlock = ScenePassageRawBlock | ScenePassageAiBlock;

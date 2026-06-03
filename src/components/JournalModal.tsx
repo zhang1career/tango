@@ -1,9 +1,9 @@
 import React, {useEffect, useRef} from 'react';
-import type {JournalEntry} from '@/types';
+import type {JournalThemeGroup} from '@/utils/journal-display';
 
 interface JournalModalProps {
   open: boolean;
-  entries: JournalEntry[];
+  groups: JournalThemeGroup[];
   onClose: () => void;
 }
 
@@ -50,6 +50,16 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'auto',
     padding: 16,
   },
+  themeBlock: {marginBottom: 20},
+  themeHead: {
+    margin: '0 0 10px',
+    fontSize: 14,
+    fontWeight: 600,
+    color: '#a78bfa',
+    borderBottom: '1px solid #2f2f45',
+    paddingBottom: 6,
+  },
+  themeDesc: {margin: '0 0 10px', fontSize: 12, color: '#888', lineHeight: 1.5},
   list: {display: 'flex', flexDirection: 'column', gap: 10},
   card: {
     borderRadius: 10,
@@ -58,23 +68,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '12px 14px',
   },
   cardTitle: {margin: 0, fontSize: 15, color: '#f3f3ff', fontWeight: 600},
-  cardMeta: {margin: '6px 0 0', fontSize: 12, color: '#a9a9c7'},
   cardContent: {margin: '8px 0 0', fontSize: 14, color: '#d8d8eb', lineHeight: 1.6, whiteSpace: 'pre-wrap'},
   emptyHint: {fontSize: 14, color: '#888', margin: 0},
 };
 
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleString('zh-CN', {
-    hour12: false,
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-export function JournalModal({open, entries, onClose}: JournalModalProps) {
+export function JournalModal({open, groups, onClose}: JournalModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const total = groups.reduce((n, g) => n + g.entries.length, 0);
 
   useEffect(() => {
     if (!open) return;
@@ -87,8 +87,6 @@ export function JournalModal({open, entries, onClose}: JournalModalProps) {
 
   if (!open) return null;
 
-  const sorted = [...entries].sort((a, b) => b.createdAt - a.createdAt);
-
   return (
     <div
       ref={overlayRef}
@@ -99,24 +97,31 @@ export function JournalModal({open, entries, onClose}: JournalModalProps) {
     >
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <header style={styles.header}>
-          <h2 style={styles.title}>心迹</h2>
+          <h2 style={styles.title}>心迹{total > 0 ? ` (${total})` : ''}</h2>
           <button type="button" style={styles.closeBtn} onClick={onClose} aria-label="关闭">
             ×
           </button>
         </header>
         <div style={styles.body}>
-          {sorted.length === 0 ? (
+          {total === 0 ? (
             <p style={styles.emptyHint}>暂无心迹。完成关键抉择后，这里会记录你的心路历程。</p>
           ) : (
-            <div style={styles.list}>
-              {sorted.map((entry) => (
-                <article key={`${entry.id}-${entry.createdAt}`} style={styles.card}>
-                  <h3 style={styles.cardTitle}>{entry.title}</h3>
-                  <p style={styles.cardMeta}>{formatTime(entry.createdAt)}</p>
-                  <p style={styles.cardContent}>{entry.content}</p>
-                </article>
-              ))}
-            </div>
+            groups.map(({theme, entries}) => (
+              <section key={theme.id} style={styles.themeBlock}>
+                <h3 style={styles.themeHead}>{theme.name}</h3>
+                {theme.description ? (
+                  <p style={styles.themeDesc}>{theme.description}</p>
+                ) : null}
+                <div style={styles.list}>
+                  {entries.map((entry) => (
+                    <article key={entry.id} style={styles.card}>
+                      <h4 style={styles.cardTitle}>{entry.title}</h4>
+                      <p style={styles.cardContent}>{entry.content}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ))
           )}
         </div>
       </div>

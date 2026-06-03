@@ -254,15 +254,17 @@ lzx-twine-import.zip
 - **结构（硬性）**：
   - **有且仅有一个** leading `type: "raw"`，且必须为数组**首项**（定调 / 史料）；
   - 其余项**必须**为 `type: "ai"`（**禁止** `raw-ai-raw` 交替；旧式中间 raw 应拆成独立 scene 或合并进 leading raw）。
-- **生成与存储**：
-  - 按数组顺序**拼接**为 `story.tw` 中该场景对应 passage 的正文；
-  - **块级元数据**（`summary` / `hints` / `wordCount`）只存在于 JSON；**生成后的正文只写入 `story.tw`**，不在 JSON 中重复存全文。
-  - 拼接后仍使用引擎**现有**自动分页（`VITE_PASSAGE_PAGE_CHARS_MIN/MAX`），**不新增**块级分页 API。
-- `ai` 块字段：
-  - `summary`（必填）；
-  - `hints`（可选，强烈建议）；
-  - `wordCount`（**必填**）：该块扩写**上限**（建议 **160–220**，默认 **200**）。
-- 文风、对白分工见「AI 正文文风与对白约定」。
+- **生成与存储（叙事引擎两阶段）**：
+  1. **生成内容**（「场景」菜单，每 AI 块）：按块规格调用叙事引擎，正文写入 `ai.generatedText`（存于 `story-scenes.json`）。
+  2. **汇编内容**（「剧情」菜单，每场景条目）：将 `raw` + 各块 `generatedText` 连缀（必要时插入过渡句），写入 `story.tw`，再按 `VITE_PASSAGE_PAGE_CHARS_MIN/MAX` 自动分页。
+  - **块级规格**存于 JSON；**汇编后的成稿**在 `story.tw`；**不在** JSON 重复存整段 passage 全文。
+- `ai` 块字段（`hints` 已废弃，请用结构化字段）：
+  - **必填**：`summary`、`wordCount`（建议 **160–220**，默认 **200**）；
+  - **选填**：`emotion`、`perspective`、`priority`（`low` | `medium` | `high`，默认 `medium`）、`style`、`pacing`、`voice`、`constraints`；
+  - **数组选填**：`anchors`（必须体现的情节点/对白）、`forbidden`（禁止写入）；
+  - **数组选填**：`characterIds`（本块可发言人物，须为 `scene.characterIds` 的子集；省略则继承出场人物，`[]` 表示不写具名对白）；
+  - **生成结果**：`generatedText`（由编辑器「生成内容」写入，上游手填亦可）。
+- 文风、对白分工见「AI 正文文风与对白约定」（面向上游素材规范）。
 - 推荐每 scene：**1 个 raw + 2–4 个 ai**；单块宜控制在约一页阅读量内，避免拼接后再被拆成过多子页造成文字墙。
 
 示例：
@@ -280,14 +282,18 @@ lzx-twine-import.zip
     {
       "type": "ai",
       "summary": "费穆初入市井，心怀投机与上升期待，见闻繁华后情绪高涨。",
-      "hints": "第一人称白描；对白极少；勿复述 raw",
-      "wordCount": 200
+      "wordCount": 200,
+      "style": "白描为主",
+      "voice": "第一人称限知",
+      "constraints": "对白极少；勿复述 raw",
+      "generatedText": "（由编辑器生成后填入，或上游手填）"
     },
     {
       "type": "ai",
       "summary": "人流中与旧识擦肩，短暂停步后仍被人潮推向前方。",
-      "hints": "短句；段末留悬念",
-      "wordCount": 180
+      "wordCount": 180,
+      "pacing": "短句；段末留悬念",
+      "generatedText": ""
     }
   ]
 }
@@ -295,7 +301,7 @@ lzx-twine-import.zip
 
 ### AI 正文文风与对白约定（`type: "ai"`，上游必遵）
 
-引擎在导出 `story.tw` 时，会按本节约束调用 OpenAI 兼容接口扩写 `type: "ai"` 块。上游在生成 `story-scenes.json` 时，应使 `summary`、`hints`、`wordCount` 与下列约定一致，避免正文过长、对白堆叠、与 `raw` 重复。
+本节面向**上游素材提供方**：在交付 `story-scenes.json` 时，应使各 `ai` 块结构化字段与下列约定一致。运行时「生成内容 / 汇编内容」由开发模式叙事引擎执行（需 `VITE_AIGC_API_KEY`），引擎审校不强制全局对白比例。
 
 #### 体裁与节奏
 
@@ -309,19 +315,16 @@ lzx-twine-import.zip
 - 承接型 `ai` 块（紧跟含台词的 `raw` 之后）应只写 **新信息**：环境变化、身体感受、心理余波、行动后果等，**不要**再扩写 `raw` 里已有的对白。
 - `summary` 中**避免**使用会诱导模型写长对白的表述，例如：“连续对话”“对白交锋”“殿议全文”“消化这句材料并外化对白”等。应改为事实性白描概要，例如：“退朝后夜路湿冷，肩上千钧，回想殿上最后一句的压力”。
 
-#### `summary` / `hints` / `wordCount` 填写规范
+#### `ai` 块结构化字段填写规范
 
-| 字段 | 要求 |
-|------|------|
-| `summary` | 事实性概要：人物、地点、事件、情绪、关键结果；不写“必须写几轮对话”类指令 |
-| `hints` | 风格与禁区；建议包含「白描为主」「对白极少」；若允许少量对白，写明「问答各占一行」 |
-| `wordCount` | **必填**（建议每个 `ai` 块都填）；表示该块**上限**，宜偏紧（见下表） |
-
-**推荐 `hints` 片段（可拼入 `hints` 字段）：**
-
-```text
-第一人称限知；白描为主；对白极少；若必须写对白则问一句一行、答一句一行；勿复述相邻 raw 中的台词
-```
+| 字段 | 必填 | 要求 |
+|------|------|------|
+| `summary` | 是 | 事实性概要：人物、地点、事件、情绪、关键结果 |
+| `wordCount` | 是 | 该块扩写**上限**（160–220，默认 200） |
+| `style` / `voice` / `constraints` | 否 | 文风、人称、禁区（原 `hints` 内容应拆入此处） |
+| `anchors` | 否 | 必须出现的情节点或关键对白 |
+| `forbidden` | 否 | 禁止剧透、禁止复述 raw 等 |
+| `generatedText` | 否 | 生成或手填的正文；汇编前各 AI 块宜已填写 |
 
 #### 对白排版（引擎与上游一致）
 
@@ -356,7 +359,7 @@ lzx-twine-import.zip
 - [ ] 每个 `ai` 块均填写 `wordCount`，且落在上述单块区间内。
 - [ ] `summary` 未要求“连续对话 / 对白交锋”；对白需求已迁移至 `behaviorLibrary` 的，正文不再重复。
 - [ ] 含殿议、诏书、史料台词的 `raw` 之后，`ai` 块 `summary` 仅写环境与心理，不扩写 `raw` 台词。
-- [ ] `hints` 含白描与对白排版约束（或等价表述）。
+- [ ] `style` / `constraints` 含白描与对白排版约束（或等价表述）。
 - [ ] 抽检导出正文：无大段无换行对白墙；单段不宜超过约 4 句。
 
 ### 上游交付前自检清单（5条）
@@ -371,7 +374,22 @@ lzx-twine-import.zip
 - [ ] **同节点多场景**：同一 `mapNodeId` 上可有多个主线 scene，应放在**同一章**的 `sceneEntries` 中按序排列。
 - [ ] **章节起止节点**：每章 `startMapNodeId` ≠ `endMapNodeId`；`title` 与地图节点 `name` 一致，无「第×章」长前缀。
 - [ ] **跨章地图边**：若 `本章 end === 下一章 start`，须有 `本章 start -> 本章 end` 边；否则须有 `本章 end -> 下一章 start` 边；**禁止**自环 `from === to`。
-- [ ] **passageBlocks 结构**：每 scene 首块为唯一 `raw`，其余为 `ai`；每个 `ai` 块填写 `wordCount`（160–220）。
+- [ ] **passageBlocks 结构**：每 scene 首块为唯一 `raw`，其余为 `ai`；每个 `ai` 块填写 `wordCount`（160–220）及结构化文风字段（无 `hints`）。
+
+### 叙事引擎真相层（可选 JSON，推荐随游戏维护）
+
+| 文件 | 导入 zip | 说明 |
+|------|----------|------|
+| `story-outline.json` | 可选 | 滚动大纲：`chapters[].narrativeGoal`、`beats[]`，与 `story-fm` 章节 id 对齐 |
+| `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`（`planned` / `planted` / `resolved`） |
+| `story-canon.json` | 可选 | 叙事状态快照：`scenes[sceneId].facts` / `characterStates` 等 |
+| `story-generation-traces.json` | **不得** | DEV 本地生成轨迹，由编辑器追加，**不要**放入上游 zip |
+
+`story-journal.json`（心迹）**不参与**叙事生成 context，避免汇总剧透。
+
+编辑器「叙事引擎」菜单可查看/编辑大纲、伏笔、Canon；「生成轨迹」只读。
+
+迁移旧 `hints`：`node scripts/migrate-passage-blocks.mjs [gameId]`
 
 ### 支线剧情选项（`story-scenes.json`，用于失败结局分支）
 
@@ -746,59 +764,92 @@ lzx-twine-import.zip
 - [ ] 未使用其他 id 承载 onlyOnce 语义。
 - [ ] 若 `story.tw` 内嵌 `gameRules`，同样包含与规范定义一致的 `rule_0001` 条目。
 
+### 规范定义：`story-journal.json`（心迹目录）
+
+**语义**：发行前定稿的心迹主题与列表项；游玩时仅展示 `unlockVar === true` 的条目。
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `themes[]` | 是 | 主题列表 |
+| `themes[].id` | 是 | 主题 id |
+| `themes[].name` | 是 | 显示名 |
+| `themes[].order` | 是 | 玩家页分组排序（升序） |
+| `themes[].description` | 否 | 主题说明 |
+| `entries[]` | 是 | 心迹列表项 |
+| `entries[].id` | 是 | 稳定 id，供 `journal.unlock` 引用 |
+| `entries[].themeId` | 是 | 所属主题 id |
+| `entries[].title` | 是 | 标题 |
+| `entries[].content` | 是 | 正文（推荐 40–120 字） |
+| `entries[].unlockVar` | 否 | 省略时为 `journal.unlocked.{id}` |
+| `entries[].order` | 否 | 同主题内排序 |
+
+> `journalThemes` 应自 `story-metadata.json` 迁至本文件；prod 构建会将本文件写入 `StoryData.journal`。
+
 ### 规范定义：`rule_0002`（setOn）
 
-**语义**：当命中指定动作（`actionRef`）且规则条件通过时，执行“赋值 + 心迹追加”。
+**语义**：当命中指定动作（`actionRef`）且准入通过时，按序执行 `effects`（统一执行面）。
 
 启用约束：
 
-- 若某游戏包启用了“心迹/备忘触发写入”能力，**MUST** 在 `story-rules.json` 提供 `rule_0002`；
-- 若 `story.tw` 的 `:: StoryData` 内嵌 `gameRules`，启用该能力时 **MUST** 同步包含 `rule_0002`；
-- 若未启用该能力，可不提供 `rule_0002`。
+- 若某游戏包启用了心迹能力，**MUST** 提供 `story-journal.json` 与 `rule_0002`；
+- 若 `story.tw` 内嵌 `gameRules`，启用该能力时 **MUST** 同步包含 `rule_0002`。
 
-字段示例：
+推荐示例：
 
 ```json
 {
   "id": "rule_0002",
   "name": "setOn",
   "judgeExpr": "true",
-  "writebackExpr": "",
-  "setOn": [
+  "execution": {"kind": "injectable"},
+  "entries": [
     {
-      "when": {"type": "event.complete", "eventId": "evt_08"},
-      "set": {"memo.afterHumen": true},
-      "journalAppend": {
-        "id": "memo_evt_08",
-        "title": "高光之后",
-        "content": "虎门销烟不是终局，而是战备起点。",
-        "onceKey": "memo.evt_08"
-      }
+      "judgeExpr": "$action.type == 'scene.enter' && $action.sceneId == 'scene_1000'",
+      "effects": [{"type": "journal.unlock", "journalId": "j_scene_1000"}]
     }
   ]
 }
 ```
 
+> **规则元信息**（`id`、`name`、`judgeExpr`、`execution.kind`）在「规则」菜单统一编辑。何时命中由 **条件表达式**（含 `$action.*`）描述；**`builtin`** 时使用处无需配置执行内容；**`injectable`** 时仅在使用处展示固定执行类型列表（引擎 `RULE_EFFECT_TYPES`）。动作上下文由使用处页面决定，不在规则上配置动作类型。
+
+`effects` 类型：
+
+| `type` | 字段 | 说明 |
+|--------|------|------|
+| `set` | `key`, `value` | 设置运行时变量 |
+| `journal.unlock` | `journalId` | 将 `journal.unlocked.{journalId}` 置为 `true` |
+| `give` | `itemId` | 获得物品 |
+| `take` | `itemId` | 失去物品 |
+| `rep` | `entity`, `delta` | 调整声誉 |
+
 字段约定：
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `setOn` | 否 | 可为对象或对象数组；每项独立匹配触发 |
-| `setOn[].when` | 是 | 动作匹配器（`actionRef`） |
-| `setOn[].set` | 否 | 命中后写入变量（`Record<string, string\\|number\\|boolean>`） |
-| `setOn[].journalAppend` | 否 | 命中后追加心迹条目（对象或数组） |
-| `journalAppend.onceKey` | 否 | 幂等键；同键只追加一次 |
+| `judgeExpr` | 否 | 规则级条件表达式；省略视为 `true` |
+| `execution` | 推荐 | 仅 `kind`：`builtin`（内建）或 `injectable`（使用处注入） |
+| `entries` | 否 | `injectable` 规则在使用处写入的执行项 |
+| `entries[].judgeExpr` | 推荐 | 本条命中条件，使用 `$action.type`、`$action.sceneId` 等约定变量 |
+| `entries[].effects` | 推荐 | 有序执行列表 |
+| `entries[].when` / 规则级 `when` | — | **遗留字段**，引擎兼容；新内容请只用 `judgeExpr` + `$action.*` |
+| `setOn` / `setOn[].when` | — | **已废弃** |
+| `setOn[].set` | 否 | **已废弃**，加载时转为 `effects` |
+| `setOn[].journalAppend` | 否 | **已废弃**，请用目录 + `journal.unlock` |
 
-#### `actionRef` 抽象（当前支持）
+#### 条件表达式约定变量（`$action.*`）
 
-| `type` | 语义 | 可选字段 |
-|--------|------|----------|
-| `scene.enter` | 进入场景 | `sceneId` |
-| `event.complete` | 事件完成 | `eventId` |
-| `behavior.execute` | 完成一次人物交互行为 | `behaviorId`, `sceneId` |
-| `item.obtain` | 获得物品 | `itemId`, `sceneId` |
+与 `$entity.is_used` 同级，在 `judgeExpr` 中引用当前动作上下文：
 
-> 设计原则：统一动作建模，新增动作只扩展 `type`，不破坏既有规则结构。
+| 变量 | 含义 |
+|------|------|
+| `$action.type` | 动作类型：`scene.enter`、`event.complete`、`behavior.execute`、`item.obtain` |
+| `$action.sceneId` | 场景 id（若有） |
+| `$action.eventId` | 事件 id |
+| `$action.behaviorId` | 行为 id |
+| `$action.itemId` | 物品 id |
+
+示例：`$action.type == 'scene.enter' && $action.sceneId == 'scene_1000'`
 
 ### 场景/事件消息（标题右侧滚动）
 
@@ -818,8 +869,9 @@ lzx-twine-import.zip
 ### 心迹（Journal）入口约定
 
 - 游戏页在“攀谈”和“背包”之间提供“心迹”入口；
-- `journalAppend` 条目用于记录“人生感悟、难忘回忆、价值信条”等；
-- 推荐每条 `content` 控制在 `40-120` 字，便于回看。
+- 正文来自 `story-journal.json`，可见性由解锁变量控制；
+- 触发在 `rule_0002` 的 `effects` 中使用 `journal.unlock`；
+- 编辑：顶栏「心迹」管目录，「规则」管 `setOn` 触发。
 
 ## 最小可用示例（可直接作为导出参考）
 

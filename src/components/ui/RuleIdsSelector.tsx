@@ -86,12 +86,6 @@ export function RuleIdsSelector({
     onChange(next.length ? next : []);
   };
 
-  const add = () => {
-    if (!addId) return;
-    onChange([...ordered, addId]);
-    setAddId('');
-  };
-
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggingIndex(index);
     e.dataTransfer.effectAllowed = 'move';
@@ -170,7 +164,15 @@ export function RuleIdsSelector({
           <select
             style={styles.select}
             value={addId}
-            onChange={(e) => setAddId(e.target.value)}
+            onChange={(e) => {
+              const id = e.target.value;
+              if (!id) {
+                setAddId('');
+                return;
+              }
+              onChange([...ordered, id]);
+              setAddId('');
+            }}
           >
             <option value="">添加规则…</option>
             {available.map((r) => (
@@ -179,9 +181,6 @@ export function RuleIdsSelector({
               </option>
             ))}
           </select>
-          <button type="button" style={styles.addBtn} onClick={add} disabled={!addId}>
-            添加
-          </button>
         </div>
       )}
     </div>

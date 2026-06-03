@@ -26,8 +26,9 @@ import type {GameItem} from '@/schema/game-item';
 import type {GameActionRef} from '@/schema/action-ref';
 import type {SceneCharacterOverride} from '@/schema/game-scene';
 import type {GameScene} from '@/schema/game-scene';
-import type {JournalEntry} from '@/types';
-import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl, getScenesFetchUrl, getAppMode} from '@/config';
+import {EMPTY_JOURNAL_CATALOG, normalizeJournalCatalog, type StoryJournalCatalog} from '@/schema/story-journal';
+import {groupJournalByTheme} from '@/utils/journal-display';
+import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl, getScenesFetchUrl, getJournalFetchUrl, getAppMode} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {resolveSceneIdFromPassage} from '@/utils/scene-id';
@@ -94,7 +95,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const [itemCatalog, setItemCatalog] = useState<GameItem[]>([]);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
-  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [journalCatalog, setJournalCatalog] = useState<StoryJournalCatalog>(EMPTY_JOURNAL_CATALOG);
   const [activeInventoryItemBgm, setActiveInventoryItemBgm] = useState<string | undefined>(undefined);
   const [eventPhaseReady, setEventPhaseReady] = useState(false);
   const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
@@ -103,7 +104,6 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const [navWarning, setNavWarning] = useState<string | null>(null);
   const eventBgmRef = useRef<HTMLAudioElement | null>(null);
   const runEventPhaseRef = useRef<() => void>(() => {});
-  const journalOnceKeysRef = useRef<Set<string>>(new Set());
   const initialSceneTriggerRef = useRef<string | null>(null);
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
@@ -124,10 +124,14 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
           gameRules?: unknown[];
           events?: unknown[];
           items?: unknown[];
+          journal?: unknown;
           features?: { battle?: { backgroundMusic?: string } };
         } | undefined;
         setCharacters(Array.isArray(meta?.characters) ? (meta.characters as GameCharacter[]) : []);
         setRules(Array.isArray(meta?.gameRules) ? (meta.gameRules as GameRule[]) : []);
+        if (meta?.journal) {
+          setJournalCatalog(normalizeJournalCatalog(meta.journal));
+        }
         if (isProdMode) {
           const prodScenes = Array.isArray((meta as { scenes?: unknown[] } | undefined)?.scenes)
             ? (((meta as { scenes?: unknown[] }).scenes ?? []) as GameScene[])
@@ -150,11 +154,20 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     };
   }, [fetchContent, isProdMode]);
 
-  const appendJournalEntry = useCallback((entry: JournalEntry, onceKey?: string) => {
-    if (onceKey && journalOnceKeysRef.current.has(onceKey)) return;
-    if (onceKey) journalOnceKeysRef.current.add(onceKey);
-    setJournalEntries((prev) => [...prev, entry]);
-  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(getJournalFetchUrl(gameId))
+      .then((res) => (res.ok ? res.json() : EMPTY_JOURNAL_CATALOG))
+      .then((data) => {
+        if (!cancelled) setJournalCatalog(normalizeJournalCatalog(data));
+      })
+      .catch(() => {
+        if (!cancelled) setJournalCatalog(EMPTY_JOURNAL_CATALOG);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameId]);
 
   const handleGameAction = useCallback(
     (actionRef: GameActionRef) => {
@@ -165,11 +178,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
         rules,
         state: {variables: s.variables, inventory: s.inventory, reputation: s.reputation},
         applyActions: (actions) => engine.applyActions(actions),
-        appendJournal: appendJournalEntry,
       });
       refresh();
     },
-    [appendJournalEntry, engine, refresh, rules]
+    [engine, refresh, rules]
   );
 
   useEffect(() => {
@@ -323,6 +335,10 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   }, [engine, refresh]);
 
   const state = engine?.getState();
+  const journalGroups = state
+    ? groupJournalByTheme(journalCatalog, state.variables)
+    : [];
+  const journalCount = journalGroups.reduce((n, g) => n + g.entries.length, 0);
   const passage = state?.currentPassage ?? null;
   const passageId = passage?.id ?? '';
   const sceneCharacterOverrides = (passage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined;
@@ -602,10 +618,8 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     setBehaviorList([]);
     setLastResponse(null);
     setBehaviorHistory([]);
-    setJournalEntries([]);
     setJournalOpen(false);
     behaviorSeqRef.current = 0;
-    journalOnceKeysRef.current.clear();
     introPlayedRef.current.clear();
     engine.restart();
     refresh();
@@ -858,7 +872,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
                     onClick={() => setJournalOpen(true)}
                   >
                     心迹
-                    {journalEntries.length > 0 ? ` (${journalEntries.length})` : ''}
+                    {journalCount > 0 ? ` (${journalCount})` : ''}
                   </button>
                   {showBackpack && (
                     <button
@@ -952,7 +966,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
 
       <JournalModal
         open={journalOpen}
-        entries={journalEntries}
+        groups={journalGroups}
         onClose={() => setJournalOpen(false)}
       />
 

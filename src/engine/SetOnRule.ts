@@ -1,8 +1,8 @@
-import type {RuntimeState, JournalEntry} from '@/types';
+import type {RuntimeState} from '@/types';
 import type {ActionRefMatcher, GameActionRef} from '@/schema/action-ref';
-import type {GameRule, JournalAppendTemplate} from '@/schema/game-rule';
+import type {GameRule, RuleEntry} from '@/schema/game-rule';
 import {evaluateCondition} from './ConditionEvaluator';
-import {parseWritebackToActions} from './WritebackExecutor';
+import {executeRuleEffects} from './RuleEffectExecutor';
 
 function matchesActionRef(matcher: ActionRefMatcher, action: GameActionRef): boolean {
   if (matcher.type !== action.type) return false;
@@ -18,6 +18,41 @@ function asArray<T>(input: T | T[] | undefined): T[] {
   return Array.isArray(input) ? input : [input];
 }
 
+function passesJudge(
+  expr: string | undefined,
+  state: RuntimeState,
+  actionRef: GameActionRef
+): boolean {
+  const trimmed = expr?.trim();
+  if (!trimmed) return true;
+  return evaluateCondition(trimmed, state, undefined, {
+    type: actionRef.type,
+    sceneId: actionRef.sceneId,
+    eventId: actionRef.eventId,
+    behaviorId: actionRef.behaviorId,
+    itemId: actionRef.itemId,
+  });
+}
+
+function entryMatchesAction(
+  rule: Pick<GameRule, 'when' | 'judgeExpr'>,
+  entry: RuleEntry,
+  actionRef: GameActionRef,
+  state: RuntimeState
+): boolean {
+  const expr = (entry.judgeExpr ?? rule.judgeExpr)?.trim();
+  const whenList = asArray(entry.when ?? rule.when);
+
+  if (expr && expr.includes('$action.')) {
+    return passesJudge(expr, state, actionRef);
+  }
+  if (whenList.length > 0) {
+    if (!whenList.some((matcher) => matchesActionRef(matcher, actionRef))) return false;
+    return !expr || expr === 'true' || passesJudge(expr, state, actionRef);
+  }
+  return passesJudge(expr, state, actionRef);
+}
+
 interface TriggerSetOnRulesParams {
   actionRef: GameActionRef;
   rules: GameRule[];
@@ -28,51 +63,26 @@ interface TriggerSetOnRulesParams {
     take?: string | string[];
     rep?: Record<string, number>;
   }) => void;
-  appendJournal: (entry: JournalEntry, onceKey?: string) => void;
+}
+
+function applyActionRule(
+  rule: Pick<GameRule, 'when' | 'judgeExpr' | 'effects'>,
+  entry: RuleEntry,
+  actionRef: GameActionRef,
+  state: RuntimeState,
+  applyActions: TriggerSetOnRulesParams['applyActions']
+): void {
+  if (!entryMatchesAction(rule, entry, actionRef, state)) return;
+  executeRuleEffects(entry.effects ?? rule.effects, {applyActions});
 }
 
 export function triggerSetOnRules(params: TriggerSetOnRulesParams): void {
-  const {actionRef, rules, state, applyActions, appendJournal} = params;
+  const {actionRef, rules, state, applyActions} = params;
 
   for (const rule of rules) {
-    const setOnList = asArray(rule.setOn);
-    for (const setOn of setOnList) {
-      const whenList = asArray(setOn.when);
-      if (whenList.length === 0) continue;
-      const hit = whenList.some((matcher) => matchesActionRef(matcher, actionRef));
-      if (!hit) continue;
-
-      if (rule.judgeExpr?.trim()) {
-        if (!evaluateCondition(rule.judgeExpr.trim(), state)) continue;
-      }
-
-      if (setOn.set && Object.keys(setOn.set).length > 0) {
-        applyActions({set: setOn.set});
-      }
-
-      if (rule.writebackExpr?.trim()) {
-        const actions = parseWritebackToActions(rule.writebackExpr.trim(), {
-          variables: state.variables,
-          reputation: state.reputation,
-        });
-        if (actions) applyActions(actions);
-      }
-
-      const journals = asArray<JournalAppendTemplate>(setOn.journalAppend);
-      for (const draft of journals) {
-        if (!draft.id?.trim() || !draft.title?.trim() || !draft.content?.trim()) continue;
-        appendJournal(
-          {
-            id: draft.id.trim(),
-            title: draft.title.trim(),
-            content: draft.content.trim(),
-            tags: draft.tags?.filter(Boolean),
-            createdAt: Date.now(),
-            sourceActionRef: actionRef,
-          },
-          draft.onceKey
-        );
-      }
+    const entries = (rule.entries ?? []).filter(Boolean);
+    for (const entry of entries) {
+      applyActionRule(rule, entry, actionRef, state, applyActions);
     }
   }
 }

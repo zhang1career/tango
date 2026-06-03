@@ -8,7 +8,10 @@ import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameRule} from '../schema/game-rule';
+import type {RuleExecutionKind} from '../schema/rule-execution';
 import {formatJsonCompact} from '../utils/json-format';
+import {normalizeGameRules} from '../utils/normalize-game-rules';
+import {RULE_EXECUTION_KIND_OPTIONS} from '../utils/rule-usage';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {editorStyles as styles} from '../styles/editorStyles';
 
@@ -62,7 +65,21 @@ type RuleFormProps = {
   onUpdate?: (fn: (r: GameRule) => GameRule) => void;
 };
 
+const RULE_FORM_HINT =
+  '条件表达式支持约定变量（如 $entity.is_used、$action.sceneId 等）。留空视为 true。';
+
+function emptyRule(): GameRule {
+  return {
+    id: '',
+    name: '',
+    judgeExpr: undefined,
+    execution: {kind: 'builtin'},
+  };
+}
+
 function RuleFormContent({rule, editable, onUpdate}: RuleFormProps) {
+  const executionKind = rule.execution?.kind ?? 'builtin';
+
   return (
     <div>
       <FieldRow label="ID" value={rule.id} editable={editable && !!onUpdate}>
@@ -70,7 +87,7 @@ function RuleFormContent({rule, editable, onUpdate}: RuleFormProps) {
           value={rule.id}
           onChange={(e) => onUpdate!((r) => ({...r, id: e.target.value}))}
           style={styles.input}
-          placeholder="only_once"
+          placeholder="规则 id"
         />
       </FieldRow>
       <FieldRow label="名称" value={rule.name} editable={editable && !!onUpdate}>
@@ -78,25 +95,36 @@ function RuleFormContent({rule, editable, onUpdate}: RuleFormProps) {
           value={rule.name}
           onChange={(e) => onUpdate!((r) => ({...r, name: e.target.value}))}
           style={styles.input}
-          placeholder="仅一次"
+          placeholder="规则名称"
         />
       </FieldRow>
       <FieldRow label="条件表达式" value={rule.judgeExpr} editable={editable && !!onUpdate}>
         <textarea
-          value={rule.judgeExpr}
-          onChange={(e) => onUpdate!((r) => ({...r, judgeExpr: e.target.value}))}
+          value={rule.judgeExpr ?? ''}
+          onChange={(e) => onUpdate!((r) => ({...r, judgeExpr: e.target.value || undefined}))}
           style={{...styles.input, ...styles.textarea, minHeight: 60}}
-          placeholder="!$entity.is_used"
+          placeholder="留空视为 true"
         />
       </FieldRow>
-      <FieldRow label="回写表达式" value={rule.writebackExpr} editable={editable && !!onUpdate}>
-        <textarea
-          value={rule.writebackExpr}
-          onChange={(e) => onUpdate!((r) => ({...r, writebackExpr: e.target.value}))}
-          style={{...styles.input, ...styles.textarea, minHeight: 60}}
-          placeholder="$entity.is_used = true"
-        />
+      <FieldRow label="执行方式" value={executionKind} editable={editable && !!onUpdate}>
+        <select
+          value={executionKind}
+          onChange={(e) => {
+            const kind = e.target.value as RuleExecutionKind;
+            onUpdate!((r) => ({
+              ...r,
+              execution: {kind},
+              entries: kind === 'builtin' ? undefined : r.entries,
+            }));
+          }}
+          style={styles.input}
+        >
+          {RULE_EXECUTION_KIND_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
       </FieldRow>
+      <p style={{fontSize: 12, color: '#888', marginTop: 8}}>{RULE_FORM_HINT}</p>
     </div>
   );
 }
@@ -114,8 +142,8 @@ export function RuleEditor({
     fetch(getRulesFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
       .then((data) => {
-        const list = Array.isArray(data) ? data : [];
-        updateFw((d) => ({...d, gameRules: list as GameRule[]}));
+        const list = Array.isArray(data) ? normalizeGameRules(data as GameRule[]) : [];
+        updateFw((d) => ({...d, gameRules: list}));
       })
       .catch(() => {
       });
@@ -129,18 +157,16 @@ export function RuleEditor({
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [newRule, setNewRule] = useState<GameRule>(() => ({
+    ...emptyRule(),
     id: `rule_${Date.now()}`,
     name: '新规则',
-    judgeExpr: '',
-    writebackExpr: '',
   }));
 
   const openAddModal = () => {
     setNewRule({
+      ...emptyRule(),
       id: `rule_${Date.now()}`,
       name: '新规则',
-      judgeExpr: '',
-      writebackExpr: '',
     });
     setAddModalOpen(true);
   };
@@ -215,9 +241,7 @@ export function RuleEditor({
           open={true}
           onClose={() => setDetailIndex(null)}
           editable={false}>
-          <RuleFormContent
-            rule={rules[detailIndex]}
-            editable={false}/>
+          <RuleFormContent rule={rules[detailIndex]} editable={false} />
         </DetailEditModal>
       )}
 
@@ -231,7 +255,8 @@ export function RuleEditor({
           <RuleFormContent
             rule={rules[editIndex]}
             editable={true}
-            onUpdate={(fn) => updateRule(editIndex, fn)}/>
+            onUpdate={(fn) => updateRule(editIndex, fn)}
+          />
         </DetailEditModal>
       )}
 
@@ -246,7 +271,8 @@ export function RuleEditor({
           <RuleFormContent
             rule={newRule}
             editable={true}
-            onUpdate={(fn) => setNewRule(fn(newRule))}/>
+            onUpdate={(fn) => setNewRule(fn(newRule))}
+          />
         </DetailEditModal>
       )}
     </div>

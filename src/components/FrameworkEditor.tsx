@@ -6,14 +6,15 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import JSZip from 'jszip';
 import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
-import type {GameScene, SceneCharacterOverride, ScenePassageAiBlock, ScenePassageBlock} from '../schema/game-scene';
+import type {GameScene} from '../schema/game-scene';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {GameMap} from '../schema/game-map';
 import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
-import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
+import type {GameRule} from '../schema/game-rule';
+import {getAIGCApiKey, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
 import {useAuth} from '@/context/AuthContext';
@@ -25,9 +26,10 @@ import {
   applyScenePassageFullText,
   collectSceneFullText,
 } from '../utils/scene-passage-text';
-import {collectPrecedingRawTexts, stripAiTextOverlappingRaw} from '../utils/strip-ai-raw-overlap';
-import {formatAiWordCountPrompt} from '../utils/passage-blocks';
+import {getAiBlocks, getScenePassageBlocks} from '../utils/passage-blocks';
+import {runAssembleScene} from '@/services/scene-block-generation';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
+import {RuleUsageBindings} from './RuleUsageBindings';
 
 type ImportZipFile = {path: string; contentBase64: string};
 type ImportPendingData = {
@@ -118,225 +120,15 @@ function truncatePathForDisplay(name: string, maxLen = 28): string {
   return '…' + name.slice(-maxLen + 1);
 }
 
-function getScenePassageBlocks(scene: GameScene): ScenePassageBlock[] {
-  return Array.isArray(scene.passageBlocks) ? scene.passageBlocks : [];
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function wrapRawPassageBlock(text: string): string {
-  return `<div class="raw-passage-quote">${escapeHtml(text)}</div>`;
-}
-
 function sceneContextSummary(scene: GameScene): string {
-  const blocks = getScenePassageBlocks(scene);
-  if (blocks.length === 0) return '';
-  const aiSummaries = blocks
-    .filter((block): block is ScenePassageAiBlock => block.type === 'ai')
-    .map((block) => block.summary?.trim())
-    .filter(Boolean);
+  const aiSummaries = getAiBlocks(scene).map((b) => b.summary?.trim()).filter(Boolean);
   if (aiSummaries.length > 0) return aiSummaries.join(' ');
-  const rawFallback: string[] = [];
-  for (const block of blocks) {
-    if (block.type !== 'raw') continue;
-    const text = block.text?.trim();
-    if (text) rawFallback.push(text.length > 40 ? `${text.slice(0, 40)}...` : text);
+  const raw = getScenePassageBlocks(scene).find((b) => b.type === 'raw');
+  if (raw?.type === 'raw' && raw.text?.trim()) {
+    const t = raw.text.trim();
+    return t.length > 40 ? `${t.slice(0, 40)}...` : t;
   }
-  return rawFallback.join(' ');
-}
-
-function truncateForPrompt(text: string, max = 120): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
-  if (!compact) return '';
-  return compact.length > max ? `${compact.slice(0, max)}...` : compact;
-}
-
-const AI_PROMPT_BUDGET = {
-  maxChapterEvents: 8,
-  maxPreviousSceneSummaries: 8,
-  maxCharactersInContext: 14,
-  maxBehaviorsPerCharacter: 5,
-};
-
-function applyCharacterOverride(
-  base: GameCharacter,
-  override?: SceneCharacterOverride
-): GameCharacter {
-  if (!override) return base;
-  return {
-    ...base,
-    description: override.description ?? base.description,
-    attributes: override.attributes ?? base.attributes,
-    inventory: override.inventory ?? base.inventory,
-    behaviorLibrary: override.behaviorLibrary ?? base.behaviorLibrary,
-  };
-}
-
-function compactBehaviorForPrompt(behavior: GameBehavior): Record<string, unknown> {
-  return {
-    id: behavior.id,
-    t: behavior.t ?? 'dialog',
-    actionKind: behavior.actionKind,
-    q: truncateForPrompt(behavior.q ?? '', 80),
-    a: truncateForPrompt(behavior.a ?? '', 80),
-    sceneIds: behavior.sceneIds?.length ? behavior.sceneIds : undefined,
-    ruleIds: behavior.ruleIds?.length ? behavior.ruleIds : undefined,
-    judgeExpr: behavior.judgeExpr ? truncateForPrompt(behavior.judgeExpr, 80) : undefined,
-    writebackExpr: behavior.writebackExpr ? truncateForPrompt(behavior.writebackExpr, 80) : undefined,
-  };
-}
-
-function collectChapterCharacterIds(ch: FrameworkChapter, sceneMap: Map<string, GameScene>): Set<string> {
-  const charIds = new Set<string>();
-  for (const e of ch.sceneEntries ?? []) {
-    const s = sceneMap.get(e.sceneId);
-    for (const id of s?.characterIds ?? []) charIds.add(id);
-  }
-  return charIds;
-}
-
-function buildCharacterResourceDict(
-  fw: StoryFramework,
-  chapterCharIds: Set<string>,
-  sceneCharIds: Set<string>,
-  counterpartCharacterIds: Set<string>,
-  sceneCharacterOverrides?: Record<string, SceneCharacterOverride>
-): Record<string, unknown> {
-  const itemNameMap = new Map((fw.items ?? []).map((it) => [it.id, it.name]));
-  const chars = (fw.characters ?? [])
-    .filter((c) => chapterCharIds.has(c.id))
-    .slice(0, AI_PROMPT_BUDGET.maxCharactersInContext);
-  const dict: Record<string, unknown> = {};
-  for (const c of chars) {
-    const effective = applyCharacterOverride(c, sceneCharacterOverrides?.[c.id]);
-    const behaviorLibrary = effective.behaviorLibrary ?? [];
-    const behaviorPreview = behaviorLibrary
-      .slice(0, AI_PROMPT_BUDGET.maxBehaviorsPerCharacter)
-      .map(compactBehaviorForPrompt);
-    const inventory = (effective.inventory ?? []).map((id) => ({
-      id,
-      name: itemNameMap.get(id) ?? id,
-    }));
-    dict[c.id] = {
-      id: effective.id,
-      name: effective.name,
-      description: effective.description ? truncateForPrompt(effective.description, 300) : undefined,
-      appearsInCurrentScene: sceneCharIds.has(c.id),
-      counterpartsInCurrentScene: sceneCharIds.has(c.id)
-        ? Array.from(counterpartCharacterIds).filter((id) => id !== c.id)
-        : [],
-      attributes: effective.attributes ?? {},
-      inventory,
-      behaviorCount: behaviorLibrary.length,
-      behaviorLibraryPreview: behaviorPreview,
-      behaviorLibraryTruncated: behaviorLibrary.length > behaviorPreview.length,
-      hasSceneOverride: !!sceneCharacterOverrides?.[c.id],
-    };
-  }
-  return dict;
-}
-
-type AiGenerationContext = {
-  possibilityContext: string;
-  constraintContext: string;
-};
-
-function buildSceneRawContextForAiBlock(
-  scene: GameScene,
-  aiBlockIndex?: number
-): {
-  precedingRawBlockCount?: number;
-  followingRawBlockCount?: number;
-} {
-  if (aiBlockIndex == null) return {};
-  const blocks = getScenePassageBlocks(scene);
-  let precedingRawBlockCount = 0;
-  let followingRawBlockCount = 0;
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].type !== 'raw') continue;
-    if (i < aiBlockIndex) precedingRawBlockCount++;
-    else if (i > aiBlockIndex) followingRawBlockCount++;
-  }
-  return {
-    precedingRawBlockCount: precedingRawBlockCount || undefined,
-    followingRawBlockCount: followingRawBlockCount || undefined,
-  };
-}
-
-function buildAiGenerationContext(
-  fw: StoryFramework,
-  scene: GameScene,
-  ch: FrameworkChapter,
-  sceneIndex: number,
-  sceneMap: Map<string, GameScene>,
-  aiBlockIndex?: number
-): AiGenerationContext {
-  const entries = ch.sceneEntries ?? [];
-  const prev = entries.slice(0, sceneIndex);
-  const previousSceneSummaries = prev.slice(-AI_PROMPT_BUDGET.maxPreviousSceneSummaries).map((e) => {
-    const s = sceneMap.get(e.sceneId);
-    return {
-      sceneId: e.sceneId,
-      summary: s ? truncateForPrompt(sceneContextSummary(s), 180) : '',
-    };
-  });
-  const rawContext = buildSceneRawContextForAiBlock(scene, aiBlockIndex);
-  const chapterCharIds = collectChapterCharacterIds(ch, sceneMap);
-  const sceneCharIds = new Set((scene.characterIds ?? []).filter(Boolean));
-  const counterpartCharacterIds = new Set((scene.counterpartCharacterIds ?? []).filter(Boolean));
-  const chapterEventIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
-    for (const id of s?.eventIds ?? []) chapterEventIds.add(id);
-  }
-  const chapterEvents = (fw.events ?? [])
-    .filter((e) => chapterEventIds.has(e.id))
-    .slice(0, AI_PROMPT_BUDGET.maxChapterEvents)
-    .map((e) => ({
-      id: e.id,
-      name: e.name,
-      description: e.description ? truncateForPrompt(e.description, 160) : undefined,
-    }));
-  const characterResourceDict = buildCharacterResourceDict(
-    fw,
-    chapterCharIds,
-    sceneCharIds,
-    counterpartCharacterIds,
-    scene.characterOverrides
-  );
-  const possibilityPayload = {
-    background: fw.background ? truncateForPrompt(fw.background, 600) : undefined,
-    chapterEvents,
-    currentSceneCharacters: Array.from(sceneCharIds),
-    counterpartCharacters: Array.from(counterpartCharacterIds),
-    counterpartSource: 'scene.counterpartCharacterIds',
-    chapterCharacterIds: Array.from(chapterCharIds),
-    characterResourceDict,
-    promptBudget: AI_PROMPT_BUDGET,
-    note: 'onMeet 当前未接入运行时执行链路，故本次不纳入 AI 可用资源。',
-  };
-  const constraintPayload = {
-    writingRules: fw.rules ?? [],
-    chapterTitle: ch.title,
-    chapterTheme: ch.theme ?? '',
-    previousSceneSummaries,
-    ...rawContext,
-    rawContextNote:
-      rawContext.precedingRawBlockCount || rawContext.followingRawBlockCount
-        ? `当前场景成稿中，本 AI 块之前已有 ${rawContext.precedingRawBlockCount ?? 0} 段 raw 原文、之后另有 ${rawContext.followingRawBlockCount ?? 0} 段 raw 原文，它们会单独展示。AI 正文不得复述、摘抄或同义改写这些 raw 内容；只扩写 summary。`
-        : '只扩写 summary，不要复述 passage 中已单独展示的 raw 原文。',
-  };
-  return {
-    possibilityContext: JSON.stringify(possibilityPayload, null, 2),
-    constraintContext: JSON.stringify(constraintPayload, null, 2),
-  };
+  return '';
 }
 
 function FileHandleButton({
@@ -435,142 +227,6 @@ async function saveFrameworkToStorage(gameId: string, fw: StoryFramework): Promi
   if (!res.ok || !data.ok) throw new Error(data.error || `保存剧情框架失败: ${res.status}`);
 }
 
-async function generateAiPassageBlockText(
-  fw: StoryFramework,
-  scene: GameScene,
-  ch: FrameworkChapter,
-  sceneIndex: number,
-  sceneMap: Map<string, GameScene>,
-  block: ScenePassageAiBlock,
-  blockIndex: number,
-  apiKey: string,
-  apiUrl: string
-): Promise<string> {
-  const rules = (fw.rules ?? []).map((r) => `- ${r}`).join('\n');
-  const precedingRawTexts = collectPrecedingRawTexts(scene, blockIndex);
-  const system = `你是一名文字冒险游戏编剧。请基于输入中的「创作可能性资源」与「创作范围约束」完成有限演义扩写。
-
-机制说明（必须遵守）：
-- 创作可能性资源：用于提供可引用的素材池（故事背景、章节事件、人物资源字典等），可以引用但不是必须全部使用。
-- behaviorLibraryPreview 是玩家互动对话素材，不要把其中的 q/a 原文嵌入 passage 正文。
-- 创作范围约束：用于限定事实边界（写作规则、章节标题/主题、前序场景摘要、当前块 summary 等），必须优先服从。
-- 场景中 type=raw 的正文块会原样插入成稿并与 AI 块拼接展示。读者已能看到这些 raw 原文，AI 正文严禁复述、摘抄或同义改写 raw 内容；尤其不得重复 raw 中已有的对白、诏书原句、史料摘录。
-
-文风（必须遵守）：
-- 以白描为主：场景、动作、体感、心理承载情绪与背景；节奏适中，既不要快剪流水账，也不要长篇议论。
-- 旁白与描写优先；完整问答、可反复阅读的角色台词应留给玩家互动层，不要写进 passage。
-- 对白宜少：默认不写对白；仅当 summary 明确要求出现某句关键台词时，才可写少量对白（通常不超过 2 轮一问一答）。
-- 若必须写对白：每一句发言单独成行（问一行、答一行），不要把多轮对话挤在同一段；引号内为原话。
-
-硬性约束（必须遵守）：
-- 以 summary 的事实为主干，只能在其范围内做细节补全，不得改写核心事实。
-- 只扩写本块 summary：用旁白、描写补足细节，从 summary 的新角度切入，不要重述 raw 已写过的句子。
-- 正文开头不得复用 raw 原文的首句、关键短语或史料摘录。
-- 不得新增 summary 未出现且上下文也未出现的关键设定（新人物、新地点、新组织、新事件主线、新世界观规则）。
-- 允许补充少量过渡句、动作细节、情绪描写，但不得引入会改变剧情走向的新信息。
-- 若 summary 信息不足，优先保守表达，不要臆造。
-- 若提供了字数要求，全文不得超过该字数（含标点）。
-
-写作规则：${rules || '- 简洁有力，适合文字冒险'}
-
-输出要求：纯正文，不要包含 [[链接]]，链接由系统自动添加。`;
-
-  const aiCtx = buildAiGenerationContext(fw, scene, ch, sceneIndex, sceneMap, blockIndex);
-  const user = `【创作可能性资源（提供可用素材，不等于必须全部采用）】
-${aiCtx.possibilityContext}
-
-【创作范围约束（限定事实边界，优先级高于可能性资源）】
-${aiCtx.constraintContext}
-
----
-
-场景：${scene.id}（${scene.name}）
-正文块：第 ${blockIndex + 1} 块 / AI 生成
-场景概要（最高优先级，必须严格围绕此内容扩写）：${block.summary}
-${block.hints ? `写作提示：${block.hints}` : ''}
-${formatAiWordCountPrompt(block)}
-
-重要：本场景已有 ${precedingRawTexts.length} 段 raw 原文展示在本 AI 块之前。只做 summary 的增量扩写，不要重复 raw 原文（尤其不要重复 raw 中的对白），也不要从 raw 首句起笔。
-
-请生成该场景的剧情正文（白描为主，旁白与描写优先，对白极少且须分行；仅做有限演义扩写）：`;
-
-  const res = await fetch(`${apiUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {role: 'system', content: system},
-        {role: 'user', content: user},
-      ],
-      temperature: 0.3,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`API 错误 ${res.status}: ${err}`);
-  }
-
-  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = json.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error('API 未返回正文');
-  const deduped = stripAiTextOverlappingRaw(content, precedingRawTexts);
-  if (!deduped) {
-    throw new Error('API 返回正文与 raw 块高度重复，请重试生成');
-  }
-  return deduped;
-}
-
-async function generateScenePassageText(
-  fw: StoryFramework,
-  scene: GameScene,
-  ch: FrameworkChapter,
-  sceneIndex: number,
-  sceneMap: Map<string, GameScene>,
-  apiKey: string,
-  apiUrl: string
-): Promise<string> {
-  const blocks = getScenePassageBlocks(scene);
-  if (blocks.length === 0) {
-    throw new Error(`场景 ${scene.id} 缺少 passageBlocks，无法生成正文`);
-  }
-
-  const rendered: string[] = [];
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (block.type === 'raw') {
-      const text = block.text?.trim();
-      if (text) rendered.push(wrapRawPassageBlock(text));
-      continue;
-    }
-    const summary = block.summary?.trim();
-    if (!summary) {
-      throw new Error(`场景 ${scene.id} 的第 ${i + 1} 个 ai 块缺少 summary`);
-    }
-    const aiText = await generateAiPassageBlockText(
-      fw,
-      scene,
-      ch,
-      sceneIndex,
-      sceneMap,
-      block,
-      i,
-      apiKey,
-      apiUrl
-    );
-    rendered.push(aiText);
-  }
-
-  if (rendered.length === 0) {
-    throw new Error(`场景 ${scene.id} 的 passageBlocks 未产出有效正文`);
-  }
-  return rendered.join('\n\n');
-}
-
 function hashString(input: string): string {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) {
@@ -647,7 +303,7 @@ function getSceneEntryFingerprint(
     scene: {
       id: scene.id,
       name: scene.name,
-      passageBlocks: scene.passageBlocks ?? [],
+      passageBlocks: getScenePassageBlocks(scene),
       mapNodeId: scene.mapNodeId ?? '',
       characterIds: scene.characterIds ?? [],
       counterpartCharacterIds: scene.counterpartCharacterIds ?? [],
@@ -657,7 +313,6 @@ function getSceneEntryFingerprint(
       backgroundMusic: scene.backgroundMusic ?? '',
       images: scene.images ?? [],
     },
-    aiContext: buildAiGenerationContext(fw, scene, ch, sceneIndex, sceneMap),
   }));
 }
 
@@ -743,8 +398,7 @@ async function compileSceneEntry(
   fw: StoryFramework,
   story: ReturnType<typeof parseTwee>,
   target: SceneCompileTarget,
-  apiKey: string,
-  apiUrl: string
+  gameId: string
 ): Promise<{ fw: StoryFramework; story: ReturnType<typeof parseTwee> }> {
   const {chapterIndex, sceneIndex} = target;
   const ch = fw.chapters[chapterIndex];
@@ -756,8 +410,8 @@ async function compileSceneEntry(
   const fp = getSceneEntryFingerprint(fw, ch, sceneIndex, sceneMap);
   if (!fp) throw new Error('无法计算版本指纹');
 
-  const text = await generateScenePassageText(fw, scene, ch, sceneIndex, sceneMap, apiKey, apiUrl);
-  applySceneTextToStory(story, frameworkToStory(fw), fw, scene, chapterIndex, text);
+  const {passageText} = await runAssembleScene(gameId, scene, ch.id);
+  applySceneTextToStory(story, frameworkToStory(fw), fw, scene, chapterIndex, passageText);
   return {
     fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => ({...e, compiledFingerprint: fp})),
     story,
@@ -786,6 +440,31 @@ async function persistStoryTitleToTw(gameId: string, fw: StoryFramework): Promis
   if (story.title.trim() === title) return;
   syncStoryTitleFromFramework(story, fw);
   await saveStoryTw(gameId, story);
+}
+
+async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
+  if (import.meta.env.DEV) {
+    try {
+      const res = await fetch(getRulesFetchUrl(gameId), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: formatJsonCompact(rules),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (res.ok && json.ok) return {ok: true};
+      return {ok: false, error: json.error || `HTTP ${res.status}`};
+    } catch (e) {
+      return {ok: false, error: String(e)};
+    }
+  }
+  const blob = new Blob([formatJsonCompact(rules)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'story-rules.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  return {ok: true};
 }
 
 export function FrameworkEditor({
@@ -820,7 +499,6 @@ export function FrameworkEditor({
   editingSceneTextRef.current = editingSceneText;
   const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
   const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
-  const apiUrl = getAIGCApiUrl();
   const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
 
   useEffect(() => {
@@ -871,6 +549,7 @@ export function FrameworkEditor({
     for (const n of map.nodes) mapNodeIds.push({id: n.id, name: n.name, mapName: map.name});
   }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
+  const gameRules = fw.gameRules ?? [];
   const {valid, errors} = validateFramework(fw);
   const handleNew = useCallback(() => {
     setNewGameModalOpen(true);
@@ -913,6 +592,18 @@ export function FrameworkEditor({
     setNewGameIdInput('');
     setNewGameError(null);
   }, []);
+
+  const updateRule = useCallback((ruleId: string, fn: (r: GameRule) => GameRule) => {
+    updateFwWithErrorReset((d) => ({
+      ...d,
+      gameRules: (d.gameRules ?? []).map((r) => (r.id === ruleId ? fn(r) : r)),
+    }));
+  }, [updateFwWithErrorReset]);
+
+  const saveRules = useCallback(async () => {
+    const result = await saveRulesToPreset(fw.gameRules ?? [], gameId);
+    if (!result.ok) addNotification('error', `规则保存失败: ${result.error}`);
+  }, [fw.gameRules, gameId, addNotification]);
 
   const handleSave = useCallback(async () => {
     try {
@@ -1012,7 +703,7 @@ export function FrameworkEditor({
             const sceneLabel = `${ch.title || ch.id} / ${scene?.name ?? entry.sceneId}`;
             setCompileProgress({current: i + 1, total: changedTargets.length, scene: sceneLabel});
             try {
-              const result = await compileSceneEntry(nextFw, story, t, key, apiUrl);
+              const result = await compileSceneEntry(nextFw, story, t, targetGameId);
               nextFw = result.fw;
               story = result.story;
               await saveStoryTw(targetGameId, story);
@@ -1051,7 +742,7 @@ export function FrameworkEditor({
       setCompileProgress(null);
       setIsImporting(false);
     }
-  }, [apiKey, apiUrl, importPendingData, importGameIdInput, importCompileEnabled, updateFw, addNotification, refetchGameIds, setGameId]);
+  }, [apiKey, importPendingData, importGameIdInput, importCompileEnabled, updateFw, addNotification, refetchGameIds, setGameId]);
 
   const handleImportCancel = useCallback(() => {
     if (isImporting) return;
@@ -1091,7 +782,7 @@ export function FrameworkEditor({
     }
   }, [gameId, addNotification]);
 
-  const handleGenerateScene = useCallback(
+  const handleAssembleScene = useCallback(
     async (chi: number, si: number) => {
       const ch = fw.chapters[chi];
       const entry = ch?.sceneEntries?.[si];
@@ -1104,34 +795,33 @@ export function FrameworkEditor({
         alert(`未找到场景「${entry.sceneId}」。请先在「场景」页添加该场景，并确保剧情页已加载场景数据。`);
         return;
       }
-      const key = apiKey?.trim();
-      if (!key) {
-        alert('请配置 VITE_AIGC_API_KEY 或 VITE_OPENAI_API_KEY');
+      if (!apiKey?.trim()) {
+        alert('请配置 VITE_AIGC_API_KEY');
         return;
       }
       if (!import.meta.env.DEV) {
-        alert('生成游戏需要开发模式，当前为生产环境。');
+        alert('汇编内容需要开发模式，当前为生产环境。');
         return;
       }
       const sk = `${chi}-${si}`;
       setGeneratingSceneKey(sk);
       setJsonError(null);
-      const contentUrl = getGameContentUrl(gameId);
       try {
-        const res = await fetch(contentUrl);
+        const res = await fetch(getGameContentUrl(gameId));
         const raw = res.ok ? await res.text() : '';
         let story = parseTwee(raw);
-        const result = await compileSceneEntry(fw, story, {chapterIndex: chi, sceneIndex: si}, key, apiUrl);
+        const result = await compileSceneEntry(fw, story, {chapterIndex: chi, sceneIndex: si}, gameId);
         await saveStoryTw(gameId, result.story);
         updateFw(() => result.fw);
         await saveFrameworkToStorage(gameId, result.fw);
+        addNotification('info', `已汇编场景：${scene.name}`);
       } catch (e) {
         setJsonError((e as Error).message);
       } finally {
         setGeneratingSceneKey(null);
       }
     },
-    [fw, apiKey, apiUrl, gameId, sceneMap, updateFw]
+    [fw, apiKey, gameId, sceneMap, updateFw, addNotification]
   );
 
   const handleLoadSceneText = useCallback(
@@ -1448,11 +1138,14 @@ export function FrameworkEditor({
             toggleCh={toggleCh}
             onToggleEntry={(si) => toggleScene(chi, si)}
             updateFw={updateFwWithErrorReset}
-            onGenerateScene={(si) => handleGenerateScene(chi, si)}
+            onAssembleScene={(si) => handleAssembleScene(chi, si)}
             generatingEntry={generatingSceneKey}
             sceneTextDrafts={editingSceneText}
             loadingSceneTextKey={loadingSceneTextKey}
             savingSceneTextKey={savingSceneTextKey}
+            gameRules={gameRules}
+            onUpdateRule={updateRule}
+            onSaveRules={() => checkAuthForSave(saveRules)}
             onSceneTextDraftChange={(entryKey, value) =>
               setEditingSceneText((prev) => ({...prev, [entryKey]: value}))
             }
@@ -1476,11 +1169,14 @@ function ChapterBlock({
   toggleCh,
   onToggleEntry,
   updateFw,
-  onGenerateScene,
+  onAssembleScene,
   generatingEntry,
   sceneTextDrafts,
   loadingSceneTextKey,
   savingSceneTextKey,
+  gameRules,
+  onUpdateRule,
+  onSaveRules,
   onSceneTextDraftChange,
   onLoadSceneText,
   onSaveSceneText,
@@ -1495,11 +1191,14 @@ function ChapterBlock({
   toggleCh: (id: string) => void;
   onToggleEntry: (si: number) => void;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
-  onGenerateScene: (si: number) => void;
+  onAssembleScene: (si: number) => void;
   generatingEntry: string | null;
   sceneTextDrafts: Record<string, string>;
   loadingSceneTextKey: string | null;
   savingSceneTextKey: string | null;
+  gameRules: GameRule[];
+  onUpdateRule?: (ruleId: string, fn: (r: GameRule) => GameRule) => void;
+  onSaveRules?: () => void;
   onSceneTextDraftChange: (entryKey: string, value: string) => void;
   onLoadSceneText: (si: number) => void;
   onSaveSceneText: (si: number) => void;
@@ -1670,11 +1369,11 @@ function ChapterBlock({
                         ...styles.btnSmall,
                         ...(isGenerating ? {opacity: 0.6} : {}),
                       }}
-                      onClick={() => onGenerateScene(si)}
+                      onClick={() => onAssembleScene(si)}
                       disabled={isGenerating}
-                      title="生成该场景的剧情正文"
+                      title="将各 AI 块 generatedText 汇编写入 story.tw"
                     >
-                      {isGenerating ? '生成中...' : '生成游戏'}
+                      {isGenerating ? '汇编中...' : '汇编内容'}
                     </button>
                     <button
                       type="button"
@@ -1689,7 +1388,7 @@ function ChapterBlock({
                 {isEntryExpanded && (
                   <div style={styles.sceneBody}>
                     <p style={styles.sceneEditHint}>
-                      正文块（定调 / AI summary 等）请在左侧「场景」菜单中编辑；生成游戏前请先保存场景。
+                      请在「场景」菜单为各 AI 块填写规格并「生成内容」；汇编前请先保存 story-scenes.json。
                     </p>
                     <div style={styles.row}>
                       <label style={styles.label}>生成正文（story.tw，多页自动合并编辑，保存时重新分页）</label>
@@ -1728,6 +1427,14 @@ function ChapterBlock({
                         }))
                       }
                       label="规则"
+                    />
+                    <RuleUsageBindings
+                      ruleIds={entry.ruleIds}
+                      gameRules={gameRules}
+                      context={{sceneId: entry.sceneId}}
+                      editable={!!onUpdateRule}
+                      onUpdateRule={onUpdateRule}
+                      onSaveRules={onSaveRules}
                     />
                   </div>
                 )}

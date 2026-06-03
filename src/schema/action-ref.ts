@@ -1,6 +1,6 @@
 /**
  * 统一动作引用（actionRef）
- * 用于 setOn 规则与运行时事件追踪
+ * 用于动作触发规则与运行时事件追踪
  */
 
 export type GameActionType =

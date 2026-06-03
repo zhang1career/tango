@@ -160,7 +160,7 @@ export default defineConfig(({ mode }) => {
       name: 'api-games',
       configureServer(server) {
         server.middlewares.use('/api/games', (req, res, next) => {
-          const match = req.url?.match(/^\/([^/]+)\/(story-[a-z-]+|game-content)(?:\?|$)/);
+          const match = req.url?.match(/^\/([^/]+)\/(story-[a-z0-9-]+|game-content)(?:\?|$)/);
           if (!match) return next();
           const [, gameId, resource] = match;
           if (!gameId || !resource) return next();
@@ -179,6 +179,31 @@ export default defineConfig(({ mode }) => {
                 if (resource === 'story-features') {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({ battle: {} }));
+                  return;
+                }
+                if (resource === 'story-journal') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ themes: [], entries: [] }));
+                  return;
+                }
+                if (resource === 'story-outline') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ version: '1', rollingHorizonChapters: 5, chapters: [] }));
+                  return;
+                }
+                if (resource === 'story-foreshadowing') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ threads: [] }));
+                  return;
+                }
+                if (resource === 'story-canon') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ version: '1', scenes: {} }));
+                  return;
+                }
+                if (resource === 'story-generation-traces') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ entries: [] }));
                   return;
                 }
                 res.writeHead(404, { 'Content-Type': 'application/json' });

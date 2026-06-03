@@ -1,6 +1,6 @@
 /**
  * 条件表达式求值器
- * 支持: $var, $var == value, $items has "x", $rep.xxx >= n, $entity.is_used, and/or 复合条件
+ * 支持: $var, $items has "x", $rep.xxx, $entity.is_used, $action.*（动作上下文）, and/or
  */
 
 import type {RuntimeState} from '@/types';
@@ -17,6 +17,15 @@ export interface EntityContext {
   entity: EntityLike;
   /** 已访问/已使用的 id 集合 */
   visitedIds: Set<string>;
+}
+
+/** 当前动作上下文（setOn 等），$action 指代 */
+export interface ActionContext {
+  type: string;
+  sceneId?: string;
+  eventId?: string;
+  behaviorId?: string;
+  itemId?: string;
 }
 
 function parseValue(s: string): string | number | boolean {
@@ -67,7 +76,8 @@ function splitConditionAtTopLevel(expr: string, separator: string): string[] {
 function evaluateSimpleCondition(
   condition: string,
   ctx: Context,
-  entityCtx?: EntityContext
+  entityCtx?: EntityContext,
+  actionCtx?: ActionContext
 ): boolean {
   let expr = condition.trim();
   if (!expr) return true;
@@ -75,6 +85,18 @@ function evaluateSimpleCondition(
   // 剥除外层括号，如 (!hasVisited("x")) -> !hasVisited("x")
   const outerParen = expr.match(/^\s*\(\s*(.+)\s*\)\s*$/);
   if (outerParen) expr = outerParen[1].trim();
+
+  // $action.type / $action.sceneId 等与字面量比较（动作触发规则）
+  const actionCmp = expr.match(
+    /^\$action\.(type|sceneId|eventId|behaviorId|itemId)\s*(==|!=)\s*(.+)$/
+  );
+  if (actionCmp && actionCtx) {
+    const field = actionCmp[1] as keyof ActionContext;
+    const op = actionCmp[2];
+    const right = String(parseValue(actionCmp[3].trim()));
+    const left = String(actionCtx[field] ?? '');
+    return op === '==' ? left === right : left !== right;
+  }
 
   // !$entity.is_used 或 $entity.is_used（链接条件，需传入 entityCtx）
   const entityUsedMatch = expr.match(/^!?\$entity\.is_used$/);
@@ -179,20 +201,21 @@ function evaluateSimpleCondition(
 export function evaluateCondition(
   condition: string,
   ctx: Context,
-  entityCtx?: EntityContext
+  entityCtx?: EntityContext,
+  actionCtx?: ActionContext
 ): boolean {
   const expr = condition.trim();
   if (!expr) return true;
 
   const andParts = splitConditionAtTopLevel(expr, ' and ');
   if (andParts.length > 1) {
-    return andParts.every((part) => evaluateSimpleCondition(part, ctx, entityCtx));
+    return andParts.every((part) => evaluateSimpleCondition(part, ctx, entityCtx, actionCtx));
   }
 
   const orParts = splitConditionAtTopLevel(expr, ' or ');
   if (orParts.length > 1) {
-    return orParts.some((part) => evaluateSimpleCondition(part, ctx, entityCtx));
+    return orParts.some((part) => evaluateSimpleCondition(part, ctx, entityCtx, actionCtx));
   }
 
-  return evaluateSimpleCondition(expr, ctx, entityCtx);
+  return evaluateSimpleCondition(expr, ctx, entityCtx, actionCtx);
 }

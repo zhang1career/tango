@@ -47,7 +47,7 @@ export function checkEventAdmission(
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
   return admissionCalc({
@@ -123,7 +123,7 @@ function runNonAttackBehavior(
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
   const entity = { id: fullId, name: behavior.id };
@@ -136,8 +136,6 @@ function runNonAttackBehavior(
     visitedIds: ctx.usedBehaviorIds,
     ctx: state,
     test: false,
-    writebackExpr: behavior.writebackExpr,
-    onEntityUsed: (id) => ctx.usedBehaviorIds.add(id),
     applyActions: ctx.applyActions,
   });
   return passed;

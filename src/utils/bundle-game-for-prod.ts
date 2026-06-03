@@ -30,6 +30,11 @@ export function bundleStoryTwForProd(gameDir: string): string {
     meta.features = features;
   }
 
+  const journal = readJsonFile(resolve(gameDir, 'story-journal.json'));
+  if (journal && typeof journal === 'object' && !Array.isArray(journal)) {
+    meta.journal = journal;
+  }
+
   story.metadata = meta;
   return meta.format === 'SugarCube'
     ? serializeStorySugarcube(story)

@@ -46,6 +46,45 @@ export function getAIGCApiUrl(): string {
   return env.AIGC_API_URL ?? env.VITE_AIGC_API_URL ?? '';
 }
 
+/** 叙事生成模型（OpenAI 兼容） */
+export function getAIGCModel(): string {
+  const m = (env.VITE_AIGC_MODEL ?? env.AIGC_MODEL ?? 'gpt-4o-mini') as string;
+  return m.trim() || 'gpt-4o-mini';
+}
+
+/** 滚动大纲 story-outline.json */
+export function getOutlineFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  const path = import.meta.env.DEV
+    ? `/api/games/${id}/story-outline`
+    : `${getGameAssetsPrefix(id)}/story-outline.json`;
+  return import.meta.env.DEV ? path : toFetchUrl(path);
+}
+
+/** 伏笔池 story-foreshadowing.json */
+export function getForeshadowingFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  const path = import.meta.env.DEV
+    ? `/api/games/${id}/story-foreshadowing`
+    : `${getGameAssetsPrefix(id)}/story-foreshadowing.json`;
+  return import.meta.env.DEV ? path : toFetchUrl(path);
+}
+
+/** 叙事 canon story-canon.json */
+export function getCanonFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  const path = import.meta.env.DEV
+    ? `/api/games/${id}/story-canon`
+    : `${getGameAssetsPrefix(id)}/story-canon.json`;
+  return import.meta.env.DEV ? path : toFetchUrl(path);
+}
+
+/** 生成轨迹（DEV only，不进 zip） */
+export function getGenerationTracesFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  return `/api/games/${id}/story-generation-traces`;
+}
+
 /** 剧情生成自动分页：每页最少字数（默认轻量互动 160） */
 export function getPassagePageCharsMin(): number {
   const n = Number(env.VITE_PASSAGE_PAGE_CHARS_MIN);
@@ -123,6 +162,15 @@ export function getEventsFetchUrl(gameId?: string): string {
 export function getItemsFetchUrl(gameId?: string): string {
   const id = gameId || DEFAULT_GAME_ID;
   const path = import.meta.env.DEV ? `/api/games/${id}/story-items` : `${getGameAssetsPrefix(id)}/story-items.json`;
+  return import.meta.env.DEV ? path : toFetchUrl(path);
+}
+
+/** 心迹目录请求 URL */
+export function getJournalFetchUrl(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  const path = import.meta.env.DEV
+    ? `/api/games/${id}/story-journal`
+    : `${getGameAssetsPrefix(id)}/story-journal.json`;
   return import.meta.env.DEV ? path : toFetchUrl(path);
 }
 

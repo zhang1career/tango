@@ -347,7 +347,7 @@ function DialogueLibrarySection({
             <div style={{fontSize: 12, color: '#888', marginTop: 4}}>不勾选表示所有场景均可用</div>
           </div>
           <div style={styles.row}>
-            <label style={styles.label}>准入条件 judgeExpr</label>
+            <label style={styles.label}>条件表达式</label>
             <input
               value={b.judgeExpr ?? ''}
               onChange={(e) => update(i, (x) => ({...x, judgeExpr: e.target.value || undefined}))}

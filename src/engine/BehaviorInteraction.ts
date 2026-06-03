@@ -11,7 +11,6 @@ import type {GameActionRef} from '../schema/action-ref';
 import {admissionCalc} from './AdmissionCalculator';
 import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
-import {parseWritebackToActions, hasEntityIsUsedWriteback} from './WritebackExecutor';
 
 const UNAVAILABLE_RESPONSE = '（喔…当前不可用）';
 
@@ -61,7 +60,7 @@ export function getAvailableBehaviors(
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
 
@@ -114,7 +113,7 @@ export function executeBehavior(
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
   const entity = { id: behaviorId, name: b.id };
@@ -130,8 +129,6 @@ export function executeBehavior(
     visitedIds: ctx.usedBehaviorIds,
     ctx: state,
     test: false,
-    writebackExpr: b.writebackExpr,
-    onEntityUsed: (id) => ctx.usedBehaviorIds.add(id),
     applyActions: ctx.applyActions,
   });
 
@@ -174,15 +171,7 @@ export function executeBattleWriteback(
   battleResult: { rounds: number; damageDealt: number; damageTaken: number; won: boolean },
   ctx: BehaviorInteractionContext
 ): void {
+  void behavior;
+  void battleResult;
   ctx.usedBehaviorIds.add(behaviorId);
-  if (hasEntityIsUsedWriteback(behavior.writebackExpr ?? '')) {
-    ctx.usedBehaviorIds.add(behaviorId);
-  }
-  const state = ctx.getState();
-  const actions = parseWritebackToActions(behavior.writebackExpr ?? '', {
-    variables: state.variables,
-    reputation: state.reputation,
-    battle: battleResult,
-  });
-  if (actions) ctx.applyActions(actions);
 }

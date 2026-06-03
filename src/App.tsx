@@ -14,6 +14,8 @@ import {MetadataEditor} from './components/MetadataEditor';
 import {ItemsEditorPage} from './components/ItemsEditorPage';
 import {SceneEditor} from './components/SceneEditor';
 import {RuleEditor} from './components/RuleEditor';
+import {JournalEditor} from './components/JournalEditor';
+import {NarrativeEngineEditor} from './components/NarrativeEngineEditor';
 import {FeaturePanelEditor} from './components/FeaturePanelEditor';
 import {NotificationToast} from './components/NotificationToast';
 import {LoginPage} from './components/LoginPage';
@@ -120,7 +122,7 @@ async function fetchContentForGame(gameId: string, pathOverride?: string): Promi
 export default function App() {
   const {gameId, setGameId, gameIds} = useGameId();
   const {addNotification} = useNotification();
-  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata'>('game');
+  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata'>('game');
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
     setFw((prev) => fn(prev));
@@ -195,7 +197,7 @@ export default function App() {
 
 type AppBodyProps = {
   mode: string;
-  setMode: (m: 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata') => void;
+  setMode: (m: 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata') => void;
   gameId: string;
   gameIds: string[];
   handleGameSelect: (e: React.ChangeEvent<HTMLSelectElement>) => void;
@@ -206,7 +208,7 @@ type AppBodyProps = {
   loadStoryFm: (targetGameId: string) => Promise<void>;
 };
 
-type ModeType = 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata';
+type ModeType = 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata';
 
 function AppBody({
   mode,
@@ -306,6 +308,20 @@ function AppBody({
             </button>
             <button
               type="button"
+              style={{...navStyles.tab, ...(mode === 'journal' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('journal')}
+            >
+              心迹
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'narrative' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('narrative')}
+            >
+              叙事引擎
+            </button>
+            <button
+              type="button"
               style={{...navStyles.tab, ...(mode === 'rules' ? navStyles.tabActive : {})}}
               onClick={() => setMode('rules')}
             >
@@ -375,6 +391,10 @@ function AppBody({
         <EventEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'items' ? (
         <ItemsEditorPage fw={fw} updateFw={updateFw}/>
+      ) : mode === 'journal' ? (
+        <JournalEditor/>
+      ) : mode === 'narrative' ? (
+        <NarrativeEngineEditor/>
       ) : mode === 'rules' ? (
         <RuleEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'features' ? (
