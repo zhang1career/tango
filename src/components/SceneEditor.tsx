@@ -299,13 +299,14 @@ function AiBlockFields({
           placeholder="勿复述 raw；对白格式等"
         />
       </FieldRow>
-      <FieldRow label="generatedText" value={block.generatedText ? `${block.generatedText.slice(0, 80)}…` : '（未生成）'} editable={false}>
+      <div style={styles.row}>
+        <label style={styles.label}>generatedText</label>
         {block.generatedText ? (
           <textarea readOnly value={block.generatedText} style={{...styles.input, ...styles.textarea, minHeight: 100, opacity: 0.9}} />
         ) : (
-          <div style={styles.readOnlyValue}>—</div>
+          <div style={styles.readOnlyValue}>（未生成）</div>
         )}
-      </FieldRow>
+      </div>
       {editable && onGenerate && (
         <button
           type="button"
@@ -1047,10 +1048,15 @@ export function SceneEditor({
     fw,
     gameId,
     onScenePatched: (patched: GameScene) => {
-      if (editIndex !== null) {
-        updateScene(editIndex, () => patched);
-        void checkAuthForSave(saveScenes);
-      }
+      if (editIndex === null) return;
+      const next = scenes.map((s, i) => (i === editIndex ? patched : s));
+      setScenes(() => next);
+      void checkAuthForSave(async () => {
+        const normalized = next.map((s) => ({...s, messages: normalizeStringList(s.messages)}));
+        setScenes(() => normalized);
+        const result = await saveScenesToPreset(normalized, gameId);
+        if (!result.ok) alert(`保存失败: ${result.error}`);
+      });
     },
   };
 

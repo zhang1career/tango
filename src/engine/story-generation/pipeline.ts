@@ -3,12 +3,11 @@ import type {StoryCanon} from '@/schema/story-canon';
 import type {StoryForeshadowing} from '@/schema/story-foreshadowing';
 import {STORY_CANON_VERSION} from '@/schema/story-canon';
 import {buildGenerationContextPayload} from './context';
+import {getGenerationAuditMode, getGenerationAuditRetries} from '@/config';
 import {chatCompletion, previewText, requireAigcConfig} from './llm';
 import type {GenerateBlockInput, GenerateBlockResult, StoryGenerationBundle} from './types';
 import {collectPrecedingRawTextsAtBlockIndex} from './raw-context';
 import {stripAiTextOverlappingRaw} from '@/utils/strip-ai-raw-overlap';
-
-const MAX_AUDIT_RETRIES = 2;
 
 function parseJsonFromModel<T>(text: string): T | null {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -197,9 +196,11 @@ export async function generatePassageBlock(input: GenerateBlockInput): Promise<G
   const {plan, phase: planPhase} = await runPlanPhase(input);
   phases.push(planPhase);
 
+  const auditMode = getGenerationAuditMode();
+  const maxAuditRetries = getGenerationAuditRetries();
   let draft = '';
   let lastFeedback = '';
-  for (let attempt = 0; attempt <= MAX_AUDIT_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxAuditRetries; attempt++) {
     const writeUserSuffix = lastFeedback ? `\n\n【审校修订要求】\n${lastFeedback}` : '';
     const {possibility, constraint} = buildGenerationContextPayload(
       input.bundle,
@@ -223,11 +224,24 @@ export async function generatePassageBlock(input: GenerateBlockInput): Promise<G
     if (!draft) throw new Error('生成正文与 raw 高度重复');
     phases.push({name: attempt === 0 ? 'write' : `write_retry_${attempt}`, outputPreview: previewText(draft)});
 
+    if (auditMode === 'skip') {
+      phases.push({name: 'audit', verdict: 'skipped'});
+      break;
+    }
+
     const audit = await runAuditPhase(input, draft);
     phases.push(audit.phase);
     if (audit.pass) break;
     lastFeedback = audit.feedback;
-    if (attempt === MAX_AUDIT_RETRIES) {
+    if (attempt === maxAuditRetries) {
+      if (auditMode === 'warn') {
+        phases.push({
+          name: 'audit_override',
+          verdict: 'warn',
+          outputPreview: previewText(`审校未通过，已采用末稿：${audit.feedback}`),
+        });
+        break;
+      }
       throw new Error(`审校未通过：${audit.feedback}`);
     }
   }

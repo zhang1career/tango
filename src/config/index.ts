@@ -98,6 +98,21 @@ export function getPassagePageCharsMax(): number {
   return Number.isNaN(n) || n < min ? min + 60 : n;
 }
 
+/** 叙事生成审校：strict=未通过则报错；warn=重试用尽后仍采用末稿；skip=跳过审校 */
+export type GenerationAuditMode = 'strict' | 'warn' | 'skip';
+
+export function getGenerationAuditMode(): GenerationAuditMode {
+  const v = (env.VITE_GENERATION_AUDIT_MODE ?? 'strict') as string;
+  if (v === 'warn' || v === 'skip') return v;
+  return 'strict';
+}
+
+/** 叙事生成审校：写手修订轮数（默认 2，即最多写 3 稿） */
+export function getGenerationAuditRetries(): number {
+  const n = Number(env.VITE_GENERATION_AUDIT_RETRIES);
+  return Number.isNaN(n) || n < 0 ? 2 : Math.min(n, 8);
+}
+
 /** dev: 编辑菜单；prod: 仅游戏页。由 .env 或构建命令中的 VITE_APP_MODE 控制 */
 export function getAppMode(): 'dev' | 'prod' {
   const v = (env.VITE_APP_MODE ?? 'dev') as string;

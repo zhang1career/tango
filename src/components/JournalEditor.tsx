@@ -7,7 +7,12 @@ import {getJournalFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {JournalEntryDef, JournalTheme, StoryJournalCatalog} from '@/schema/story-journal';
-import {EMPTY_JOURNAL_CATALOG, journalUnlockVar, resolveJournalUnlockVar} from '@/schema/story-journal';
+import {
+  EMPTY_JOURNAL_CATALOG,
+  journalUnlockVar,
+  normalizeJournalCatalog,
+  resolveJournalUnlockVar,
+} from '@/schema/story-journal';
 import {formatJsonCompact} from '@/utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {editorStyles as styles} from '@/styles/editorStyles';
@@ -39,6 +44,179 @@ async function saveJournalToPreset(
   URL.revokeObjectURL(url);
   return {ok: true};
 }
+
+function entriesForTheme(entries: JournalEntryDef[], themeId: string): JournalEntryDef[] {
+  return entries
+    .filter((e) => e.themeId === themeId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+function nextThemeEntryOrder(entries: JournalEntryDef[], themeId: string): number {
+  const linked = entriesForTheme(entries, themeId);
+  if (linked.length === 0) return 0;
+  return Math.max(...linked.map((e) => e.order ?? 0)) + 1;
+}
+
+function moveEntryInTheme(
+  entries: JournalEntryDef[],
+  themeId: string,
+  entryId: string,
+  direction: -1 | 1
+): JournalEntryDef[] {
+  const linked = entriesForTheme(entries, themeId);
+  const pos = linked.findIndex((e) => e.id === entryId);
+  const newPos = pos + direction;
+  if (pos < 0 || newPos < 0 || newPos >= linked.length) return entries;
+  const reordered = [...linked];
+  [reordered[pos], reordered[newPos]] = [reordered[newPos], reordered[pos]];
+  const orderById = new Map(reordered.map((e, i) => [e.id, i]));
+  return entries.map((e) =>
+    e.themeId === themeId && orderById.has(e.id) ? {...e, order: orderById.get(e.id)!} : e
+  );
+}
+
+function ThemeAssociationPanel({
+  theme,
+  draftEntries,
+  onDraftChange,
+}: {
+  theme: JournalTheme;
+  draftEntries: JournalEntryDef[];
+  onDraftChange: (entries: JournalEntryDef[]) => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickId, setPickId] = useState('');
+
+  const linked = entriesForTheme(draftEntries, theme.id);
+  const available = draftEntries.filter((e) => e.themeId !== theme.id);
+
+  const openPicker = () => {
+    setPickId(available[0]?.id ?? '');
+    setPickerOpen(true);
+  };
+
+  const confirmAssociate = () => {
+    if (!pickId) return;
+    const order = nextThemeEntryOrder(draftEntries, theme.id);
+    onDraftChange(
+      draftEntries.map((e) => (e.id === pickId ? {...e, themeId: theme.id, order} : e))
+    );
+    setPickerOpen(false);
+    setPickId('');
+  };
+
+  return (
+    <div
+      style={{
+        marginBottom: 20,
+        padding: 16,
+        backgroundColor: '#252540',
+        borderRadius: 8,
+        border: '1px solid #444',
+      }}
+    >
+      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
+        <h3 style={{fontSize: 16, margin: 0, color: '#a78bfa', fontWeight: 600}}>心迹列表项</h3>
+        <button
+          type="button"
+          style={styles.btn}
+          onClick={openPicker}
+          disabled={available.length === 0}
+          title={available.length === 0 ? '请先在下方「心迹列表项」中创建条目' : undefined}
+        >
+          + 添加
+        </button>
+      </div>
+      {linked.length === 0 && !pickerOpen && (
+        <p style={{color: '#888', fontSize: 14, margin: '0 0 12px'}}>暂无条目</p>
+      )}
+      {pickerOpen && available.length > 0 && (
+        <div style={{...styles.card, marginBottom: 12}}>
+          <div style={{padding: 12}}>
+            <label style={styles.label}>选择心迹列表项</label>
+            <select
+              value={pickId}
+              onChange={(e) => setPickId(e.target.value)}
+              style={styles.input}
+            >
+              {available.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.title} ({e.id})
+                  {e.themeId ? ` · 当前主题: ${e.themeId}` : ''}
+                </option>
+              ))}
+            </select>
+            <div style={{display: 'flex', gap: 8, marginTop: 10}}>
+              <button type="button" style={styles.btn} onClick={confirmAssociate}>
+                确认关联
+              </button>
+              <button
+                type="button"
+                style={styles.btn}
+                onClick={() => {
+                  setPickerOpen(false);
+                  setPickId('');
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {linked.map((entry, li) => (
+        <div key={entry.id} style={styles.card}>
+          <div style={styles.cardHead}>
+            <span style={{fontWeight: 600, flex: 1}}>
+              {entry.title}
+              <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
+                {entry.id} · 排序 {entry.order ?? 0}
+              </span>
+            </span>
+            <button
+              type="button"
+              style={styles.btnIcon}
+              onClick={() => onDraftChange(moveEntryInTheme(draftEntries, theme.id, entry.id, -1))}
+              disabled={li === 0}
+              title="上移"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              style={styles.btnIcon}
+              onClick={() => onDraftChange(moveEntryInTheme(draftEntries, theme.id, entry.id, 1))}
+              disabled={li === linked.length - 1}
+              title="下移"
+            >
+              ↓
+            </button>
+            <button
+              type="button"
+              style={styles.btnIcon}
+              onClick={() =>
+                onDraftChange(
+                  draftEntries.map((e) => (e.id === entry.id ? {...e, themeId: ''} : e))
+                )
+              }
+              title="移除关联"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ))}
+      <p style={{fontSize: 12, color: '#888', marginTop: 8, marginBottom: 0}}>
+        管理本主题下的条目关联与排序；正文等内容请在页面底部「心迹列表项」区编辑。点击「保存」后写入 story-journal.json。
+      </p>
+    </div>
+  );
+}
+
+type ThemeDetailSession = {
+  themeIdx: number;
+  draftEntries: JournalEntryDef[];
+};
 
 function ThemeForm({
   theme,
@@ -201,7 +379,7 @@ export function JournalEditor() {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
   const [catalog, setCatalog] = useState<StoryJournalCatalog>(EMPTY_JOURNAL_CATALOG);
-  const [themeDetail, setThemeDetail] = useState<number | null>(null);
+  const [themeDetailSession, setThemeDetailSession] = useState<ThemeDetailSession | null>(null);
   const [themeEdit, setThemeEdit] = useState<number | null>(null);
   const [themeAddOpen, setThemeAddOpen] = useState(false);
   const [newTheme, setNewTheme] = useState<JournalTheme>({
@@ -223,7 +401,7 @@ export function JournalEditor() {
   useEffect(() => {
     fetch(getJournalFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : EMPTY_JOURNAL_CATALOG))
-      .then((data) => setCatalog(data as StoryJournalCatalog))
+      .then((data) => setCatalog(normalizeJournalCatalog(data)))
       .catch(() => setCatalog(EMPTY_JOURNAL_CATALOG));
   }, [gameId]);
 
@@ -235,6 +413,19 @@ export function JournalEditor() {
   };
 
   const sortedThemes = [...catalog.themes].sort((a, b) => a.order - b.order);
+  const entries = catalog.entries ?? [];
+
+  const openThemeDetail = (idx: number) => {
+    setThemeDetailSession({
+      themeIdx: idx,
+      draftEntries: entries.map((e) => ({...e})),
+    });
+  };
+
+  const closeThemeDetail = () => setThemeDetailSession(null);
+
+  const themeDetailTheme =
+    themeDetailSession !== null ? catalog.themes[themeDetailSession.themeIdx] : undefined;
 
   return (
     <div style={styles.container}>
@@ -254,33 +445,54 @@ export function JournalEditor() {
         )}
         {sortedThemes.map((theme, ti) => {
           const idx = catalog.themes.indexOf(theme);
-          const count = catalog.entries.filter((e) => e.themeId === theme.id).length;
+          const count = entries.filter((e) => e.themeId === theme.id).length;
           return (
             <div key={theme.id} style={styles.card}>
-              <div style={styles.cardHead}>
-                <span
-                  style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                  onClick={() => setThemeDetail(idx)}
-                >
+              <div
+                style={{...styles.cardHead, cursor: 'pointer'}}
+                onClick={() => openThemeDetail(idx)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openThemeDetail(idx);
+                  }
+                }}
+              >
+                <span style={{fontWeight: 600, flex: 1}}>
                   {theme.name}
                   <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
                     {theme.id} · {count} 条
                   </span>
                 </span>
-                <button type="button" style={styles.btnIcon} onClick={() => setThemeEdit(idx)} title="编辑">✎</button>
                 <button
                   type="button"
                   style={styles.btnIcon}
-                  onClick={() =>
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setThemeEdit(idx);
+                  }}
+                  title="编辑主题字段"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  style={styles.btnIcon}
+                  onClick={(e) => {
+                    e.stopPropagation();
                     checkAuthForSave(async () => {
                       const next = {
                         ...catalog,
                         themes: catalog.themes.filter((_, i) => i !== idx),
-                        entries: catalog.entries.filter((e) => e.themeId !== theme.id),
+                        entries: entries.map((e) =>
+                          e.themeId === theme.id ? {...e, themeId: ''} : e
+                        ),
                       };
                       await persist(next);
-                    })
-                  }
+                    });
+                  }}
                   title="删除"
                 >
                   ×
@@ -303,7 +515,7 @@ export function JournalEditor() {
                 themeId: sortedThemes[0]?.id ?? '',
                 title: '新心迹',
                 content: '',
-                order: catalog.entries.length,
+                order: entries.length,
               });
               setEntryAddOpen(true);
             }}
@@ -311,10 +523,10 @@ export function JournalEditor() {
             + 添加条目
           </button>
         </div>
-        {catalog.entries.length === 0 && (
+        {entries.length === 0 && (
           <p style={{color: '#888', fontSize: 14}}>暂无条目。解锁触发在「场景」「剧情」等使用处配置。</p>
         )}
-        {catalog.entries.map((entry, ei) => (
+        {entries.map((entry, ei) => (
           <div key={entry.id} style={styles.card}>
             <div style={styles.cardHead}>
               <span
@@ -334,7 +546,7 @@ export function JournalEditor() {
                   checkAuthForSave(async () => {
                     await persist({
                       ...catalog,
-                      entries: catalog.entries.filter((_, i) => i !== ei),
+                      entries: entries.filter((_, i) => i !== ei),
                     });
                   })
                 }
@@ -347,9 +559,33 @@ export function JournalEditor() {
         ))}
       </section>
 
-      {themeDetail !== null && catalog.themes[themeDetail] && (
-        <DetailEditModal title="主题详情" open onClose={() => setThemeDetail(null)} editable={false}>
-          <ThemeForm theme={catalog.themes[themeDetail]} editable={false} />
+      {themeDetailSession !== null && themeDetailTheme && (
+        <DetailEditModal
+          title={`主题详情 · ${themeDetailTheme.name}`}
+          open={true}
+          onClose={closeThemeDetail}
+          editable={true}
+          onSave={() =>
+            checkAuthForSave(async () => {
+              const ok = await persist({
+                ...catalog,
+                entries: themeDetailSession.draftEntries,
+              });
+              if (ok) closeThemeDetail();
+            })
+          }
+        >
+          <ThemeAssociationPanel
+            theme={themeDetailTheme}
+            draftEntries={themeDetailSession.draftEntries}
+            onDraftChange={(draftEntries) =>
+              setThemeDetailSession((s) => (s ? {...s, draftEntries} : null))
+            }
+          />
+          <div style={{marginTop: 8, paddingTop: 16, borderTop: '1px solid #333'}}>
+            <h3 style={{fontSize: 15, margin: '0 0 12px', color: '#a78bfa'}}>主题信息</h3>
+            <ThemeForm theme={themeDetailTheme} editable={false} />
+          </div>
         </DetailEditModal>
       )}
       {themeEdit !== null && catalog.themes[themeEdit] && (
@@ -393,12 +629,12 @@ export function JournalEditor() {
         </DetailEditModal>
       )}
 
-      {entryDetail !== null && catalog.entries[entryDetail] && (
+      {entryDetail !== null && entries[entryDetail] && (
         <DetailEditModal title="心迹详情" open onClose={() => setEntryDetail(null)} editable={false}>
-          <EntryForm entry={catalog.entries[entryDetail]} themes={catalog.themes} editable={false} />
+          <EntryForm entry={entries[entryDetail]} themes={catalog.themes} editable={false} />
         </DetailEditModal>
       )}
-      {entryEdit !== null && catalog.entries[entryEdit] && (
+      {entryEdit !== null && entries[entryEdit] && (
         <DetailEditModal
           title="编辑心迹"
           open
@@ -411,7 +647,7 @@ export function JournalEditor() {
           }
         >
           <EntryForm
-            entry={catalog.entries[entryEdit]}
+            entry={entries[entryEdit]}
             themes={catalog.themes}
             editable
             onUpdate={(fn) =>
@@ -431,7 +667,7 @@ export function JournalEditor() {
           editable
           onSave={() =>
             checkAuthForSave(async () => {
-              const ok = await persist({...catalog, entries: [...catalog.entries, newEntry]});
+              const ok = await persist({...catalog, entries: [...entries, newEntry]});
               if (ok) setEntryAddOpen(false);
             })
           }
