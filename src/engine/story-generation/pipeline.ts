@@ -9,6 +9,14 @@ import type {GenerateBlockInput, GenerateBlockResult, StoryGenerationBundle} fro
 import {collectPrecedingRawTextsAtBlockIndex} from './raw-context';
 import {stripAiTextOverlappingRaw} from '@/utils/strip-ai-raw-overlap';
 
+const WRITE_SYSTEM_BASE = `你是文字冒险游戏编剧。遵守块级规格与真相层约束，完成有限演义扩写。
+- behaviorLibrary 是对话互动素材，不要嵌入 passage 正文。
+- raw 块已单独展示，严禁复述 raw 中的对白与史料。
+- 必须体现 anchors；遵守 forbidden。
+- 对白仅允许 constraint 中列出的角色发言；无列名角色时写纯旁白。
+- 正文须为多行：叙述段 2–3 句后换行；每一句对白单独成行（问一行、答一行），不要把多轮对话挤在同一段。
+输出纯正文，无 markdown，无 [[链接]]。`;
+
 function parseJsonFromModel<T>(text: string): T | null {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = fence ? fence[1].trim() : text.trim();
@@ -62,12 +70,7 @@ async function runWritePhase(
     input.passageBlockIndex
   );
   const precedingRaw = collectPrecedingRawTextsAtBlockIndex(input.scene, input.passageBlockIndex);
-  const system = `你是文字冒险游戏编剧。遵守块级规格与真相层约束，完成有限演义扩写。
-- behaviorLibrary 是对话互动素材，不要嵌入 passage 正文。
-- raw 块已单独展示，严禁复述 raw 中的对白与史料。
-- 必须体现 anchors；遵守 forbidden。
-- 对白仅允许 constraint 中列出的角色发言；无列名角色时写纯旁白。
-输出纯正文，无 markdown，无 [[链接]]。`;
+  const system = WRITE_SYSTEM_BASE;
   const user = `【规划】
 ${planJson}
 
@@ -209,8 +212,7 @@ export async function generatePassageBlock(input: GenerateBlockInput): Promise<G
       input.aiBlock,
       input.passageBlockIndex
     );
-    const system = `你是文字冒险游戏编剧。遵守块级规格与真相层约束。
-输出纯正文，无 markdown。${writeUserSuffix ? '根据审校意见修订上一稿。' : ''}`;
+    const system = `${WRITE_SYSTEM_BASE}${writeUserSuffix ? '\n根据审校意见修订上一稿。' : ''}`;
     const user = `【规划】${plan}\n【可能性】${JSON.stringify(possibility)}\n【约束】${JSON.stringify(constraint)}\n${writeUserSuffix}\n请生成本块正文：`;
     const raw = await chatCompletion(
       [

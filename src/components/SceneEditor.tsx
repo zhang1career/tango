@@ -125,6 +125,7 @@ type SceneFormProps = {
   collapsibleDefaultExpanded?: boolean;
   fw?: StoryFramework;
   onScenePatched?: (scene: GameScene) => void;
+  onSaveScene?: () => void | Promise<void>;
 };
 
 function parseLines(text: string): string[] | undefined {
@@ -154,6 +155,7 @@ function AiBlockFields({
   characterOptions,
   onUpdate,
   onGenerate,
+  onSave,
 }: {
   block: ScenePassageAiBlock;
   aiIndex: number;
@@ -163,6 +165,7 @@ function AiBlockFields({
   characterOptions: Array<{id: string; name: string}>;
   onUpdate?: (fn: (b: ScenePassageAiBlock) => ScenePassageAiBlock) => void;
   onGenerate?: () => void;
+  onSave?: () => void | Promise<void>;
 }) {
   const patch = (p: Partial<ScenePassageAiBlock>) =>
     onUpdate?.((b) => ({...b, ...p}));
@@ -301,23 +304,55 @@ function AiBlockFields({
         />
       </FieldRow>
       <div style={styles.row}>
-        <label style={styles.label}>generatedText</label>
-        {block.generatedText ? (
-          <textarea readOnly value={block.generatedText} style={{...styles.input, ...styles.textarea, minHeight: 100, opacity: 0.9}} />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            marginBottom: 6,
+          }}
+        >
+          <label style={{...styles.label, marginBottom: 0}}>generatedText</label>
+          {editable && (onGenerate || onSave) && (
+            <div style={{display: 'flex', gap: 8, flexShrink: 0}}>
+              {onGenerate && (
+                <button
+                  type="button"
+                  style={{...styles.btnSmall, opacity: generating ? 0.6 : 1}}
+                  disabled={generating || !block.summary?.trim()}
+                  onClick={onGenerate}
+                >
+                  {generating ? '生成中…' : '生成内容'}
+                </button>
+              )}
+              {onSave && (
+                <button type="button" style={styles.btnSmall} onClick={() => void onSave()}>
+                  保存
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {editable && onUpdate ? (
+          <textarea
+            value={block.generatedText ?? ''}
+            onChange={(e) => patch({generatedText: e.target.value || undefined})}
+            rows={8}
+            style={{...styles.input, ...styles.textarea, minHeight: 160, whiteSpace: 'pre-wrap', lineHeight: 1.55}}
+            placeholder="（未生成，可手动编辑或点击「生成内容」；对白宜每句单独一行）"
+          />
+        ) : block.generatedText ? (
+          <textarea
+            readOnly
+            value={block.generatedText}
+            rows={8}
+            style={{...styles.input, ...styles.textarea, minHeight: 160, whiteSpace: 'pre-wrap', lineHeight: 1.55, opacity: 0.9}}
+          />
         ) : (
           <div style={styles.readOnlyValue}>（未生成）</div>
         )}
       </div>
-      {editable && onGenerate && (
-        <button
-          type="button"
-          style={{...styles.btnSmall, marginTop: 8, opacity: generating ? 0.6 : 1}}
-          disabled={generating || !block.summary?.trim()}
-          onClick={onGenerate}
-        >
-          {generating ? '生成中…' : '生成内容'}
-        </button>
-      )}
     </>
   );
 }
@@ -338,6 +373,7 @@ function SceneFormContent({
                             fw,
                             gameId: formGameId,
                             onScenePatched,
+                            onSaveScene,
                           }: SceneFormProps) {
   const linkedEventId = scene.eventIds?.[0];
   const linkedEventBgm = linkedEventId
@@ -471,6 +507,7 @@ function SceneFormContent({
             characterOptions={characterIds}
             onUpdate={onUpdate ? (fn) => onUpdate((s) => upsertAiBlock(s, aiIndex, fn)) : undefined}
             onGenerate={() => void handleGenerateBlock(aiIndex)}
+            onSave={editable && onSaveScene ? () => onSaveScene() : undefined}
           />
         </div>
       ))}
@@ -1076,6 +1113,13 @@ export function SceneEditor({
     else setEditIndex(null);
   };
 
+  const persistScenes = async () => {
+    const normalized = scenes.map((s) => ({...s, messages: normalizeStringList(s.messages)}));
+    setScenes(() => normalized);
+    const result = await saveScenesToPreset(normalized, gameId);
+    if (!result.ok) alert(`保存失败: ${result.error}`);
+  };
+
   const updateRule = (ruleId: string, fn: (r: GameRule) => GameRule) =>
     updateFw((d) => {
       const rules = normalizeGameRules(d.gameRules ?? []);
@@ -1189,6 +1233,7 @@ export function SceneEditor({
             onUpdateRule={updateRule}
             onSaveRules={() => checkAuthForSave(saveRules)}
             onUpdate={(fn) => updateScene(editIndex, fn)}
+            onSaveScene={() => checkAuthForSave(persistScenes)}
             {...narrativeFormProps}
           />
         </DetailEditModal>

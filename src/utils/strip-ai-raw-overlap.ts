@@ -34,7 +34,7 @@ function removeSentenceOverlap(result: string, sentence: string): string {
     if (!next.includes(variant)) continue;
     next = next.split(variant).join('');
   }
-  return next.replace(/\s{2,}/g, ' ').trim();
+  return next.replace(/[ \t]{2,}/g, ' ').trim();
 }
 
 export function collectPrecedingRawTexts(scene: GameScene, aiBlockIndex: number): string[] {
