@@ -111,6 +111,7 @@ function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Recor
   const validImages = scene.images?.filter((u) => u?.trim());
   m.images = validImages?.length ? validImages.map((u) => u.trim()) : undefined;
   m.backgroundMusic = scene.backgroundMusic || undefined;
+  m.synthesizedBgm = scene.synthesizedBgm || undefined;
   return m;
 }
 
@@ -245,18 +246,9 @@ function normalizePassageKey(name: string): string {
 }
 
 function resolveStoryStartPassageName(fw: StoryFramework): string | null {
-  const chapters = fw.chapters ?? [];
-  if (chapters.length === 0) return null;
-  const first = chapters[0];
-  const firstChapterScenes = (first.sceneEntries ?? [])
-    .map((entry) => (fw.scenes ?? []).find((s) => s.id === entry.sceneId))
-    .filter((s): s is GameScene => !!s);
-  if (firstChapterScenes.length === 0) return null;
-  if (first.startMapNodeId) {
-    const matched = firstChapterScenes.find((s) => s.mapNodeId === first.startMapNodeId);
-    if (matched?.name) return matched.name;
-  }
-  return firstChapterScenes[0].name ?? null;
+  const story = frameworkToStory(fw);
+  const startPassage = story.passages.get(story.startPassageId);
+  return startPassage?.name ?? null;
 }
 
 function getScenePassageLookupKeys(
@@ -1130,6 +1122,7 @@ export function FrameworkEditor({
             key={ch.id}
             ch={ch}
             chi={chi}
+            startSceneName={chi === 0 ? resolveStoryStartPassageName(fw) : undefined}
             scenes={fw.scenes ?? []}
             mapNodeIds={mapNodeIds}
             ruleList={(fw.gameRules ?? []).map((r) => ({id: r.id, name: r.name}))}
@@ -1161,6 +1154,7 @@ export function FrameworkEditor({
 function ChapterBlock({
   ch,
   chi,
+  startSceneName,
   scenes,
   mapNodeIds,
   ruleList,
@@ -1183,6 +1177,8 @@ function ChapterBlock({
 }: {
   ch: FrameworkChapter;
   chi: number;
+  /** 首章解析出的游戏起始场景名（只读提示） */
+  startSceneName?: string | null;
   scenes: GameScene[];
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
   ruleList: Array<{ id: string; name: string }>;
@@ -1301,6 +1297,12 @@ function ChapterBlock({
                 </option>
               ))}
             </select>
+            {startSceneName != null && (
+              <p style={{margin: '6px 0 0', fontSize: 12, color: '#9ca3af'}}>
+                游戏起始场景：<strong style={{color: '#e8e8e8'}}>{startSceneName}</strong>
+                （首章该节点上的<strong>主线</strong>场景；支线不参与）
+              </p>
+            )}
           </div>
           <div style={styles.row}>
             <label style={styles.label}>终止地图节点（本章结束后玩家可前往）</label>

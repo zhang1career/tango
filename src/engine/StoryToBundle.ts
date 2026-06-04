@@ -80,7 +80,10 @@ function metadataToMediaCues(meta?: Record<string, unknown>): StoryBundleMediaCu
   const cues: StoryBundleMediaCues = {};
 
   if (meta.openingAnimation) cues.opening_video = String(meta.openingAnimation);
-  if (meta.backgroundMusic) cues.bgm = String(meta.backgroundMusic);
+  const synthesized = typeof meta.synthesizedBgm === 'string' ? meta.synthesizedBgm.trim() : '';
+  const sceneBgm = typeof meta.backgroundMusic === 'string' ? meta.backgroundMusic.trim() : '';
+  const bgm = synthesized || sceneBgm;
+  if (bgm) cues.bgm = bgm;
   if (Array.isArray(meta.images)) {
     const images = meta.images.map(String).filter(Boolean);
     if (images.length) cues.images = images;

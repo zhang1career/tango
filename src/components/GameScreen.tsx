@@ -32,6 +32,7 @@ import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUr
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
 import {resolveSceneIdFromPassage} from '@/utils/scene-id';
+import {resolveSceneBgmPath} from '@/utils/scene-bgm';
 import {resolvePassageDisplayTitle} from '@/utils/passage-display-title';
 import {
   BehaviorInteractionModal,
@@ -90,6 +91,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const [pendingBattleBehavior, setPendingBattleBehavior] = useState<{ charId: string; b: GameBehavior } | null>(null);
   const pendingBattleRef = useRef<{ charId: string; b: GameBehavior } | null>(null);
   const [featuresConfig, setFeaturesConfig] = useState<{ battle?: { backgroundMusic?: string } } | null>(null);
+  const [resolvedSceneBgm, setResolvedSceneBgm] = useState<string | undefined>();
   const [events, setEvents] = useState<GameEvent[]>([]);
   const [scenes, setScenes] = useState<GameScene[]>([]);
   const [itemCatalog, setItemCatalog] = useState<GameItem[]>([]);
@@ -262,10 +264,32 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     return () => intervals.forEach(clearInterval);
   }, [engine?.getState()?.currentPassage?.id]);
 
+  useEffect(() => {
+    if (!engine) {
+      setResolvedSceneBgm(undefined);
+      return;
+    }
+    const passage = engine.getState().currentPassage;
+    const sceneId = resolveSceneIdFromPassage(passage);
+    const scene = sceneId ? scenes.find((s) => s.id === sceneId) : undefined;
+    const synthesizedBgm =
+      scene?.synthesizedBgm ?? (passage?.metadata?.synthesizedBgm as string | undefined);
+    const backgroundMusic =
+      scene?.backgroundMusic ?? (passage?.metadata?.backgroundMusic as string | undefined);
+
+    let cancelled = false;
+    void resolveSceneBgmPath({synthesizedBgm, backgroundMusic}, gameId).then((path) => {
+      if (!cancelled) setResolvedSceneBgm(path);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, engine?.getState()?.currentPassage?.id, scenes, gameId]);
+
   // BGM priority: battle/event > character > inventory-item > scene
   useEffect(() => {
     const passage = engine?.getState()?.currentPassage;
-    const sceneBgm = passage?.metadata?.backgroundMusic as string | undefined;
+    const sceneBgm = resolvedSceneBgm;
     const characterBgm = selectedCharId
       ? characters.find((c) => c.id === selectedCharId)?.backgroundMusic
       : undefined;
@@ -301,6 +325,7 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
     characters,
     activeInventoryItemBgm,
     battleOpen,
+    resolvedSceneBgm,
   ]);
 
   useEffect(() => {
@@ -531,8 +556,6 @@ export function GameScreen({fetchContent, className, audioMuted = false}: GameSc
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
   const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
-  const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
-
   const behaviorCtx: BehaviorInteractionContext = {
     characters: activeCharacters,
     ruleMap: new Map(rules.map((r) => [r.id, r])),

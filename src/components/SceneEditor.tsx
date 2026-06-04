@@ -16,7 +16,8 @@ import {AttributeValuesCard} from './cards/AttributeValuesCard';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {MediaUrlField} from './ui/MediaFields';
 import {normalizeStringList, StringListField} from './ui/StringListField';
-import {defaultSceneBgmSavePath, defaultSceneImageSavePath} from '@/config/media-paths';
+import {defaultSceneImageSavePath} from '@/config/media-paths';
+import {BgmSynthesisField} from './ui/BgmSynthesisField';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
@@ -114,7 +115,8 @@ type SceneFormProps = {
   items: import('../schema/game-item').GameItem[];
   mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
   characterIds: Array<{ id: string; name: string }>;
-  eventIds: Array<{ id: string; name: string }>;
+  eventIds: Array<{ id: string; name: string; backgroundMusic?: string }>;
+  gameId: string;
   ruleIds: Array<{ id: string; name: string }>;
   gameRules: GameRule[];
   onUpdateRule?: (ruleId: string, fn: (r: GameRule) => GameRule) => void;
@@ -122,7 +124,6 @@ type SceneFormProps = {
   onUpdate?: (fn: (s: GameScene) => GameScene) => void;
   collapsibleDefaultExpanded?: boolean;
   fw?: StoryFramework;
-  gameId?: string;
   onScenePatched?: (scene: GameScene) => void;
 };
 
@@ -335,9 +336,13 @@ function SceneFormContent({
                             onSaveRules,
                             onUpdate,
                             fw,
-                            gameId,
+                            gameId: formGameId,
                             onScenePatched,
                           }: SceneFormProps) {
+  const linkedEventId = scene.eventIds?.[0];
+  const linkedEventBgm = linkedEventId
+    ? eventIds.find((e) => e.id === linkedEventId)?.backgroundMusic
+    : undefined;
   const [generatingAiIndex, setGeneratingAiIndex] = useState<number | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
@@ -356,7 +361,7 @@ function SceneFormContent({
       alert('生成内容仅支持开发模式');
       return;
     }
-    if (!fw || !gameId || !onScenePatched) {
+    if (!fw || !formGameId || !onScenePatched) {
       alert('生成上下文未就绪');
       return;
     }
@@ -365,7 +370,7 @@ function SceneFormContent({
     setGeneratingAiIndex(aiIndex);
     setGenError(null);
     try {
-      const {scene: next} = await runGenerateAiBlock(gameId, fw, scene, passageIdx);
+      const {scene: next} = await runGenerateAiBlock(formGameId, fw, scene, passageIdx);
       onScenePatched(next);
     } catch (e) {
       setGenError(String(e));
@@ -560,22 +565,30 @@ function SceneFormContent({
         {editable && onUpdate ? (
           <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
             {eventIds.map((evt) => {
-              const selected = (scene.eventIds ?? []).includes(evt.id);
+              const selected = linkedEventId === evt.id;
               return (
                 <label key={evt.id} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name={`scene-event-${scene.id}`}
                     checked={selected}
-                    onChange={(e) => {
-                      const ids = scene.eventIds ?? [];
-                      const next = e.target.checked ? [...ids, evt.id] : ids.filter((x) => x !== evt.id);
-                      onUpdate((s) => ({...s, eventIds: next.length ? next : undefined}));
-                    }}
+                    onChange={() => onUpdate((s) => ({...s, eventIds: [evt.id]}))}
                   />
                   {evt.name}
                 </label>
               );
             })}
+            {eventIds.length > 0 && (
+              <label style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
+                <input
+                  type="radio"
+                  name={`scene-event-${scene.id}`}
+                  checked={!linkedEventId}
+                  onChange={() => onUpdate((s) => ({...s, eventIds: undefined}))}
+                />
+                （无）
+              </label>
+            )}
           </div>
         ) : (
           <div style={styles.readOnlyValue}>
@@ -886,6 +899,24 @@ function SceneFormContent({
         placeholder="滚动消息"
       />
 
+      <FieldRow
+        label="主线出口文案"
+        value={scene.mainlineLinkDisplayText ?? ''}
+        editable={editable && !!onUpdate}
+      >
+        <input
+          value={scene.mainlineLinkDisplayText ?? ''}
+          onChange={(e) =>
+            onUpdate!((s) => ({
+              ...s,
+              mainlineLinkDisplayText: e.target.value.trim() || undefined,
+            }))
+          }
+          style={styles.input}
+          placeholder="同章有后续主线且配置了 branchOptions 时必填，如：誓行严禁"
+        />
+      </FieldRow>
+
       <MediaUrlField
         label="开场动画"
         value={scene.openingAnimation}
@@ -903,7 +934,20 @@ function SceneFormContent({
         label="背景音乐"
         value={scene.backgroundMusic}
         onChange={(v) => onUpdate?.((s) => ({...s, backgroundMusic: v}))}
-        placeholder={defaultSceneBgmSavePath(scene.id)}
+        placeholder={`media_custom/bgm/${scene.id}.wav`}
+        editable={editable && !!onUpdate}
+      />
+      <BgmSynthesisField
+        gameId={formGameId}
+        sceneId={scene.id}
+        sceneBgm={scene.backgroundMusic}
+        eventBgm={linkedEventBgm}
+        synthesizedBgm={scene.synthesizedBgm}
+        onSynthesizedBgmChange={
+          editable && onUpdate
+            ? (v) => onUpdate((s) => ({...s, synthesizedBgm: v}))
+            : undefined
+        }
         editable={editable && !!onUpdate}
       />
     </div>
@@ -983,7 +1027,11 @@ export function SceneEditor({
     for (const n of map.nodes) mapNodeIds.push({id: n.id, name: n.name, mapName: map.name});
   }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
-  const eventIds = (fw.events ?? []).map((e) => ({id: e.id, name: e.name}));
+  const eventIds = (fw.events ?? []).map((e) => ({
+    id: e.id,
+    name: e.name,
+    backgroundMusic: e.backgroundMusic,
+  }));
   const gameRules = useMemo(() => normalizeGameRules(fw.gameRules ?? []), [fw.gameRules]);
   const ruleIds = gameRules.map((r) => ({id: r.id, name: r.name}));
 
@@ -1046,7 +1094,6 @@ export function SceneEditor({
 
   const narrativeFormProps = {
     fw,
-    gameId,
     onScenePatched: (patched: GameScene) => {
       if (editIndex === null) return;
       const next = scenes.map((s, i) => (i === editIndex ? patched : s));
@@ -1113,6 +1160,7 @@ export function SceneEditor({
             mapNodeIds={mapNodeIds}
             characterIds={characterIds}
             eventIds={eventIds}
+            gameId={gameId}
             ruleIds={ruleIds}
             gameRules={gameRules}
             collapsibleDefaultExpanded
@@ -1135,6 +1183,7 @@ export function SceneEditor({
             mapNodeIds={mapNodeIds}
             characterIds={characterIds}
             eventIds={eventIds}
+            gameId={gameId}
             ruleIds={ruleIds}
             gameRules={gameRules}
             onUpdateRule={updateRule}
@@ -1161,6 +1210,7 @@ export function SceneEditor({
             mapNodeIds={mapNodeIds}
             characterIds={characterIds}
             eventIds={eventIds}
+            gameId={gameId}
             ruleIds={ruleIds}
             gameRules={gameRules}
             onUpdateRule={updateRule}

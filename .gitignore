@@ -35,4 +35,5 @@ android/build/
 assets/games/*
 !assets/games/default
 assets/games/default/media
-assets/media_custom
+assets/media_custom/*
+assets/media_gen

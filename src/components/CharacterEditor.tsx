@@ -8,7 +8,7 @@ import {getAIGCApiKey, getAIGCApiUrl, getCharactersFetchUrl, getScenesFetchUrl} 
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
-import type {GameCharacter} from '../schema/game-character';
+import type {GameCharacter, CharacterPersonalityTrait, CharacterLimitation} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {GameScene} from '../schema/game-scene';
 import {AttributeValuesCard} from './cards/AttributeValuesCard';
@@ -153,7 +153,7 @@ async function saveCharactersToPreset(characters: unknown, gameId: string): Prom
   return {ok: true};
 }
 
-const COLLAPSE_KEYS = ['attr', 'inv', 'dialogueLib', 'onMeetAttr', 'onMeetItems'] as const;
+const COLLAPSE_KEYS = ['attr', 'inv', 'personality', 'limitations', 'dialogueLib', 'onMeetAttr', 'onMeetItems'] as const;
 
 /** 基于人物描述，调用 AI 生成多条对话行为 */
 async function generateBehaviorsFromAI(
@@ -495,6 +495,177 @@ function CharacterFormContent({
           placeholder="权臣，北魏将领..."
         />
       </FieldRow>
+      <CollapsibleSection
+        title="性格特质"
+        expanded={expanded.has('personality')}
+        onToggle={() => toggle('personality')}
+      >
+        {(char.personality ?? []).map((trait, idx) => (
+          <div key={trait.id || idx} style={styles.dialogueItem}>
+            {editable && onUpdate ? (
+              <>
+                <FieldRow label="ID" value={trait.id} editable>
+                  <input
+                    value={trait.id}
+                    onChange={(e) =>
+                      onUpdate((c) => {
+                        const list = [...(c.personality ?? [])];
+                        list[idx] = {...list[idx], id: e.target.value};
+                        return {...c, personality: list};
+                      })
+                    }
+                    style={styles.input}
+                  />
+                </FieldRow>
+                <FieldRow label="标签" value={trait.label} editable>
+                  <input
+                    value={trait.label}
+                    onChange={(e) =>
+                      onUpdate((c) => {
+                        const list = [...(c.personality ?? [])];
+                        list[idx] = {...list[idx], label: e.target.value};
+                        return {...c, personality: list};
+                      })
+                    }
+                    style={styles.input}
+                  />
+                </FieldRow>
+                <FieldRow label="程度" value={trait.level} editable>
+                  <input
+                    value={trait.level}
+                    onChange={(e) =>
+                      onUpdate((c) => {
+                        const list = [...(c.personality ?? [])];
+                        list[idx] = {...list[idx], level: e.target.value};
+                        return {...c, personality: list};
+                      })
+                    }
+                    style={styles.input}
+                  />
+                </FieldRow>
+                <button
+                  type="button"
+                  style={styles.btnSmall}
+                  onClick={() =>
+                    onUpdate((c) => ({
+                      ...c,
+                      personality: (c.personality ?? []).filter((_, i) => i !== idx),
+                    }))
+                  }
+                >
+                  删除
+                </button>
+              </>
+            ) : (
+              <div style={styles.readOnlyValue}>{trait.label}：{trait.level}</div>
+            )}
+          </div>
+        ))}
+        {editable && onUpdate && (
+          <button
+            type="button"
+            style={styles.btnSmall}
+            onClick={() =>
+              onUpdate((c) => ({
+                ...c,
+                personality: [
+                  ...(c.personality ?? []),
+                  {id: `trait_${Date.now()}`, label: '', level: ''} satisfies CharacterPersonalityTrait,
+                ],
+              }))
+            }
+          >
+            + 添加特质
+          </button>
+        )}
+      </CollapsibleSection>
+      <CollapsibleSection
+        title="认知局限"
+        expanded={expanded.has('limitations')}
+        onToggle={() => toggle('limitations')}
+      >
+        {(char.limitations ?? []).map((lim, idx) => (
+          <div key={lim.id || idx} style={styles.dialogueItem}>
+            {editable && onUpdate ? (
+              <>
+                <FieldRow label="ID" value={lim.id} editable>
+                  <input
+                    value={lim.id}
+                    onChange={(e) =>
+                      onUpdate((c) => {
+                        const list = [...(c.limitations ?? [])];
+                        list[idx] = {...list[idx], id: e.target.value};
+                        return {...c, limitations: list};
+                      })
+                    }
+                    style={styles.input}
+                  />
+                </FieldRow>
+                <FieldRow label="标题" value={lim.title} editable>
+                  <input
+                    value={lim.title}
+                    onChange={(e) =>
+                      onUpdate((c) => {
+                        const list = [...(c.limitations ?? [])];
+                        list[idx] = {...list[idx], title: e.target.value};
+                        return {...c, limitations: list};
+                      })
+                    }
+                    style={styles.input}
+                  />
+                </FieldRow>
+                <FieldRow label="说明" value={lim.summary} editable>
+                  <textarea
+                    value={lim.summary}
+                    onChange={(e) =>
+                      onUpdate((c) => {
+                        const list = [...(c.limitations ?? [])];
+                        list[idx] = {...list[idx], summary: e.target.value};
+                        return {...c, limitations: list};
+                      })
+                    }
+                    style={{...styles.input, ...styles.textarea, minHeight: 72}}
+                  />
+                </FieldRow>
+                <button
+                  type="button"
+                  style={styles.btnSmall}
+                  onClick={() =>
+                    onUpdate((c) => ({
+                      ...c,
+                      limitations: (c.limitations ?? []).filter((_, i) => i !== idx),
+                    }))
+                  }
+                >
+                  删除
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{...styles.readOnlyValue, fontWeight: 600}}>{lim.title}</div>
+                <div style={styles.readOnlyValue}>{lim.summary}</div>
+              </>
+            )}
+          </div>
+        ))}
+        {editable && onUpdate && (
+          <button
+            type="button"
+            style={styles.btnSmall}
+            onClick={() =>
+              onUpdate((c) => ({
+                ...c,
+                limitations: [
+                  ...(c.limitations ?? []),
+                  {id: `lim_${Date.now()}`, title: '', summary: ''} satisfies CharacterLimitation,
+                ],
+              }))
+            }
+          >
+            + 添加局限
+          </button>
+        )}
+      </CollapsibleSection>
       <MediaUrlField
         label="头像"
         value={char.avatar}

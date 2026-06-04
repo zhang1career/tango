@@ -24,6 +24,23 @@ export interface CharacterNameProfile {
   title?: string;
 }
 
+/** 人物性格特质（结构化，供叙事生成与编辑） */
+export interface CharacterPersonalityTrait {
+  /** 特质 id（如 responsibility） */
+  id: string;
+  /** 展示标签（如 责任心） */
+  label: string;
+  /** 程度描述（如 极高） */
+  level: string;
+}
+
+/** 人物认知或时代局限（结构化） */
+export interface CharacterLimitation {
+  id: string;
+  title: string;
+  summary: string;
+}
+
 /** 对该人物的称呼约定（可选） */
 export interface CharacterAddressingProfile {
   /**
@@ -51,6 +68,10 @@ export interface GameCharacter {
   addressingProfile?: CharacterAddressingProfile;
   /** 人物描述 */
   description?: string;
+  /** 性格特质列表 */
+  personality?: CharacterPersonalityTrait[];
+  /** 认知或时代局限 */
+  limitations?: CharacterLimitation[];
   /** 属性值（来自 metadata 人物属性） */
   attributes?: Record<string, string | number | boolean>;
   /** 物品 id 列表 */

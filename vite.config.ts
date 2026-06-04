@@ -2,9 +2,18 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve, dirname, normalize } from 'node:path';
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
-import {CUSTOM_MEDIA_FS_DIR} from './src/config/media-paths';
+import {CUSTOM_MEDIA_FS_DIR, GENERATED_MEDIA_FS_DIR} from './src/config/media-paths';
 import { formatJsonCompact } from './src/utils/json-format';
 import { bundleStoryTwForProd } from './src/utils/bundle-game-for-prod';
+import {
+  ensureParentDir,
+  isMp3LogicalPath,
+  isWavLogicalPath,
+  normalizeLogicalMediaPath,
+  readEventBgmVolumeFromFile,
+  resolveMediaToFsPath,
+} from './src/utils/media-logical-path';
+import { runBgmMixFfmpeg } from './src/utils/run-bgm-mix';
 
 const DEFAULT_GAMES_BASE_PATH = 'assets/games';
 
@@ -154,6 +163,107 @@ export default defineConfig(({ mode }) => {
             }
           });
         });
+        server.middlewares.use('/api/media/mix-bgm', (req, res, next) => {
+          if (req.method !== 'POST') return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const payload = JSON.parse(body) as {
+                gameId?: string;
+                sceneBgmPath?: string;
+                eventBgmPath?: string;
+                outputPath?: string;
+              };
+              const gameId = String(payload.gameId ?? '').trim();
+              if (!/^[a-zA-Z0-9_-]+$/.test(gameId)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: 'gameId 非法' }));
+                return;
+              }
+              const sceneBgmPath = normalizeLogicalMediaPath(String(payload.sceneBgmPath ?? ''));
+              const eventBgmPath = normalizeLogicalMediaPath(String(payload.eventBgmPath ?? ''));
+              const outputPath = normalizeLogicalMediaPath(String(payload.outputPath ?? ''));
+              if (!sceneBgmPath || !eventBgmPath || !outputPath) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: '场景/事件/输出路径均不能为空' }));
+                return;
+              }
+              if (!isWavLogicalPath(sceneBgmPath) || !isWavLogicalPath(eventBgmPath)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: '合成输入仅支持 .wav' }));
+                return;
+              }
+              if (!isMp3LogicalPath(outputPath)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: '合成输出须为 .mp3' }));
+                return;
+              }
+              const sceneResolved = resolveMediaToFsPath(sceneBgmPath, gameId, cwd);
+              const eventResolved = resolveMediaToFsPath(eventBgmPath, gameId, cwd);
+              const outResolved = resolveMediaToFsPath(outputPath, gameId, cwd);
+              if (!sceneResolved.ok) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: sceneResolved.error }));
+                return;
+              }
+              if (!eventResolved.ok) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: eventResolved.error }));
+                return;
+              }
+              if (!outResolved.ok) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: outResolved.error }));
+                return;
+              }
+              if (!existsSync(sceneResolved.fsPath)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  ok: false,
+                  error: `找不到场景背景音乐文件:\n${sceneResolved.fsPath}`,
+                }));
+                return;
+              }
+              if (!existsSync(eventResolved.fsPath)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  ok: false,
+                  error: `找不到事件背景音乐文件:\n${eventResolved.fsPath}`,
+                }));
+                return;
+              }
+              const eventVolume = readEventBgmVolumeFromFile(
+                eventBgmPath,
+                cwd,
+                (p) => readFileSync(p, 'utf-8'),
+                existsSync
+              );
+              ensureParentDir(outResolved.fsPath, mkdirSync);
+              const mixResult = runBgmMixFfmpeg({
+                sceneFsPath: sceneResolved.fsPath,
+                eventFsPath: eventResolved.fsPath,
+                outputFsPath: outResolved.fsPath,
+                eventVolume,
+              });
+              if (!mixResult.ok) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: mixResult.error }));
+                return;
+              }
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                ok: true,
+                outputPath,
+                outputFsPath: outResolved.fsPath,
+                eventVolume,
+              }));
+            } catch (e) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
+            }
+          });
+        });
       },
     },
     {
@@ -292,6 +402,14 @@ export default defineConfig(({ mode }) => {
         }
         if (existsSync(srcCustomMediaDir)) {
           copyDirectoryRecursive(srcCustomMediaDir, distCustomMediaDir);
+        }
+        const srcGeneratedMediaDir = resolve(cwd, GENERATED_MEDIA_FS_DIR);
+        const distGeneratedMediaDir = resolve(outDir, GENERATED_MEDIA_FS_DIR);
+        if (existsSync(distGeneratedMediaDir)) {
+          rmSync(distGeneratedMediaDir, { recursive: true, force: true });
+        }
+        if (existsSync(srcGeneratedMediaDir)) {
+          copyDirectoryRecursive(srcGeneratedMediaDir, distGeneratedMediaDir);
         }
       },
     },

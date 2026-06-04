@@ -3,7 +3,7 @@
  * 支持多游戏：gameId 用于数据隔离，默认 'default'
  */
 
-import {CUSTOM_MEDIA_FS_DIR} from './media-paths';
+import {CUSTOM_MEDIA_FS_DIR, GENERATED_MEDIA_FS_DIR} from './media-paths';
 
 const env = import.meta.env;
 
@@ -31,6 +31,12 @@ export function getGameAssetsPrefix(gameId?: string): string {
 /** 项目级自定义媒体目录（本地覆盖，不属于某个 gameId） */
 export function getCustomMediaAssetsPrefix(): string {
   return CUSTOM_MEDIA_FS_DIR;
+}
+
+/** 合成媒体目录前缀（按 gameId 分子目录） */
+export function getGeneratedMediaAssetsPrefix(gameId?: string): string {
+  const id = gameId || DEFAULT_GAME_ID;
+  return `${GENERATED_MEDIA_FS_DIR}/${id}`;
 }
 
 export function getContentPath(gameId?: string): string {
@@ -252,6 +258,13 @@ export function resolveMediaUrl(path: string, gameId?: string): string {
         return toFetchUrl(`${customPrefix}/${subPath}`);
       }
       return `${base}/media_custom/${subPath}`;
+    }
+    if (normalized.startsWith('media_gen/') || normalized.startsWith('media-gen/')) {
+      const subPath = normalized.replace(/^media[-_]gen\//, '');
+      if (!base || isLegacyLocalMediaBase(base)) {
+        return toFetchUrl(`${GENERATED_MEDIA_FS_DIR}/${subPath}`);
+      }
+      return `${base}/media_gen/${subPath}`;
     }
     // 新设计：媒体与游戏数据同目录（assets/games/{gameId}/...）
     // 同时兼容旧默认配置 assets/media，避免其覆盖新目录解析。

@@ -118,8 +118,15 @@ export interface GameScene {
   images?: string[];
   /** 背景音乐 URL */
   backgroundMusic?: string;
+  /** 合成后的背景音乐输出路径（media_gen/{gameId}/bgm/...，多为 mp3） */
+  synthesizedBgm?: string;
   /** 场景消息列表（标题右侧滚动展示） */
   messages?: string[];
   /** 主线场景分出的支线选项（仅主线场景填写） */
   branchOptions?: SceneBranchOption[];
+  /**
+   * 同章后续主线入口文案。配置了 branchOptions 且同章还有下一主线场景时必填；
+   * 分页子页仍使用「继续」，仅末页出口使用此文案。
+   */
+  mainlineLinkDisplayText?: string;
 }

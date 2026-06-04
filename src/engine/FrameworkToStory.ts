@@ -233,11 +233,22 @@ export function frameworkToStory(fw: StoryFramework): Story {
     if (!isBranchScene) {
       const chapterMainline = chapterMainlineEntries.get(chapterIndex) ?? [];
       const idx = chapterMainline.findIndex((x) => x.scene.id === scene.id);
-      if (idx >= 0 && idx < chapterMainline.length - 1) {
+      const hasNextMainline = idx >= 0 && idx < chapterMainline.length - 1;
+      const branchOptions = (scene.branchOptions ?? []).filter(Boolean);
+      if (hasNextMainline && branchOptions.length > 0) {
+        const mainlineText = scene.mainlineLinkDisplayText?.trim();
+        if (!mainlineText) {
+          throw new Error(
+            `场景 ${scene.id} 配置了 branchOptions 且同章有后续主线，须填写 mainlineLinkDisplayText`
+          );
+        }
+      }
+      if (hasNextMainline) {
         const nextMainline = chapterMainline[idx + 1];
         const targetAccess = buildAccessCondition(nextMainline.entry, nextMainline.scene, ruleMap);
+        const displayText = scene.mainlineLinkDisplayText?.trim() || '继续';
         links.push({
-          displayText: '继续',
+          displayText,
           passageName: nextMainline.scene.name,
           condition: targetAccess || undefined,
         });
@@ -281,6 +292,7 @@ export function frameworkToStory(fw: StoryFramework): Story {
     const validImages = scene.images?.filter((u) => u?.trim());
     if (validImages?.length) metadata.images = validImages.map((u) => u.trim());
     if (scene.backgroundMusic) metadata.backgroundMusic = scene.backgroundMusic;
+    if (scene.synthesizedBgm) metadata.synthesizedBgm = scene.synthesizedBgm;
     const sceneMessages = scene.messages?.map((m) => m?.trim()).filter(Boolean) as string[] | undefined;
     if (sceneMessages?.length) metadata.messages = sceneMessages;
     if (terminalFailure) {
