@@ -38,6 +38,7 @@ import {
   upsertAiBlock,
   upsertLeadingRaw,
 } from '../utils/passage-blocks';
+import {SceneRoutingFields} from './SceneRoutingFields';
 
 function FieldRow({
                     label,
@@ -935,6 +936,10 @@ function SceneFormContent({
         editable={editable && !!onUpdate}
         placeholder="滚动消息"
       />
+
+      {fw ? (
+        <SceneRoutingFields fw={fw} scene={scene} editable={editable && !!onUpdate} onUpdate={onUpdate} />
+      ) : null}
 
       <FieldRow
         label="主线出口文案"

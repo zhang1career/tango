@@ -1234,6 +1234,17 @@ function ChapterBlock({
     }));
   };
 
+  const moveSceneEntry = (si: number, dir: -1 | 1) => {
+    const j = si + dir;
+    if (j < 0 || j >= entries.length) return;
+    updateChapter((c) => {
+      const list = [...c.sceneEntries];
+      const [item] = list.splice(si, 1);
+      list.splice(j, 0, item);
+      return {...c, sceneEntries: list};
+    });
+  };
+
   return (
     <div style={styles.chapter}>
       <div style={styles.chapterHead} onClick={() => toggleCh(ch.id)}>
@@ -1364,7 +1375,25 @@ function ChapterBlock({
                   <span style={styles.sceneTitle}>
                     {isEntryExpanded ? '▼' : '▶'} {scene?.name ?? entry.sceneId}
                   </span>
-                  <div onClick={(ev) => ev.stopPropagation()} style={{display: 'flex', gap: 4}}>
+                  <div onClick={(ev) => ev.stopPropagation()} style={{display: 'flex', gap: 4, alignItems: 'center'}}>
+                    <button
+                      type="button"
+                      style={styles.btnSmall}
+                      onClick={() => moveSceneEntry(si, -1)}
+                      disabled={si === 0}
+                      title="上移（影响章内主线顺序）"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.btnSmall}
+                      onClick={() => moveSceneEntry(si, 1)}
+                      disabled={si >= entries.length - 1}
+                      title="下移（影响章内主线顺序）"
+                    >
+                      ↓
+                    </button>
                     <button
                       type="button"
                       style={{
