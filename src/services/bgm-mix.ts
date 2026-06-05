@@ -12,6 +12,7 @@ export type MixBgmResponse = {
   error?: string;
   outputPath?: string;
   outputFsPath?: string;
+  sceneVolume?: number;
   eventVolume?: number;
 };
 

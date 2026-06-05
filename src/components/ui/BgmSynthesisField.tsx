@@ -91,9 +91,15 @@ export function BgmSynthesisField({
         alert(result.error ?? '合成失败');
         return;
       }
+      const volumeLines = [
+        result.sceneVolume != null ? `场景轨音量：${result.sceneVolume}` : null,
+        result.eventVolume != null ? `事件轨音量：${result.eventVolume}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
       const msg = result.outputFsPath
         ? `合成完成：\n${result.outputPath}\n\n磁盘路径：\n${result.outputFsPath}${
-            result.eventVolume != null ? `\n\n事件轨音量：${result.eventVolume}` : ''
+            volumeLines ? `\n\n${volumeLines}` : ''
           }`
         : `合成完成：${result.outputPath}`;
       setStatus(msg);

@@ -3,7 +3,7 @@ import {
   BGM_EVENT_VOLUMES_FILENAME,
   CUSTOM_MEDIA_FS_DIR,
   CUSTOM_MEDIA_LOGICAL_PREFIX,
-  DEFAULT_EVENT_BGM_VOLUME,
+  DEFAULT_BGM_MIX_VOLUME,
   GENERATED_MEDIA_FS_DIR,
   GENERATED_MEDIA_LOGICAL_PREFIX,
 } from '../config/media-paths';
@@ -68,18 +68,18 @@ export function bgmEventVolumesFsPath(projectRoot: string): string {
   return resolve(projectRoot, CUSTOM_MEDIA_FS_DIR, 'bgm', BGM_EVENT_VOLUMES_FILENAME);
 }
 
-/** Node 环境读取事件轨音量（vite 中间件用） */
-export function readEventBgmVolumeFromFile(
-  eventWavLogicalPath: string,
+/** Node 环境读取 BGM 轨音量（vite 中间件用；场景轨与事件轨共用同一配置表） */
+export function readBgmVolumeFromFile(
+  wavLogicalPath: string,
   projectRoot: string,
   readFile: (p: string) => string,
   exists: (p: string) => boolean
 ): number {
-  const basename = normalizeLogicalMediaPath(eventWavLogicalPath).split('/').pop() ?? '';
-  if (!basename) return DEFAULT_EVENT_BGM_VOLUME;
+  const basename = normalizeLogicalMediaPath(wavLogicalPath).split('/').pop() ?? '';
+  if (!basename) return DEFAULT_BGM_MIX_VOLUME;
 
   const configPath = bgmEventVolumesFsPath(projectRoot);
-  if (!exists(configPath)) return DEFAULT_EVENT_BGM_VOLUME;
+  if (!exists(configPath)) return DEFAULT_BGM_MIX_VOLUME;
   try {
     const parsed = JSON.parse(readFile(configPath)) as Record<string, unknown>;
     const v = parsed[basename];
@@ -87,8 +87,11 @@ export function readEventBgmVolumeFromFile(
   } catch {
     // ignore
   }
-  return DEFAULT_EVENT_BGM_VOLUME;
+  return DEFAULT_BGM_MIX_VOLUME;
 }
+
+/** @deprecated 使用 readBgmVolumeFromFile */
+export const readEventBgmVolumeFromFile = readBgmVolumeFromFile;
 
 export function ensureParentDir(fsPath: string, mkdirSync: (dir: string, opts: {recursive: boolean}) => void): void {
   mkdirSync(dirname(fsPath), {recursive: true});
