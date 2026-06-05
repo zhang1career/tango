@@ -31,18 +31,28 @@ export function MediaUrlField({
   onChange,
   placeholder,
   editable,
+  preserveEmptyString = false,
 }: {
   label: string;
   value?: string;
   onChange?: (v: string | undefined) => void;
   placeholder?: string;
   editable: boolean;
+  /** 为 true 时输入空字符串会回调 '' 而非 undefined（用于场景显式空值） */
+  preserveEmptyString?: boolean;
 }) {
   return (
     <FieldRow label={label} value={value ?? ''} editable={editable && !!onChange}>
       <input
         value={value ?? ''}
-        onChange={(e) => onChange?.(e.target.value === '' ? undefined : e.target.value)}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === '') {
+            onChange?.(preserveEmptyString ? '' : undefined);
+          } else {
+            onChange?.(raw);
+          }
+        }}
         style={styles.input}
         placeholder={placeholder ?? '相对路径或 URL'}
       />

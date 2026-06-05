@@ -8,17 +8,19 @@ import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {FeaturesConfig} from '../schema/features';
 import {MediaUrlField} from './ui/MediaFields';
+import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {formatJsonCompact} from '../utils/json-format';
 import {editorStyles as styles} from '../styles/editorStyles';
 
-const DEFAULT_FEATURES: FeaturesConfig = { battle: {} };
+const DEFAULT_FAILURE_TEMPLATE = '【失败结局】{{failureEnding}}\n\n你暂时偏离了主线目标。';
+const DEFAULT_FEATURES: FeaturesConfig = { battle: {}, branchFailureEnding: {template: DEFAULT_FAILURE_TEMPLATE} };
 
 async function loadFeatures(gameId: string): Promise<FeaturesConfig> {
   try {
     const res = await fetch(getFeaturesFetchUrl(gameId));
     if (!res.ok) return DEFAULT_FEATURES;
     const data = await res.json();
-    return data ?? DEFAULT_FEATURES;
+    return normalizeFeaturesConfig(data ?? DEFAULT_FEATURES);
   } catch {
     return DEFAULT_FEATURES;
   }
@@ -117,6 +119,67 @@ export function FeaturePanelEditor() {
             placeholder="战斗时的背景音乐 URL 或相对路径"
             editable={true}
           />
+        </div>
+      </section>
+
+      <section style={{ marginBottom: 32 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>支线失败结局</h2>
+          <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleSaveBattle)} disabled={saving}>
+            {saving ? '保存中...' : '保存'}
+          </button>
+        </div>
+        <div
+          style={{
+            padding: 20,
+            backgroundColor: '#1e1e32',
+            borderRadius: 8,
+            border: '1px solid #333',
+          }}
+        >
+          <MediaUrlField
+            label="统一背景音乐"
+            value={features.branchFailureEnding?.backgroundMusic}
+            onChange={(v) =>
+              updateFeatures((f) => ({
+                ...f,
+                branchFailureEnding: { ...f.branchFailureEnding, backgroundMusic: v },
+              }))
+            }
+            placeholder="所有支线失败结局统一使用"
+            editable={true}
+          />
+          <MediaUrlField
+            label="统一背景图"
+            value={features.branchFailureEnding?.image}
+            onChange={(v) =>
+              updateFeatures((f) => ({
+                ...f,
+                branchFailureEnding: {...f.branchFailureEnding, image: v},
+              }))
+            }
+            editable={true}
+          />
+          <div style={styles.row}>
+            <label style={styles.label}>失败结局模板（支持占位符）</label>
+            <textarea
+              value={features.branchFailureEnding?.template ?? ''}
+              onChange={(e) =>
+                updateFeatures((f) => ({
+                  ...f,
+                  branchFailureEnding: {
+                    ...f.branchFailureEnding,
+                    template: e.target.value || undefined,
+                  },
+                }))
+              }
+              placeholder={DEFAULT_FAILURE_TEMPLATE}
+              style={{...styles.input, ...styles.textarea, minHeight: 130}}
+            />
+            <div style={{marginTop: 8, fontSize: 12, color: '#9aa0b6'}}>
+              可用占位符：{'{{failureEnding}}'} / {'{{rootSceneName}}'} / {'{{branchOptionId}}'}
+            </div>
+          </div>
         </div>
       </section>
     </div>

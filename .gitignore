@@ -30,3 +30,10 @@ Thumbs.db
 ios/Pods/
 android/build/
 .expo/
+
+# Project
+assets/games/*
+!assets/games/default
+assets/games/default/media
+assets/media_custom/*
+assets/media_gen

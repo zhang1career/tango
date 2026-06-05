@@ -1,6 +1,7 @@
 export {parseTwee} from './TweeParser';
 export {serializeStory, serializeStorySugarcube} from './TweeSerializer';
-export {frameworkToStory} from './FrameworkToStory';
+export {frameworkToStory, syncStoryTitleFromFramework} from './FrameworkToStory';
+export {storyToBundle, storyBundleChecksum, type StoryToBundleOptions} from './StoryToBundle';
 export {loadStory, type FetchContent} from './ContentLoader';
 export {GameEngine} from './GameEngine';
 export type {GameState} from './GameEngine';
@@ -21,4 +22,5 @@ export {
   type EventExecuteResult,
   type PendingEventBattle,
 } from './EventExecutor';
+export {triggerSetOnRules} from './SetOnRule';
 export {parseCascadedId} from '../utils/cascadedId';

@@ -9,7 +9,9 @@ import type {GameEvent} from './game-event';
 import type {GameMetadata} from './metadata';
 import type {GameItem} from './game-item';
 import type {GameScene} from './game-scene';
+import {ONLY_ONCE_RULE_ID} from './game-rule';
 import type {GameRule} from './game-rule';
+import type {FeaturesConfig} from './features';
 
 export type {FrameworkStateActions} from './state-actions';
 export type {FrameworkStateActions as StateActions} from './state-actions';
@@ -26,18 +28,19 @@ export interface SceneEntry {
   sceneId: string;
   /** 本章节采用该场景时的规则 id 列表（有序，准入时按顺序嵌套执行） */
   ruleIds?: string[];
-  /** 生成内容字数要求（约多少字），非空时加入 AI 提示词 */
-  wordCount?: number;
+  /** story.tw 已编译对应的源版本指纹；与当前指纹不一致则表示正文过期 */
+  compiledFingerprint?: string;
 }
 
-/** 章节：可选的逻辑分组 */
+/** 章节：地图节点级叙事单元（title 仅治理用，宜与 maps.nodes[].name 一致） */
 export interface FrameworkChapter {
   id: string;
+  /** 仅编辑/治理用，建议与 story-maps.json 节点 name 同步，勿用「第×章」长标题 */
   title: string;
   theme?: string;
-  /** 章节起点的地图节点 id */
+  /** 本章剧情发生地（地图节点 id） */
   startMapNodeId?: string;
-  /** 章节终点的地图节点 id */
+  /** 本章结束后玩家可前往的地图节点 id（须与 start 不同） */
   endMapNodeId?: string;
   /** 本章节采用的场景（多选，每项可配准入规则和规则引用） */
   sceneEntries: SceneEntry[];
@@ -88,6 +91,8 @@ export interface StoryFramework {
   scenes?: GameScene[];
   /** 可选：游戏规则（专有数据表） */
   gameRules?: GameRule[];
+  /** 可选：功能板块配置（专有数据表） */
+  features?: FeaturesConfig;
 }
 
 /** 迁移旧版剧情框架结构（如 scenes 数组改为 sceneEntries） */
@@ -104,7 +109,10 @@ export function migrateFramework(parsed: StoryFramework): void {
           scenes.push({
             id: s.id,
             name: s.name ?? s.id,
-            summary: s.summary ?? '',
+            passageBlocks: [
+              {type: 'raw', text: ''},
+              {type: 'ai', summary: s.summary ?? '', wordCount: 200},
+            ],
           });
           sceneMap.set(s.id, scenes[scenes.length - 1]);
         }
@@ -117,6 +125,12 @@ export function migrateFramework(parsed: StoryFramework): void {
       if (seen.has(e.sceneId)) return false;
       seen.add(e.sceneId);
       return true;
+    });
+    ch.sceneEntries = ch.sceneEntries.map((e) => {
+      const legacy = e as SceneEntry & { wordCount?: number };
+      if (legacy.wordCount === undefined) return e;
+      const {wordCount: _wc, ...rest} = legacy;
+      return rest;
     });
   }
   parsed.scenes = scenes;
@@ -171,9 +185,26 @@ export function validateFramework(fw: StoryFramework): { valid: boolean; errors:
   const sceneIds = new Set((fw.scenes ?? []).map((s) => s.id));
   const errors: string[] = [];
   for (const ch of fw.chapters ?? []) {
+    if (ch.startMapNodeId && ch.endMapNodeId && ch.startMapNodeId === ch.endMapNodeId) {
+      errors.push(
+        `章节 "${ch.title}" 的 startMapNodeId 与 endMapNodeId 不能相同（${ch.startMapNodeId}）`
+      );
+    }
     for (const entry of ch.sceneEntries ?? []) {
       if (!sceneIds.has(entry.sceneId)) {
         errors.push(`章节 "${ch.title}" 引用了不存在的场景: ${entry.sceneId}`);
+      }
+      const scene = (fw.scenes ?? []).find((s) => s.id === entry.sceneId);
+      if (
+        scene &&
+        (scene.branchOptions ?? []).filter(Boolean).length > 0
+      ) {
+        const ruleIds = new Set([...(entry.ruleIds ?? []), ...(scene.ruleIds ?? [])]);
+        if (ruleIds.has(ONLY_ONCE_RULE_ID)) {
+          errors.push(
+            `章节「${ch.title}」场景「${scene.name}」配置了 branchOptions，不可使用 onlyOnce（${ONLY_ONCE_RULE_ID}）；支线 onlyOnce 请写在「场景」页的 scene.ruleIds`
+          );
+        }
       }
     }
   }

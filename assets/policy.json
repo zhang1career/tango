@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "textPolicies": {
+    "globalRules": [
+      "事实优先，不得改写关键剧情设定",
+      "避免现代网络口语破坏时代氛围"
+    ],
+    "addressingRules": [
+      {
+        "id": "ancient-cn-peer-addressing",
+        "when": {
+          "contextTagsAny": ["ancient_china"]
+        },
+        "rule": {
+          "peerOrJuniorPrefer": ["courtesyName", "artName", "title", "name"],
+          "elderPrefer": ["title", "courtesyName", "name"],
+          "avoidGivenName": true
+        },
+        "note": "中国古代题材中，平辈或晚辈应优先称呼人物的字或号。"
+      }
+    ]
+  }
+}

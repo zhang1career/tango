@@ -16,28 +16,61 @@ import {
   resumeEventExecution,
   type BehaviorInteractionContext,
   type PendingEventBattle,
+  triggerSetOnRules,
 } from '@/engine';
 import type {GameCharacter} from '@/schema/game-character';
 import type {GameRule} from '@/schema/game-rule';
 import type {GameEvent} from '@/schema/game-event';
 import type {GameBehavior} from '@/schema/game-behavior';
-import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl} from '@/config';
+import type {GameItem} from '@/schema/game-item';
+import type {GameActionRef} from '@/schema/action-ref';
+import type {SceneCharacterOverride} from '@/schema/game-scene';
+import type {GameScene} from '@/schema/game-scene';
+import {EMPTY_JOURNAL_CATALOG, normalizeJournalCatalog, type StoryJournalCatalog} from '@/schema/story-journal';
+import {groupJournalByTheme} from '@/utils/journal-display';
+import {resolveMediaUrl, getEventsFetchUrl, getFeaturesFetchUrl, getItemsFetchUrl, getScenesFetchUrl, getJournalFetchUrl, getAppMode} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {sanitizePassageContent} from '@/utils/sanitize';
+import {resolveSceneIdFromPassage} from '@/utils/scene-id';
+import {resolveSceneBgmPath} from '@/utils/scene-bgm';
+import {resolvePassageDisplayTitle} from '@/utils/passage-display-title';
 import {
   BehaviorInteractionModal,
   type BehaviorHistoryEntry,
 } from './BehaviorInteractionModal';
 import {BattleModal, type BattleResult} from './BattleModal';
 import {BattleSettlementModal} from './BattleSettlementModal';
+import {InventoryModal} from './InventoryModal';
+import {JournalModal} from './JournalModal';
+import {MessageTicker} from './MessageTicker';
 
 interface GameScreenProps {
   fetchContent: FetchContent;
   className?: string;
+  audioMuted?: boolean;
 }
 
-export function GameScreen({fetchContent, className}: GameScreenProps) {
+function applySceneOverridesToCharacters(
+  baseCharacters: GameCharacter[],
+  overrides?: Record<string, SceneCharacterOverride>
+): GameCharacter[] {
+  if (!overrides || Object.keys(overrides).length === 0) return baseCharacters;
+  return baseCharacters.map((c) => {
+    const o = overrides[c.id];
+    if (!o) return c;
+    return {
+      ...c,
+      description: o.description ?? c.description,
+      attributes: o.attributes ?? c.attributes,
+      inventory: o.inventory ?? c.inventory,
+      behaviorLibrary: o.behaviorLibrary ?? c.behaviorLibrary,
+    };
+  });
+}
+
+export function GameScreen({fetchContent, className, audioMuted = false}: GameScreenProps) {
   const {gameId} = useGameId();
+  const isProdMode = getAppMode() === 'prod';
   const [engine, setEngine] = useState<GameEngine | null>(null);
   const [characters, setCharacters] = useState<GameCharacter[]>([]);
   const [rules, setRules] = useState<GameRule[]>([]);
@@ -58,13 +91,22 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const [pendingBattleBehavior, setPendingBattleBehavior] = useState<{ charId: string; b: GameBehavior } | null>(null);
   const pendingBattleRef = useRef<{ charId: string; b: GameBehavior } | null>(null);
   const [featuresConfig, setFeaturesConfig] = useState<{ battle?: { backgroundMusic?: string } } | null>(null);
+  const [resolvedSceneBgm, setResolvedSceneBgm] = useState<string | undefined>();
   const [events, setEvents] = useState<GameEvent[]>([]);
+  const [scenes, setScenes] = useState<GameScene[]>([]);
+  const [itemCatalog, setItemCatalog] = useState<GameItem[]>([]);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalCatalog, setJournalCatalog] = useState<StoryJournalCatalog>(EMPTY_JOURNAL_CATALOG);
+  const [activeInventoryItemBgm, setActiveInventoryItemBgm] = useState<string | undefined>(undefined);
   const [eventPhaseReady, setEventPhaseReady] = useState(false);
   const pendingEventBattleRef = useRef<PendingEventBattle | null>(null);
   const eventPhaseRunRef = useRef<string | null>(null);
   const [eventMediaOverlay, setEventMediaOverlay] = useState<{ type: 'opening' | 'ending'; url: string; event: GameEvent } | null>(null);
+  const [navWarning, setNavWarning] = useState<string | null>(null);
   const eventBgmRef = useRef<HTMLAudioElement | null>(null);
   const runEventPhaseRef = useRef<() => void>(() => {});
+  const initialSceneTriggerRef = useRef<string | null>(null);
 
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const passageContentRef = useRef<HTMLDivElement>(null);
@@ -79,9 +121,28 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       .then((story) => {
         if (cancelled) return;
         setEngine(new GameEngine(story));
-        const meta = story.metadata as { characters?: unknown[]; gameRules?: unknown[] } | undefined;
+        const meta = story.metadata as {
+          characters?: unknown[];
+          gameRules?: unknown[];
+          events?: unknown[];
+          items?: unknown[];
+          journal?: unknown;
+          features?: { battle?: { backgroundMusic?: string } };
+        } | undefined;
         setCharacters(Array.isArray(meta?.characters) ? (meta.characters as GameCharacter[]) : []);
         setRules(Array.isArray(meta?.gameRules) ? (meta.gameRules as GameRule[]) : []);
+        if (meta?.journal) {
+          setJournalCatalog(normalizeJournalCatalog(meta.journal));
+        }
+        if (isProdMode) {
+          const prodScenes = Array.isArray((meta as { scenes?: unknown[] } | undefined)?.scenes)
+            ? (((meta as { scenes?: unknown[] }).scenes ?? []) as GameScene[])
+            : [];
+          setEvents(Array.isArray(meta?.events) ? (meta.events as GameEvent[]) : []);
+          setScenes(prodScenes);
+          setItemCatalog(Array.isArray(meta?.items) ? (meta.items as GameItem[]) : []);
+          setFeaturesConfig(meta?.features ?? null);
+        }
         setLoading(false);
       })
       .catch((e) => {
@@ -93,25 +154,89 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     return () => {
       cancelled = true;
     };
-  }, [fetchContent]);
+  }, [fetchContent, isProdMode]);
 
-  // 加载事件
   useEffect(() => {
+    let cancelled = false;
+    fetch(getJournalFetchUrl(gameId))
+      .then((res) => (res.ok ? res.json() : EMPTY_JOURNAL_CATALOG))
+      .then((data) => {
+        if (!cancelled) setJournalCatalog(normalizeJournalCatalog(data));
+      })
+      .catch(() => {
+        if (!cancelled) setJournalCatalog(EMPTY_JOURNAL_CATALOG);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameId]);
+
+  const handleGameAction = useCallback(
+    (actionRef: GameActionRef) => {
+      if (!engine || rules.length === 0) return;
+      const s = engine.getState();
+      triggerSetOnRules({
+        actionRef,
+        rules,
+        state: {variables: s.variables, inventory: s.inventory, reputation: s.reputation},
+        applyActions: (actions) => engine.applyActions(actions),
+      });
+      refresh();
+    },
+    [engine, refresh, rules]
+  );
+
+  useEffect(() => {
+    if (!engine) return;
+    return engine.onAction(handleGameAction);
+  }, [engine, handleGameAction]);
+
+  useEffect(() => {
+    if (!engine) return;
+    if (initialSceneTriggerRef.current === engine.getState().story.startPassageId) return;
+    const current = engine.getState().currentPassage;
+    const sceneId = resolveSceneIdFromPassage(current) ?? current?.id;
+    if (!sceneId) return;
+    initialSceneTriggerRef.current = engine.getState().story.startPassageId;
+    handleGameAction({type: 'scene.enter', sceneId});
+  }, [engine, handleGameAction]);
+
+  // 开发模式：从独立 JSON 加载（编辑器维护）；prod 已在 story.tw StoryData 中
+  useEffect(() => {
+    if (isProdMode) return;
+    const url = getScenesFetchUrl(gameId);
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((d: unknown) => setScenes(Array.isArray(d) ? (d as GameScene[]) : []))
+      .catch(() => setScenes([]));
+  }, [gameId, isProdMode]);
+
+  useEffect(() => {
+    if (isProdMode) return;
     const url = getEventsFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((d: unknown) => setEvents(Array.isArray(d) ? d : []))
       .catch(() => setEvents([]));
-  }, [gameId]);
+  }, [gameId, isProdMode]);
 
-  // 加载功能板块配置（战斗背景音乐等）
   useEffect(() => {
+    if (isProdMode) return;
+    const url = getItemsFetchUrl(gameId);
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((d: unknown) => setItemCatalog(Array.isArray(d) ? d : []))
+      .catch(() => setItemCatalog([]));
+  }, [gameId, isProdMode]);
+
+  useEffect(() => {
+    if (isProdMode) return;
     const url = getFeaturesFetchUrl(gameId);
     fetch(url)
       .then((res) => (res.ok ? res.json() : {}))
       .then((d: { battle?: { backgroundMusic?: string } } | null) => setFeaturesConfig(d ?? null))
       .catch(() => setFeaturesConfig(null));
-  }, [gameId]);
+  }, [gameId, isProdMode]);
 
   useEffect(() => {
     const el = passageContentRef.current;
@@ -139,29 +264,75 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     return () => intervals.forEach(clearInterval);
   }, [engine?.getState()?.currentPassage?.id]);
 
-  // BGM: play when passage has backgroundMusic, intro done, and event phase done (event phase uses event's BGM)
+  useEffect(() => {
+    if (!engine) {
+      setResolvedSceneBgm(undefined);
+      return;
+    }
+    const passage = engine.getState().currentPassage;
+    const sceneId = resolveSceneIdFromPassage(passage);
+    const scene = sceneId ? scenes.find((s) => s.id === sceneId) : undefined;
+    const synthesizedBgm =
+      scene?.synthesizedBgm ?? (passage?.metadata?.synthesizedBgm as string | undefined);
+    const backgroundMusic =
+      scene?.backgroundMusic ?? (passage?.metadata?.backgroundMusic as string | undefined);
+
+    let cancelled = false;
+    void resolveSceneBgmPath({synthesizedBgm, backgroundMusic}, gameId).then((path) => {
+      if (!cancelled) setResolvedSceneBgm(path);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, engine?.getState()?.currentPassage?.id, scenes, gameId]);
+
+  // BGM priority: battle/event > character > inventory-item > scene
   useEffect(() => {
     const passage = engine?.getState()?.currentPassage;
-    const url = passage?.metadata?.backgroundMusic as string | undefined;
+    const sceneBgm = resolvedSceneBgm;
+    const characterBgm = selectedCharId
+      ? characters.find((c) => c.id === selectedCharId)?.backgroundMusic
+      : undefined;
+    const url = characterBgm || activeInventoryItemBgm || sceneBgm;
     const opening = passage?.metadata?.openingAnimation as string | undefined;
     const shouldPlay =
       url &&
       (!opening || introPlayedRef.current.has(passage?.id ?? '')) &&
-      eventPhaseReady;
+      eventPhaseReady &&
+      !battleOpen &&
+      !audioMuted;
     const audio = bgmRef.current;
     if (audio) {
+      audio.muted = audioMuted;
       audio.pause();
       audio.src = '';
     }
     if (url && shouldPlay) {
-      const src = resolveMediaUrl(url);
+      const src = resolveMediaUrl(url, gameId);
       if (audio) {
         audio.src = src;
         audio.loop = true;
         audio.play().catch(() => {});
       }
     }
-  }, [engine?.getState()?.currentPassage?.id, introVisible, eventPhaseReady]);
+  }, [
+    engine?.getState()?.currentPassage?.id,
+    introVisible,
+    eventPhaseReady,
+    audioMuted,
+    gameId,
+    selectedCharId,
+    characters,
+    activeInventoryItemBgm,
+    battleOpen,
+    resolvedSceneBgm,
+  ]);
+
+  useEffect(() => {
+    if (!audioMuted) return;
+    if (bgmRef.current) bgmRef.current.pause();
+    if (eventBgmRef.current) eventBgmRef.current.pause();
+  }, [audioMuted]);
 
   // Set introVisible when entering passage with openingAnimation (first time)
   useEffect(() => {
@@ -181,14 +352,47 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     refresh();
   }, [engine, refresh]);
 
+  const handleIntroError = useCallback(() => {
+    const passageId = engine?.getState()?.currentPassage?.id;
+    if (passageId) introPlayedRef.current.add(passageId);
+    setIntroVisible(false);
+    refresh();
+  }, [engine, refresh]);
+
   const state = engine?.getState();
+  const journalGroups = state
+    ? groupJournalByTheme(journalCatalog, state.variables)
+    : [];
+  const journalCount = journalGroups.reduce((n, g) => n + g.entries.length, 0);
   const passage = state?.currentPassage ?? null;
   const passageId = passage?.id ?? '';
+  const sceneCharacterOverrides = (passage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined;
+  const activeCharacters = applySceneOverridesToCharacters(characters, sceneCharacterOverrides);
+
+  const currentSceneId = resolveSceneIdFromPassage(passage);
+  const sceneMetaMessages = ((passage?.metadata?.messages as string[] | undefined) ?? [])
+    .map((m) => String(m).trim())
+    .filter(Boolean);
+  const sceneJsonMessages = currentSceneId
+    ? (scenes.find((s) => s.id === currentSceneId)?.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
+    : [];
+  const sceneMessages = sceneMetaMessages.length > 0 ? sceneMetaMessages : sceneJsonMessages;
+  const sceneEventIds = ((passage?.metadata?.eventIds as string[] | undefined) ?? []).filter(Boolean);
+  const sceneEvents = sceneEventIds
+    .map((eid) => events.find((evt) => evt.id === eid))
+    .filter(Boolean) as GameEvent[];
+  const eventMessages = sceneEvents.flatMap((evt) =>
+    (evt.messages ?? []).map((m) => String(m).trim()).filter(Boolean)
+  );
+  const tickerMessages = sceneEventIds.length > 0 ? eventMessages : sceneMessages;
 
   const buildEvtCtx = useCallback(
-    () => ({
+    () => {
+      const currentPassage = engine?.getState()?.currentPassage ?? null;
+      const overrides = (currentPassage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined;
+      return {
       events,
-      characters,
+      characters: applySceneOverridesToCharacters(characters, overrides),
       ruleMap: new Map(rules.map((r) => [r.id, r])),
       features: featuresConfig,
       getState: () => {
@@ -198,15 +402,18 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine!.applyActions(a),
       usedEventIds: engine!.usedEventIds,
       usedBehaviorIds: engine!.usedBehaviorIds,
-    }),
-    [engine, events, characters, rules, featuresConfig]
+      onAction: handleGameAction,
+    };
+  },
+    [engine, events, characters, rules, featuresConfig, handleGameAction]
   );
 
   const doExecuteEventAndMaybeEnding = useCallback(
     (evt: GameEvent) => {
       if (!engine || !passage) return;
-      if (evt.backgroundMusic && eventBgmRef.current) {
-        eventBgmRef.current.src = resolveMediaUrl(evt.backgroundMusic);
+      if (!audioMuted && evt.backgroundMusic && eventBgmRef.current) {
+        eventBgmRef.current.src = resolveMediaUrl(evt.backgroundMusic, gameId);
+        eventBgmRef.current.muted = audioMuted;
         eventBgmRef.current.loop = true;
         eventBgmRef.current.play().catch(() => {});
       }
@@ -214,8 +421,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       const result = executeEvent(evt, evtCtx);
       if (!result.completed && result.pendingBattle) {
         const { item, behavior } = result.pendingBattle;
-        const subjChar = characters.find((c) => c.id === item.subject);
-        const objChar = characters.find((c) => c.id === (item.object ?? ''));
+        const subjChar = evtCtx.characters.find((c) => c.id === item.subject);
+        const objChar = evtCtx.characters.find((c) => c.id === (item.object ?? ''));
         pendingEventBattleRef.current = result.pendingBattle;
         setBattleSubjectChar(subjChar ?? null);
         setBattleObjectChar(objChar ?? null);
@@ -229,7 +436,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       }
       runEventPhaseRef.current();
     },
-    [engine, passage, buildEvtCtx, characters]
+    [engine, passage, buildEvtCtx, audioMuted, gameId]
   );
 
   const runEventPhase = useCallback(() => {
@@ -289,6 +496,23 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     [doExecuteEventAndMaybeEnding, refresh]
   );
 
+  const handleEventMediaError = useCallback(
+    (overlay: { type: 'opening' | 'ending'; url: string; event: GameEvent }) => {
+      setEventMediaOverlay(null);
+      if (overlay.type === 'opening') {
+        doExecuteEventAndMaybeEnding(overlay.event);
+      } else {
+        if (eventBgmRef.current) {
+          eventBgmRef.current.pause();
+          eventBgmRef.current.src = '';
+        }
+        runEventPhaseRef.current();
+      }
+      refresh();
+    },
+    [doExecuteEventAndMaybeEnding, refresh]
+  );
+
   useEffect(() => {
     setEventPhaseReady(false);
   }, [passageId]);
@@ -326,13 +550,14 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   if (!state?.story) return null;
 
   const characterIds = (passage?.metadata?.characterIds as string[] | undefined) ?? [];
+  const inventoryIds = state.inventory;
+  const showActionRow = true;
+  const showBackpack = inventoryIds.length > 0;
   const sceneImages = (passage?.metadata?.images as string[] | undefined) ?? [];
-  const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u)).filter(Boolean);
+  const resolvedImages = sceneImages.map((u) => resolveMediaUrl(u, gameId)).filter(Boolean);
   const openingAnimation = passage?.metadata?.openingAnimation as string | undefined;
-  const backgroundMusic = passage?.metadata?.backgroundMusic as string | undefined;
-
   const behaviorCtx: BehaviorInteractionContext = {
-    characters,
+    characters: activeCharacters,
     ruleMap: new Map(rules.map((r) => [r.id, r])),
     getState: () => {
       const s = engine.getState();
@@ -344,13 +569,62 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     },
     applyActions: (actions) => engine.applyActions(actions),
     usedBehaviorIds: engine.usedBehaviorIds,
+    currentSceneId,
+    onAction: handleGameAction,
+  };
+
+  const technicalIdRe = /^ch\d+\.scene_\d+(?:\.p_\d+)?$/;
+  const technicalIdLooseRe = /^ch\d+\.[a-zA-Z0-9_-]+(?:\.p_\d+)?$/;
+
+  const getReadablePassageName = (target: import('@/types').Passage | null | undefined): string =>
+    resolvePassageDisplayTitle(state.story, target);
+
+  const readablePassageName = getReadablePassageName(passage);
+  const readableStoryTitle = technicalIdLooseRe.test(state.story.title.trim())
+    ? '未命名故事'
+    : state.story.title;
+
+  const getLinkLabel = (link: import('@/types').PassageLink): string => {
+    const raw = (link.displayText || link.passageName || '').trim();
+    if (!raw) return '继续';
+    if (raw === '继续') return raw;
+    const stripped = raw.startsWith('前往') ? raw.replace(/^前往\s*/, '').trim() : raw;
+    if (technicalIdRe.test(stripped)) {
+      const target = engine.getPassage(link.passageName);
+      const targetReadable = getReadablePassageName(target);
+      return targetReadable ? `前往 ${targetReadable}` : '继续';
+    }
+    return raw.startsWith('前往') ? raw : `前往 ${raw}`;
   };
 
   const handleLink = (passageName: string, link?: import('@/types').PassageLink) => {
     setSelectedCharId(null);
     setBehaviorList([]);
     setLastResponse(null);
-    engine.goTo(passageName, link ?? undefined);
+    let ok = engine.goTo(passageName, link ?? undefined);
+    if (!ok && /^ch\d+\.scene_\d+$/.test(passageName.trim())) {
+      // 兼容历史数据：章节入口常写 base id，实际首屏是 .p_100
+      ok = engine.goTo(`${passageName.trim()}.p_100`, link ?? undefined);
+    }
+    // 支线末端返回主线时，自动越过“纯继续分页”，减少不必要点击。
+    const shouldAutoAdvanceOnReturn =
+      !!(passage?.metadata as { branchTerminal?: boolean } | undefined)?.branchTerminal;
+    if (ok && shouldAutoAdvanceOnReturn) {
+      for (let i = 0; i < 50; i++) {
+        const visible = engine.getVisibleLinks();
+        if (visible.length !== 1) break;
+        const only = visible[0];
+        const label = (only.displayText ?? '').trim();
+        if (label !== '继续') break;
+        if (!engine.goTo(only.passageName, only)) break;
+      }
+    }
+    if (!ok) {
+      setNavWarning('该选项暂时无法跳转：目标场景不存在或数据未同步。');
+      refresh();
+      return;
+    }
+    setNavWarning(null);
     refresh();
   };
 
@@ -367,6 +641,7 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     setBehaviorList([]);
     setLastResponse(null);
     setBehaviorHistory([]);
+    setJournalOpen(false);
     behaviorSeqRef.current = 0;
     introPlayedRef.current.clear();
     engine.restart();
@@ -390,10 +665,10 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   const handleExecuteBehavior = (charId: string, b: GameBehavior) => {
     if (shouldOpenBattle(b, featuresConfig)) {
       const playerId = (state?.story?.metadata as { playerCharacterId?: string })?.playerCharacterId
-        ?? characters[0]?.id
+        ?? activeCharacters[0]?.id
         ?? 'player';
-      const playerChar = characters.find((c) => c.id === playerId) ?? characters[0];
-      const enemyChar = characters.find((c) => c.id === charId) ?? null;
+      const playerChar = activeCharacters.find((c) => c.id === playerId) ?? activeCharacters[0];
+      const enemyChar = activeCharacters.find((c) => c.id === charId) ?? null;
       setBattleSubjectChar(playerChar ?? null);
       setBattleObjectChar(enemyChar);
       const pending = { charId, b };
@@ -424,7 +699,10 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
       setPendingBattleBehavior(null);
       const evtCtx = {
         events,
-        characters,
+        characters: applySceneOverridesToCharacters(
+          characters,
+          (engine.getState().currentPassage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined
+        ),
         ruleMap: new Map(rules.map((r) => [r.id, r])),
         features: featuresConfig,
         getState: () => {
@@ -434,12 +712,13 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         applyActions: (a: Parameters<GameEngine['applyActions']>[0]) => engine.applyActions(a),
         usedEventIds: engine.usedEventIds,
         usedBehaviorIds: engine.usedBehaviorIds,
+        onAction: handleGameAction,
       };
       const resumeResult = resumeEventExecution(pendingEvt, result, evtCtx);
       if (!resumeResult.completed && resumeResult.pendingBattle) {
         const { item, behavior } = resumeResult.pendingBattle;
-        const subjChar = characters.find((c) => c.id === item.subject);
-        const objChar = characters.find((c) => c.id === (item.object ?? ''));
+        const subjChar = evtCtx.characters.find((c) => c.id === item.subject);
+        const objChar = evtCtx.characters.find((c) => c.id === (item.object ?? ''));
         pendingEventBattleRef.current = resumeResult.pendingBattle;
         setBattleSubjectChar(subjChar ?? null);
         setBattleObjectChar(objChar ?? null);
@@ -467,7 +746,10 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
     if (pending && engine) {
       const bid = toBehaviorFullId(pending.charId, pending.b.id);
       const ctx: BehaviorInteractionContext = {
-        characters,
+        characters: applySceneOverridesToCharacters(
+          characters,
+          (engine.getState().currentPassage?.metadata?.characterOverrides as Record<string, SceneCharacterOverride> | undefined) ?? undefined
+        ),
         ruleMap: new Map(rules.map((r) => [r.id, r])),
         getState: () => {
           const s = engine.getState();
@@ -475,6 +757,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         },
         applyActions: (actions) => engine.applyActions(actions),
         usedBehaviorIds: engine.usedBehaviorIds,
+        currentSceneId: resolveSceneIdFromPassage(engine.getState().currentPassage),
+        onAction: handleGameAction,
       };
       executeBattleWriteback(bid, pending.b, result, ctx);
       refresh();
@@ -493,42 +777,36 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
   return (
     <div className={`game-container ${className ?? ''}`} style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>{state.story.title}</h1>
+        <h1 style={styles.title}>{readableStoryTitle}</h1>
+        <MessageTicker messages={tickerMessages} />
       </header>
 
-      {(state.inventory.length > 0 || Object.keys(state.reputation).length > 0) && (
+      {Object.keys(state.reputation).length > 0 && (
         <aside style={styles.statusPanel}>
-          {state.inventory.length > 0 && (
-            <section>
-              <strong style={styles.statusLabel}>物品</strong>
-              <span style={styles.statusValue}>{state.inventory.join(' · ')}</span>
-            </section>
-          )}
-          {Object.keys(state.reputation).length > 0 && (
-            <section>
-              <strong style={styles.statusLabel}>声誉</strong>
-              <span style={styles.statusValue}>
-                {Object.entries(state.reputation)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join(' · ')}
-              </span>
-            </section>
-          )}
+          <section>
+            <strong style={styles.statusLabel}>声誉</strong>
+            <span style={styles.statusValue}>
+              {Object.entries(state.reputation)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(' · ')}
+            </span>
+          </section>
         </aside>
       )}
 
-      <audio ref={eventBgmRef} loop style={{display: 'none'}} />
+      <audio ref={eventBgmRef} loop muted={audioMuted} style={{display: 'none'}} />
       <main style={styles.scroll}>
         {passage && (
           <>
             {introVisible && openingAnimation && (
               <div style={overlayStyles.overlay}>
                 <video
-                  src={resolveMediaUrl(openingAnimation)}
+                  src={resolveMediaUrl(openingAnimation, gameId)}
                   autoPlay
                   muted
                   playsInline
                   onEnded={handleIntroEnded}
+                  onError={handleIntroError}
                   style={overlayStyles.video}
                 />
               </div>
@@ -536,63 +814,98 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
             {eventMediaOverlay && (
               <div style={overlayStyles.overlay}>
                 <video
-                  src={resolveMediaUrl(eventMediaOverlay.url)}
+                  src={resolveMediaUrl(eventMediaOverlay.url, gameId)}
                   autoPlay
                   muted
                   playsInline
                   onEnded={() => handleEventMediaEnded(eventMediaOverlay)}
+                  onError={() => handleEventMediaError(eventMediaOverlay)}
                   style={overlayStyles.video}
                 />
               </div>
             )}
             {!introVisible && eventPhaseReady && (
               <>
-                <p style={styles.passageName}>{passage.name}</p>
+                {readablePassageName && (
+                  <p style={styles.passageName}>{readablePassageName}</p>
+                )}
                 <div ref={passageContentRef} className="passage-content">
-                  {resolvedImages.length > 0 && (
-                    <div
-                      className="media-carousel"
-                      data-images={JSON.stringify(resolvedImages)}
-                      style={{marginBottom: 16}}
-                    >
-                      <img src={resolvedImages[0]} alt="" style={{maxWidth: '100%', borderRadius: 8}} />
-                    </div>
-                  )}
-                  <div
-                    style={styles.passageText}
-                    dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
-                  />
-                </div>
-                <audio ref={bgmRef} loop style={{display: 'none'}} />
-
-            {characterIds.length > 0 && (
-              <section style={styles.behaviorPanel}>
-                <div style={styles.charList}>
-                  <span style={styles.charListLabel}>攀谈：</span>
-                  {characterIds.map((cid) => {
-                    const c = characters.find((x) => x.id === cid);
-                    const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar) : undefined;
-                    return (
-                      <button
-                        key={cid}
-                        type="button"
-                        style={{
-                          ...styles.charButton,
-                          ...(selectedCharId === cid ? styles.charButtonActive : {}),
-                        }}
-                        onClick={() => handleSelectCharacter(cid)}
+                  {resolvedImages.length > 0 ? (
+                    <div style={styles.sceneStage}>
+                      <div
+                        className="media-carousel"
+                        data-images={JSON.stringify(resolvedImages)}
+                        style={styles.sceneImageLayer}
                       >
-                        {avatarUrl && (
-                          <img
-                            src={avatarUrl}
-                            alt=""
-                            style={{width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', marginRight: 6}}
-                          />
-                        )}
-                        {c?.name ?? cid}
-                      </button>
-                    );
-                  })}
+                        <img src={resolvedImages[0]} alt="" style={styles.sceneImage} />
+                      </div>
+                      <div style={styles.sceneTextLayer}>
+                        <div
+                          style={styles.passageTextOverlay}
+                          dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      style={styles.passageText}
+                      dangerouslySetInnerHTML={{__html: sanitizePassageContent(passage.text)}}
+                    />
+                  )}
+                </div>
+                <audio ref={bgmRef} loop muted={audioMuted} style={{display: 'none'}} />
+
+            {showActionRow && (
+              <section style={styles.behaviorPanel}>
+                <div style={styles.actionRow}>
+                  <div style={styles.actionRowMain}>
+                    {characterIds.length > 0 && (
+                      <>
+                        <span style={styles.charListLabel}>攀谈：</span>
+                        {characterIds.map((cid) => {
+                          const c = activeCharacters.find((x) => x.id === cid);
+                          const avatarUrl = c?.avatar ? resolveMediaUrl(c.avatar, gameId) : undefined;
+                          return (
+                            <button
+                              key={cid}
+                              type="button"
+                              style={{
+                                ...styles.charButton,
+                                ...(selectedCharId === cid ? styles.charButtonActive : {}),
+                              }}
+                              onClick={() => handleSelectCharacter(cid)}
+                            >
+                              {avatarUrl && (
+                                <img
+                                  src={avatarUrl}
+                                  alt=""
+                                  style={{width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', marginRight: 6}}
+                                />
+                              )}
+                              {c?.name ?? cid}
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    style={styles.journalButton}
+                    onClick={() => setJournalOpen(true)}
+                  >
+                    心迹
+                    {journalCount > 0 ? ` (${journalCount})` : ''}
+                  </button>
+                  {showBackpack && (
+                    <button
+                      type="button"
+                      style={styles.backpackButton}
+                      onClick={() => setInventoryOpen(true)}
+                    >
+                      背包
+                    </button>
+                  )}
                 </div>
               </section>
             )}
@@ -605,10 +918,15 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
                   style={styles.linkButton}
                   onClick={() => handleLink(link.passageName, link)}
                 >
-                  {link.displayText.startsWith('前往') || link.displayText === '继续' ? link.displayText : `前往 ${link.displayText}`}
+                  {getLinkLabel(link)}
                 </button>
               ))}
             </nav>
+            {navWarning && (
+              <p style={styles.navWarning}>
+                {navWarning}
+              </p>
+            )}
 
             {state.isEnding && engine.getVisibleLinks().length === 0 && (
               <p style={{...styles.passageText, fontStyle: 'italic', color: '#888'}}>
@@ -634,8 +952,9 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
 
       <BehaviorInteractionModal
         open={!!selectedCharId}
-        character={selectedCharId ? characters.find((c) => c.id === selectedCharId) ?? null : null}
-        characters={characters}
+        character={selectedCharId ? activeCharacters.find((c) => c.id === selectedCharId) ?? null : null}
+        characters={activeCharacters}
+        gameId={gameId}
         behaviorCtx={behaviorCtx}
         history={behaviorHistory}
         onExecute={handleExecuteBehavior}
@@ -648,6 +967,8 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
         objectChar={battleObjectChar}
         behavior={pendingBattleBehavior?.b ?? null}
         battleBgm={featuresConfig?.battle?.backgroundMusic}
+        gameId={gameId}
+        audioMuted={audioMuted}
         onBattleEnd={handleBattleEnd}
         onClose={() => {
           setBattleOpen(false);
@@ -655,6 +976,21 @@ export function GameScreen({fetchContent, className}: GameScreenProps) {
           setPendingBattleBehavior(null);
           refresh();
         }}
+      />
+
+      <InventoryModal
+        open={inventoryOpen}
+        inventoryIds={inventoryIds}
+        catalog={itemCatalog}
+        gameId={gameId}
+        onActiveBackgroundMusicChange={setActiveInventoryItemBgm}
+        onClose={() => setInventoryOpen(false)}
+      />
+
+      <JournalModal
+        open={journalOpen}
+        groups={journalGroups}
+        onClose={() => setJournalOpen(false)}
       />
 
       <BattleSettlementModal
@@ -677,6 +1013,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 20,
   },
   header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
     marginBottom: 16,
     paddingBottom: 12,
     borderBottom: '1px solid #333',
@@ -694,8 +1034,53 @@ const styles: Record<string, React.CSSProperties> = {
   scroll: {flex: 1, overflow: 'auto', paddingBottom: 40},
   passageName: {fontSize: 14, color: '#888', marginBottom: 12},
   passageText: {fontSize: 17, lineHeight: 1.6, color: '#d4d4d4', marginBottom: 24, whiteSpace: 'pre-wrap'},
+  sceneStage: {
+    position: 'relative',
+    marginBottom: 24,
+    minHeight: 420,
+    maxHeight: '62vh',
+    borderRadius: 10,
+    overflow: 'hidden',
+    border: '1px solid #2f2f45',
+    backgroundColor: '#111',
+  },
+  sceneImageLayer: {
+    position: 'absolute',
+    inset: 0,
+    marginBottom: 0,
+    zIndex: 1,
+  },
+  sceneImage: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    display: 'block',
+    filter: 'brightness(0.62) saturate(0.95)',
+  },
+  sceneTextLayer: {
+    position: 'relative',
+    zIndex: 2,
+    minHeight: 420,
+    maxHeight: '62vh',
+    overflowY: 'auto',
+    padding: '20px 18px 24px',
+    background: 'linear-gradient(to bottom, rgba(8,8,16,0.18), rgba(8,8,16,0.36))',
+  },
+  passageTextOverlay: {
+    fontSize: 17,
+    lineHeight: 1.7,
+    color: '#f3f3f8',
+    margin: 0,
+    whiteSpace: 'pre-wrap',
+    textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(10, 10, 20, 0.28)',
+    borderRadius: 10,
+    padding: '12px 14px',
+  },
   linkList: {display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16},
   behaviorPanel: {marginTop: 16, paddingTop: 16, borderTop: '1px solid #333'},
+  actionRow: {display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12},
+  actionRowMain: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1, minWidth: 0},
   charList: {display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12},
   charListLabel: {fontSize: 14, color: '#888'},
   charButton: {
@@ -708,6 +1093,26 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   charButtonActive: {borderColor: '#6c5ce7', color: '#e8e8e8'},
+  backpackButton: {
+    padding: '6px 14px',
+    backgroundColor: '#2d2d44',
+    border: '1px solid #444',
+    borderRadius: 6,
+    color: '#c4b5fd',
+    fontSize: 14,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  journalButton: {
+    padding: '6px 14px',
+    backgroundColor: '#2f2848',
+    border: '1px solid #5a4a94',
+    borderRadius: 6,
+    color: '#d7ccff',
+    fontSize: 14,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
   behaviorList: {listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8},
   behaviorButton: {
     padding: '10px 14px',
@@ -764,6 +1169,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loadingText: {color: '#888', marginTop: 12},
   error: {color: '#e74c3c', padding: 16, textAlign: 'center'},
+  navWarning: {color: '#f5b041', marginTop: 8, marginBottom: 0, fontSize: 13},
 };
 
 const overlayStyles: Record<string, React.CSSProperties> = {

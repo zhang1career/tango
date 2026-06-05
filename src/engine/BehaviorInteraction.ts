@@ -6,11 +6,11 @@
 import type {RuntimeState} from '@/types';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameBehavior} from '../schema/game-behavior';
-import type {GameRule} from '../schema/game-rule';
+import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
+import type {GameActionRef} from '../schema/action-ref';
 import {admissionCalc} from './AdmissionCalculator';
 import {getBehaviorListLimit} from '@/config';
 import {parseCascadedId} from '../utils/cascadedId';
-import {parseWritebackToActions, hasEntityIsUsedWriteback} from './WritebackExecutor';
 
 const UNAVAILABLE_RESPONSE = '（喔…当前不可用）';
 
@@ -37,6 +37,16 @@ export interface BehaviorInteractionContext {
     rep?: Record<string, number>;
   }) => void;
   usedBehaviorIds: Set<string>;
+  /** 当前 passage 对应的场景 id；用于 sceneIds 过滤 */
+  currentSceneId?: string;
+  onAction?: (action: GameActionRef) => void;
+}
+
+function behaviorMatchesScene(behavior: GameBehavior, currentSceneId: string | undefined): boolean {
+  const ids = behavior.sceneIds?.map((id) => id.trim()).filter(Boolean);
+  if (!ids?.length) return true;
+  if (!currentSceneId) return false;
+  return ids.includes(currentSceneId);
 }
 
 export function getAvailableBehaviors(
@@ -50,16 +60,17 @@ export function getAvailableBehaviors(
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
 
-  /** 行为准入时由程序临时添加 rule_0001（onlyOnce），不保存到数据 */
+  /** 行为准入时由程序临时添加 onlyOnce 规则，不保存到数据 */
   const effectiveRuleIds = (ids: string[] | undefined) =>
-    ['rule_0001', ...(ids ?? []).filter((r) => r !== 'rule_0001')];
+    [ONLY_ONCE_RULE_ID, ...(ids ?? []).filter((r) => r !== ONLY_ONCE_RULE_ID)];
 
   const result: GameBehavior[] = [];
   for (const b of lib) {
+    if (!behaviorMatchesScene(b, ctx.currentSceneId)) continue;
     const behaviorId = normalizeBehaviorId(characterId, b.id);
     const entity = { id: behaviorId, name: b.id };
     const passed = admissionCalc({
@@ -94,18 +105,21 @@ export function executeBehavior(
     (x) => x.id === bId || x.id === `${characterId}.${bId}`
   );
   if (!b) return { ok: false, response: UNAVAILABLE_RESPONSE };
+  if (!behaviorMatchesScene(b, ctx.currentSceneId)) {
+    return { ok: false, response: UNAVAILABLE_RESPONSE };
+  }
 
   const state = ctx.getState();
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
   const entity = { id: behaviorId, name: b.id };
 
-  /** 行为准入时由程序临时添加 rule_0001（onlyOnce），不保存到数据 */
-  const effectiveRuleIds = ['rule_0001', ...(b.ruleIds ?? []).filter((r) => r !== 'rule_0001')];
+  /** 行为准入时由程序临时添加 onlyOnce 规则，不保存到数据 */
+  const effectiveRuleIds = [ONLY_ONCE_RULE_ID, ...(b.ruleIds ?? []).filter((r) => r !== ONLY_ONCE_RULE_ID)];
 
   const passed = admissionCalc({
     judgeExpr: b.judgeExpr,
@@ -115,12 +129,15 @@ export function executeBehavior(
     visitedIds: ctx.usedBehaviorIds,
     ctx: state,
     test: false,
-    writebackExpr: b.writebackExpr,
-    onEntityUsed: (id) => ctx.usedBehaviorIds.add(id),
     applyActions: ctx.applyActions,
   });
 
   if (!passed) return { ok: false, response: UNAVAILABLE_RESPONSE };
+  ctx.onAction?.({
+    type: 'behavior.execute',
+    behaviorId,
+    sceneId: ctx.currentSceneId,
+  });
   return { ok: true, response: b.a };
 }
 
@@ -154,15 +171,7 @@ export function executeBattleWriteback(
   battleResult: { rounds: number; damageDealt: number; damageTaken: number; won: boolean },
   ctx: BehaviorInteractionContext
 ): void {
+  void behavior;
+  void battleResult;
   ctx.usedBehaviorIds.add(behaviorId);
-  if (hasEntityIsUsedWriteback(behavior.writebackExpr ?? '')) {
-    ctx.usedBehaviorIds.add(behaviorId);
-  }
-  const state = ctx.getState();
-  const actions = parseWritebackToActions(behavior.writebackExpr ?? '', {
-    variables: state.variables,
-    reputation: state.reputation,
-    battle: battleResult,
-  });
-  if (actions) ctx.applyActions(actions);
 }

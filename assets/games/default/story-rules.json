@@ -1,3 +1,13 @@
 [
-  {"id":"rule_0001","name":"onlyOnce","judgeExpr":"!$entity.is_used","writebackExpr":"$entity.is_used = true"}
+  {
+    "id": "rule_0001",
+    "name": "onlyOnce",
+    "judgeExpr": "!$entity.is_used",
+    "execution": {"kind": "builtin"},
+    "effects": [
+      {
+        "type": "entity.mark_used"
+      }
+    ]
+  }
 ]

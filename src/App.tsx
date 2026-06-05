@@ -14,13 +14,15 @@ import {MetadataEditor} from './components/MetadataEditor';
 import {ItemsEditorPage} from './components/ItemsEditorPage';
 import {SceneEditor} from './components/SceneEditor';
 import {RuleEditor} from './components/RuleEditor';
+import {JournalEditor} from './components/JournalEditor';
+import {NarrativeEngineEditor} from './components/NarrativeEngineEditor';
 import {FeaturePanelEditor} from './components/FeaturePanelEditor';
 import {NotificationToast} from './components/NotificationToast';
 import {LoginPage} from './components/LoginPage';
 import {useGameId} from './context/GameIdContext';
 import {useNotification} from './context/NotificationContext';
 import {AuthProvider, useAuth} from './context/AuthContext';
-import {getAppMode, getContentPath, getGameContentUrl, getStoryFmFetchUrl, DEFAULT_GAME_ID} from './config';
+import {getAppMode, getContentPath, getGameContentUrl, getStoryFmFetchUrl, toFetchUrl, DEFAULT_GAME_ID} from './config';
 import {fromPersistedFramework, migrateFramework} from './schema/story-framework';
 import type {StoryFramework} from './schema/story-framework';
 
@@ -111,7 +113,7 @@ async function fetchContentForGame(gameId: string, pathOverride?: string): Promi
     if (!res.ok) throw new Error(`加载失败: ${res.status}`);
     return res.text();
   }
-  const url = import.meta.env.DEV ? getGameContentUrl(gameId) : (p.startsWith('/') ? p : `/${p}`);
+  const url = import.meta.env.DEV ? getGameContentUrl(gameId) : toFetchUrl(p);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`加载失败: ${res.status} ${p}`);
   return res.text();
@@ -120,7 +122,7 @@ async function fetchContentForGame(gameId: string, pathOverride?: string): Promi
 export default function App() {
   const {gameId, setGameId, gameIds} = useGameId();
   const {addNotification} = useNotification();
-  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata'>('game');
+  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata'>('game');
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
     setFw((prev) => fn(prev));
@@ -133,7 +135,6 @@ export default function App() {
         const res = await fetch(url);
         if (!res.ok) {
           if (res.status === 404) {
-            setGameId(DEFAULT_GAME_ID);
             addNotification('error', `剧情文件不存在：${targetGameId}/story-fm.json`);
           } else {
             addNotification('error', `加载失败: ${res.status}`);
@@ -166,9 +167,11 @@ export default function App() {
 
   const handleGameSelect = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
-      loadStoryFm(e.target.value);
+      const id = e.target.value;
+      setGameId(id);
+      if (!isProd) void loadStoryFm(id);
     },
-    [loadStoryFm]
+    [setGameId, loadStoryFm]
   );
 
   return (
@@ -182,6 +185,7 @@ export default function App() {
         gameId={gameId}
         gameIds={gameIds}
         handleGameSelect={handleGameSelect}
+        setGameId={setGameId}
         fw={fw}
         updateFw={updateFw}
         fetchContent={fetchContent}
@@ -193,17 +197,18 @@ export default function App() {
 
 type AppBodyProps = {
   mode: string;
-  setMode: (m: 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata') => void;
+  setMode: (m: 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata') => void;
   gameId: string;
   gameIds: string[];
   handleGameSelect: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  setGameId: (id: string) => void;
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
   fetchContent: (path?: string) => Promise<string>;
   loadStoryFm: (targetGameId: string) => Promise<void>;
 };
 
-type ModeType = 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'rules' | 'features' | 'metadata';
+type ModeType = 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata';
 
 function AppBody({
   mode,
@@ -211,19 +216,31 @@ function AppBody({
   gameId,
   gameIds,
   handleGameSelect,
+  setGameId,
   fw,
   updateFw,
   fetchContent,
   loadStoryFm,
 }: AppBodyProps) {
   const {user, returnTo, clearReturnTo, login} = useAuth();
+  const [audioMuted, setAudioMuted] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('tango.audioMuted') === '1';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('tango.audioMuted', audioMuted ? '1' : '0');
+  }, [audioMuted]);
+
   const handleLoginSuccess = useCallback(() => {
     if (returnTo) {
       setMode(returnTo.mode as ModeType);
-      loadStoryFm(returnTo.gameId);
+      setGameId(returnTo.gameId);
+      if (!isProd) void loadStoryFm(returnTo.gameId);
       clearReturnTo();
     }
-  }, [returnTo, clearReturnTo, setMode, loadStoryFm]);
+  }, [returnTo, clearReturnTo, setMode, setGameId, loadStoryFm]);
 
   if (!user) {
     return (
@@ -291,6 +308,20 @@ function AppBody({
             </button>
             <button
               type="button"
+              style={{...navStyles.tab, ...(mode === 'journal' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('journal')}
+            >
+              心迹
+            </button>
+            <button
+              type="button"
+              style={{...navStyles.tab, ...(mode === 'narrative' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('narrative')}
+            >
+              叙事引擎
+            </button>
+            <button
+              type="button"
               style={{...navStyles.tab, ...(mode === 'rules' ? navStyles.tabActive : {})}}
               onClick={() => setMode('rules')}
             >
@@ -313,6 +344,22 @@ function AppBody({
           </>
         )}
         <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12}}>
+          <button
+            type="button"
+            onClick={() => setAudioMuted((v) => !v)}
+            style={{
+              padding: '4px 10px',
+              backgroundColor: audioMuted ? '#3a2330' : '#252540',
+              color: audioMuted ? '#fda4af' : '#a78bfa',
+              border: '1px solid #333',
+              borderRadius: 6,
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+            title="关闭或开启声音（背景音乐/语音）"
+          >
+            声音：{audioMuted ? '关' : '开'}
+          </button>
           <select
             value={gameIds.includes(gameId) ? gameId : (gameIds[0] ?? DEFAULT_GAME_ID)}
             onChange={handleGameSelect}
@@ -333,7 +380,7 @@ function AppBody({
         </div>
       </nav>
       {(mode === 'game' || isProd) ? (
-        <GameScreen fetchContent={fetchContent}/>
+        <GameScreen fetchContent={fetchContent} audioMuted={audioMuted}/>
       ) : mode === 'timeline' ? (
         <FrameworkEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'scenes' ? (
@@ -344,6 +391,10 @@ function AppBody({
         <EventEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'items' ? (
         <ItemsEditorPage fw={fw} updateFw={updateFw}/>
+      ) : mode === 'journal' ? (
+        <JournalEditor/>
+      ) : mode === 'narrative' ? (
+        <NarrativeEngineEditor/>
       ) : mode === 'rules' ? (
         <RuleEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'features' ? (

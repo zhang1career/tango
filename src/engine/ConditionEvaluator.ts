@@ -1,6 +1,6 @@
 /**
  * 条件表达式求值器
- * 支持: $var, $var == value, $items has "x", $rep.xxx >= n, $entity.is_used
+ * 支持: $var, $items has "x", $rep.xxx, $entity.is_used, $action.*（动作上下文）, and/or
  */
 
 import type {RuntimeState} from '@/types';
@@ -17,6 +17,15 @@ export interface EntityContext {
   entity: EntityLike;
   /** 已访问/已使用的 id 集合 */
   visitedIds: Set<string>;
+}
+
+/** 当前动作上下文（setOn 等），$action 指代 */
+export interface ActionContext {
+  type: string;
+  sceneId?: string;
+  eventId?: string;
+  behaviorId?: string;
+  itemId?: string;
 }
 
 function parseValue(s: string): string | number | boolean {
@@ -43,10 +52,32 @@ function getVar(ctx: Context, path: string): unknown {
   return ctx.variables[path];
 }
 
-export function evaluateCondition(
+/** 在括号深度为 0 处按分隔符拆分复合条件（and / or） */
+function splitConditionAtTopLevel(expr: string, separator: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (depth === 0 && expr.startsWith(separator, i)) {
+      const piece = expr.slice(start, i).trim();
+      if (piece) parts.push(piece);
+      start = i + separator.length;
+      i += separator.length - 1;
+    }
+  }
+  const tail = expr.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+function evaluateSimpleCondition(
   condition: string,
   ctx: Context,
-  entityCtx?: EntityContext
+  entityCtx?: EntityContext,
+  actionCtx?: ActionContext
 ): boolean {
   let expr = condition.trim();
   if (!expr) return true;
@@ -54,6 +85,18 @@ export function evaluateCondition(
   // 剥除外层括号，如 (!hasVisited("x")) -> !hasVisited("x")
   const outerParen = expr.match(/^\s*\(\s*(.+)\s*\)\s*$/);
   if (outerParen) expr = outerParen[1].trim();
+
+  // $action.type / $action.sceneId 等与字面量比较（动作触发规则）
+  const actionCmp = expr.match(
+    /^\$action\.(type|sceneId|eventId|behaviorId|itemId)\s*(==|!=)\s*(.+)$/
+  );
+  if (actionCmp && actionCtx) {
+    const field = actionCmp[1] as keyof ActionContext;
+    const op = actionCmp[2];
+    const right = String(parseValue(actionCmp[3].trim()));
+    const left = String(actionCtx[field] ?? '');
+    return op === '==' ? left === right : left !== right;
+  }
 
   // !$entity.is_used 或 $entity.is_used（链接条件，需传入 entityCtx）
   const entityUsedMatch = expr.match(/^!?\$entity\.is_used$/);
@@ -153,4 +196,26 @@ export function evaluateCondition(
   }
 
   return false;
+}
+
+export function evaluateCondition(
+  condition: string,
+  ctx: Context,
+  entityCtx?: EntityContext,
+  actionCtx?: ActionContext
+): boolean {
+  const expr = condition.trim();
+  if (!expr) return true;
+
+  const andParts = splitConditionAtTopLevel(expr, ' and ');
+  if (andParts.length > 1) {
+    return andParts.every((part) => evaluateSimpleCondition(part, ctx, entityCtx, actionCtx));
+  }
+
+  const orParts = splitConditionAtTopLevel(expr, ' or ');
+  if (orParts.length > 1) {
+    return orParts.some((part) => evaluateSimpleCondition(part, ctx, entityCtx, actionCtx));
+  }
+
+  return evaluateSimpleCondition(expr, ctx, entityCtx, actionCtx);
 }

@@ -21,6 +21,10 @@ npm run dev
 
 构建：`npm run build`，预览：`npm run preview`。
 
+静态部署子路径示例：`VITE_BASE_PATH=/tango/ npm run build`，访问 `https://example.com/tango/?game=lin_zexu` 加载对应游戏。
+
+`VITE_APP_MODE=prod` 构建时，`dist/assets/games/{gameId}/` 仅包含 `story.tw`（含合并后的运行时数据）与 `media/`；编辑器用的 `story-*.json` 不会进入 dist。
+
 ## 配置
 
 `.env`：
@@ -39,6 +43,8 @@ src/
   schema/       # 数据结构定义
   data/         # 内嵌示例故事
 {VITE_GAMES_BASE_PATH}/   # 游戏数据，按 gameId 隔离（默认 assets/games）
+assets/policy.json        # 项目级策略（跨游戏共享，不限于 AI）
+assets/media_custom/      # 项目级本地自定义媒体（zip 导入不覆盖）
 ```
 
 ## 扩展
@@ -49,6 +55,7 @@ src/
 ## 参考资料
 
 - [AGENT-GUIDE.md](AGENT-GUIDE.md)：数据结构与编辑接口说明（面向 Agent）
+- [GAME_IMPORT_FORMAT.md](GAME_IMPORT_FORMAT.md)：导入游戏文件格式（zip）
 - [故事背景和人物介绍](background.md)
 - [剧情](plot.md)
 - [Twee 3 规范](https://github.com/iftechfoundation/twine-specs/blob/master/twee-3-specification.md)

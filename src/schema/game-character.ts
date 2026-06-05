@@ -10,14 +10,68 @@ import type {GameBehavior} from './game-behavior';
 /** @deprecated 人物不再区分类型，保留仅为兼容旧数据 */
 export type CharacterType = 'player' | 'npc';
 
+/** 人物姓名结构化字段（可选） */
+export interface CharacterNameProfile {
+  /** 姓（如 费） */
+  familyName?: string;
+  /** 名（如 穆） */
+  givenName?: string;
+  /** 字（如 远刚） */
+  courtesyName?: string;
+  /** 号（如 半山） */
+  artName?: string;
+  /** 封号/爵位（如 高阳王） */
+  title?: string;
+}
+
+/** 人物性格特质（结构化，供叙事生成与编辑） */
+export interface CharacterPersonalityTrait {
+  /** 特质 id（如 responsibility） */
+  id: string;
+  /** 展示标签（如 责任心） */
+  label: string;
+  /** 程度描述（如 极高） */
+  level: string;
+}
+
+/** 人物认知或时代局限（结构化） */
+export interface CharacterLimitation {
+  id: string;
+  title: string;
+  summary: string;
+}
+
+/** 对该人物的称呼约定（可选） */
+export interface CharacterAddressingProfile {
+  /**
+   * 平辈/晚辈应优先使用的称呼键（按顺序尝试）
+   * 例如: ["courtesyName", "artName", "title", "name"]
+   */
+  peerOrJuniorPrefer?: Array<'courtesyName' | 'artName' | 'title' | 'name' | 'givenName'>;
+  /** 长辈应优先使用的称呼键（按顺序尝试） */
+  elderPrefer?: Array<'title' | 'courtesyName' | 'name' | 'givenName'>;
+  /** 是否避免直呼其名（givenName） */
+  avoidGivenName?: boolean;
+  /** 生效语境标签（如 ancient_china） */
+  contextTags?: string[];
+}
+
 /** 人物定义 */
 export interface GameCharacter {
   id: string;
   /** @deprecated 保留兼容，玩家由 StoryFramework.playerCharacterId 指定 */
   type?: CharacterType;
   name: string;
+  /** 结构化姓名（用于称呼规则、文案生成、展示） */
+  nameProfile?: CharacterNameProfile;
+  /** 称呼规则（用于约束如何称呼该人物） */
+  addressingProfile?: CharacterAddressingProfile;
   /** 人物描述 */
   description?: string;
+  /** 性格特质列表 */
+  personality?: CharacterPersonalityTrait[];
+  /** 认知或时代局限 */
+  limitations?: CharacterLimitation[];
   /** 属性值（来自 metadata 人物属性） */
   attributes?: Record<string, string | number | boolean>;
   /** 物品 id 列表 */
@@ -32,4 +86,6 @@ export interface GameCharacter {
   inLocations?: string[];
   /** 头像 URL */
   avatar?: string;
+  /** 人物专属背景音乐 URL */
+  backgroundMusic?: string;
 }

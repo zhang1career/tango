@@ -2,6 +2,8 @@
  * 文字冒险游戏框架 - 类型定义
  */
 
+import type {GameActionRef} from '@/schema/action-ref';
+
 /** 单个链接（支持可选条件） */
 export interface PassageLink {
   displayText: string;
@@ -52,4 +54,14 @@ export interface PassageStateActions {
   give?: string | string[];
   take?: string | string[];
   rep?: Record<string, number>;
+}
+
+/** 心迹条目（用于“心迹/日记”面板） */
+export interface JournalEntry {
+  id: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  createdAt: number;
+  sourceActionRef: GameActionRef;
 }

@@ -16,6 +16,7 @@ import {assignBehaviorIds} from '../utils/behavior-ids';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
+import {normalizeStringList, StringListField} from './ui/StringListField';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -394,6 +395,12 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
         {evt.backgroundMusic && (
           <p style={{margin: '0 0 8px'}}><strong>背景音乐：</strong>{evt.backgroundMusic}</p>
         )}
+        <StringListField
+          label="消息列表"
+          hint="场景关联本事件时，游戏标题区滚动展示；优先于场景消息。"
+          value={evt.messages}
+          editable={false}
+        />
         <BehaviorSequenceEditor
           evt={evt}
           characters={characters}
@@ -433,6 +440,16 @@ function EventFormContent({evt, editable, characters, gameRules, onUpdate}: Even
           placeholder="事件背景与要点，用于 AI 生成剧情时的上下文"
         />
       </div>
+      <StringListField
+        label="消息列表"
+        hint="场景关联本事件时，游戏标题区滚动展示；优先于场景消息。"
+        value={evt.messages}
+        onChange={(messages) =>
+          onUpdate((c) => ({...c, messages: messages.length === 0 ? undefined : messages}))
+        }
+        editable={editable && !!onUpdate}
+        placeholder="滚动消息"
+      />
       <MediaUrlField
         label="开场动画"
         value={evt.openingAnimation}
@@ -541,7 +558,7 @@ export function EventEditor({fw, updateFw}: {
   };
 
   const confirmAddEvent = async () => {
-    const next = [...events, newEvent];
+    const next = [...events, {...newEvent, messages: normalizeStringList(newEvent.messages)}];
     setEvents(() => next);
     const result = await saveEventsToPreset(next, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
@@ -560,7 +577,9 @@ export function EventEditor({fw, updateFw}: {
   const removeEventWithAuth = (index: number) => checkAuthForSave(() => removeEvent(index));
 
   const saveEvents = async () => {
-    const result = await saveEventsToPreset(events, gameId);
+    const normalized = events.map((e) => ({...e, messages: normalizeStringList(e.messages)}));
+    setEvents(() => normalized);
+    const result = await saveEventsToPreset(normalized, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };

@@ -2,6 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_APP_MODE?: string;
+  readonly VITE_BASE_PATH?: string;
+  readonly VITE_DEFAULT_GAME_ID?: string;
   readonly VITE_GAMES_BASE_PATH?: string;
   readonly GAMES_BASE_PATH?: string;
   readonly VITE_MEDIA_BASE_URL?: string;

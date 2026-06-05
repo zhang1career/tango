@@ -5,8 +5,9 @@
 
 import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameCharacter} from '../schema/game-character';
-import type {GameRule} from '../schema/game-rule';
+import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
 import type {GameBehavior} from '../schema/game-behavior';
+import type {GameActionRef} from '../schema/action-ref';
 import type {RuntimeState} from '@/types';
 import {admissionCalc} from './AdmissionCalculator';
 import {shouldOpenBattle, executeBattleWriteback} from './BehaviorInteraction';
@@ -26,6 +27,11 @@ export interface EventExecutionContext {
   }) => void;
   usedEventIds: Set<string>;
   usedBehaviorIds: Set<string>;
+  onAction?: (action: GameActionRef) => void;
+}
+
+function withOnlyOnceRuleIds(ruleIds: string[] | undefined): string[] {
+  return [ONLY_ONCE_RULE_ID, ...(ruleIds ?? []).filter((r) => r !== ONLY_ONCE_RULE_ID)];
 }
 
 /** 检查事件是否通过准入预计算（条件为真、规则预计算为真） */
@@ -33,17 +39,20 @@ export function checkEventAdmission(
   event: GameEvent,
   ctx: EventExecutionContext
 ): boolean {
+  // 防止在缺失 onlyOnce 规则映射时重复执行同一事件造成递归循环。
+  if (ctx.usedEventIds.has(event.id)) return false;
+
   const state = ctx.getState();
   const entity = { id: event.id, name: event.name };
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
   return admissionCalc({
     judgeExpr: undefined,
-    ruleIds: ['rule_0001'],
+    ruleIds: [ONLY_ONCE_RULE_ID],
     ruleMap,
     entity,
     visitedIds: ctx.usedEventIds,
@@ -94,6 +103,10 @@ export function executeEvent(
   }
 
   ctx.usedEventIds.add(event.id);
+  ctx.onAction?.({
+    type: 'event.complete',
+    eventId: event.id,
+  });
   return { ok: true, completed: true };
 }
 
@@ -110,22 +123,19 @@ function runNonAttackBehavior(
   const ruleMap = new Map(
     Array.from(ctx.ruleMap.entries()).map(([k, v]) => [
       k,
-      { judgeExpr: v.judgeExpr, writebackExpr: v.writebackExpr },
+      {judgeExpr: v.judgeExpr, effects: v.effects},
     ])
   );
   const entity = { id: fullId, name: behavior.id };
-  const effectiveRuleIds = ['rule_0001', ...(behavior.ruleIds ?? []).filter((r) => r !== 'rule_0001')];
 
   const passed = admissionCalc({
     judgeExpr: behavior.judgeExpr,
-    ruleIds: effectiveRuleIds,
+    ruleIds: withOnlyOnceRuleIds(behavior.ruleIds),
     ruleMap,
     entity,
     visitedIds: ctx.usedBehaviorIds,
     ctx: state,
     test: false,
-    writebackExpr: behavior.writebackExpr,
-    onEntityUsed: (id) => ctx.usedBehaviorIds.add(id),
     applyActions: ctx.applyActions,
   });
   return passed;
@@ -183,5 +193,9 @@ export function resumeEventExecution(
   }
 
   ctx.usedEventIds.add(event.id);
+  ctx.onAction?.({
+    type: 'event.complete',
+    eventId: event.id,
+  });
   return { ok: true, completed: true };
 }

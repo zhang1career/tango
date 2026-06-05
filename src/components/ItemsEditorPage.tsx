@@ -2,7 +2,7 @@
  * 物品编辑界面
  */
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {getItemsFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
@@ -10,7 +10,7 @@ import type {StoryFramework} from '../schema/story-framework';
 import type {GameItem} from '../schema/game-item';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
-import {MediaCarouselField} from './ui/MediaFields';
+import {MediaCarouselField, MediaUrlField} from './ui/MediaFields';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -115,8 +115,14 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{item.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{item.name}</p>
+        {item.description && (
+          <p style={{margin: '0 0 8px'}}><strong>描述：</strong>{item.description}</p>
+        )}
         {imgs.length > 0 && (
           <p style={{margin: '0 0 8px'}}><strong>配图：</strong>{imgs.join(', ')}</p>
+        )}
+        {item.backgroundMusic && (
+          <p style={{margin: '0 0 8px'}}><strong>背景音乐：</strong>{item.backgroundMusic}</p>
         )}
       </div>
     );
@@ -140,10 +146,24 @@ function ItemFormContent({item, editable, onUpdate}: ItemFormProps) {
           style={styles.input}
         />
       </div>
+      <div style={styles.row}>
+        <label style={styles.label}>描述</label>
+        <textarea
+          value={item.description ?? ''}
+          onChange={(e) => onUpdate((x) => ({...x, description: e.target.value || undefined}))}
+          style={{...styles.input, minHeight: 72, resize: 'vertical'}}
+        />
+      </div>
       <MediaCarouselField
         label="配图"
         value={item.images}
         onChange={(v) => onUpdate((x) => ({...x, images: v.length ? v : undefined}))}
+        editable={true}
+      />
+      <MediaUrlField
+        label="背景音乐"
+        value={item.backgroundMusic}
+        onChange={(v) => onUpdate((x) => ({...x, backgroundMusic: v}))}
         editable={true}
       />
     </div>
@@ -156,6 +176,18 @@ export function ItemsEditorPage({fw, updateFw}: {
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
+
+  useEffect(() => {
+    fetch(getItemsFetchUrl(gameId))
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        updateFw((d) => ({...d, items: list as GameItem[]}));
+      })
+      .catch(() => {
+      });
+  }, [updateFw, gameId]);
+
   const items = fw.items ?? [];
   const setItems = (fn: (i: GameItem[]) => GameItem[]) =>
     updateFw((d) => ({...d, items: fn(d.items ?? [])}));

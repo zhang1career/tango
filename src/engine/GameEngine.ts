@@ -5,6 +5,7 @@
 import type {InitialRuntimeState, Passage, PassageLink, PassageStateActions, Story} from '@/types';
 import {StateManager} from './StateManager';
 import {evaluateCondition} from './ConditionEvaluator';
+import type {GameActionRef} from '@/schema/action-ref';
 
 export interface GameState {
   story: Story;
@@ -61,6 +62,7 @@ export class GameEngine {
     isEnding: boolean;
   };
   private stateManager: StateManager;
+  private actionListeners = new Set<(action: GameActionRef) => void>();
   /** 已使用的行为 id 集合，用于 onlyOnce 等准入规则 */
   usedBehaviorIds = new Set<string>();
   /** 已使用的事件 id 集合，用于事件准入（onlyOnce 等） */
@@ -76,7 +78,31 @@ export class GameEngine {
       history: [],
       isEnding: startPassage ? startPassage.links.length === 0 : false,
     };
-    this.stateManager = new StateManager(initRuntime);
+    this.stateManager = new StateManager(initRuntime, {
+      onItemObtained: (itemId) => {
+        this.emitAction({
+          type: 'item.obtain',
+          itemId,
+          sceneId: this.getCurrentSceneId(),
+        });
+      },
+    });
+  }
+
+  private getCurrentSceneId(): string | undefined {
+    const current = this.state.currentPassage;
+    const metaSceneId = current?.metadata?.['sceneId'];
+    if (typeof metaSceneId === 'string' && metaSceneId.trim()) return metaSceneId.trim();
+    return current?.id;
+  }
+
+  private emitAction(action: GameActionRef): void {
+    for (const listener of this.actionListeners) listener(action);
+  }
+
+  onAction(listener: (action: GameActionRef) => void): () => void {
+    this.actionListeners.add(listener);
+    return () => this.actionListeners.delete(listener);
   }
 
   getState(): GameState {
@@ -91,7 +117,28 @@ export class GameEngine {
 
   getPassage(id: string): Passage | undefined {
     const normalized = id.trim().replace(/\s+/g, '_');
-    return this.story.passages.get(normalized);
+    const direct = this.story.passages.get(normalized);
+    if (direct) return direct;
+
+    // 兼容：目标可能以名称传入（非 id）
+    for (const [, p] of this.story.passages) {
+      if (p.name?.trim().replace(/\s+/g, '_') === normalized) return p;
+    }
+
+    // 兼容旧数据：分页场景常见目标写成 `chX.scene_YY`，实际首屏节点为 `chX.scene_YY.p_100`
+    const pagedFirst = this.story.passages.get(`${normalized}.p_100`);
+    if (pagedFirst) return pagedFirst;
+
+    // 最后兜底：若存在 `normalized.p_XXX`，取最小页号
+    let best: { num: number; passage: Passage } | null = null;
+    const prefix = `${normalized}.p_`;
+    for (const [pid, p] of this.story.passages) {
+      if (!pid.startsWith(prefix)) continue;
+      const num = Number(pid.slice(prefix.length));
+      if (Number.isNaN(num)) continue;
+      if (!best || num < best.num) best = {num, passage: p};
+    }
+    return best?.passage;
   }
 
   get story(): Story {
@@ -135,6 +182,10 @@ export class GameEngine {
     }
     this.state.currentPassage = passage;
     this.state.isEnding = passage.links.length === 0;
+    this.emitAction({
+      type: 'scene.enter',
+      sceneId: this.getCurrentSceneId(),
+    });
     return true;
   }
 
@@ -145,6 +196,10 @@ export class GameEngine {
     if (!passage) return false;
     this.state.currentPassage = passage;
     this.state.isEnding = false;
+    this.emitAction({
+      type: 'scene.enter',
+      sceneId: this.getCurrentSceneId(),
+    });
     return true;
   }
 
@@ -160,6 +215,10 @@ export class GameEngine {
     this.state.isEnding = false;
     this.usedBehaviorIds.clear();
     this.usedEventIds.clear();
+    this.emitAction({
+      type: 'scene.enter',
+      sceneId: this.getCurrentSceneId(),
+    });
   }
 
   /** 应用状态变更（供行为交互系统执行回写） */

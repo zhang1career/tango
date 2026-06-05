@@ -30,4 +30,6 @@ export interface GameEvent {
   endingAnimation?: string;
   /** 背景音乐 URL */
   backgroundMusic?: string;
+  /** 事件消息列表（场景存在事件时优先展示） */
+  messages?: string[];
 }
