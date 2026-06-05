@@ -9,6 +9,10 @@ import {flattenSceneEntries, toPassageId} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import type {MapEdge} from '../schema/game-map';
 import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
+import {
+  resolveSceneBackgroundMusic,
+  resolvedSceneImagesArray,
+} from '../utils/scene-media';
 
 function escapeHtml(text: string): string {
   return text
@@ -93,10 +97,6 @@ export function frameworkToStory(fw: StoryFramework): Story {
   const passages = new Map<string, Passage>();
   const branchOwnerByChapterScene = new Map<string, { rootSceneId: string; optionId: string }>();
   const branchLinksByFrom = new Map<string, Array<{ displayText: string; targetSceneId: string; condition?: string }>>();
-  const terminalBranchFailureByChapterScene = new Map<
-    string,
-    { failureEnding: string; rootSceneName: string; branchOptionId: string }
-  >();
 
   const pushBranchLink = (
     chapterIndex: number,
@@ -196,11 +196,6 @@ export function frameworkToStory(fw: StoryFramework): Story {
               displayText: option.returnDisplayText?.trim() || '返回主线',
               targetSceneId: rootScene.id,
             });
-            terminalBranchFailureByChapterScene.set(ownerKey, {
-              failureEnding,
-              rootSceneName: rootScene.name,
-              branchOptionId: optionLabel,
-            });
           }
         }
       }
@@ -268,7 +263,7 @@ export function frameworkToStory(fw: StoryFramework): Story {
       });
     }
 
-    const terminalFailure = terminalBranchFailureByChapterScene.get(thisSceneKey);
+    const isBranchFailureEnding = !!scene.branchFailureEnding;
     const branchFailureTemplate = fw.features?.branchFailureEnding?.template?.trim() || DEFAULT_BRANCH_FAILURE_TEMPLATE;
 
     const metadata: Record<string, unknown> = { sceneId: scene.id };
@@ -289,23 +284,20 @@ export function frameworkToStory(fw: StoryFramework): Story {
     }
     if (scene.eventIds?.length) metadata.eventIds = scene.eventIds;
     if (scene.openingAnimation) metadata.openingAnimation = scene.openingAnimation;
-    const validImages = scene.images?.filter((u) => u?.trim());
-    if (validImages?.length) metadata.images = validImages.map((u) => u.trim());
-    if (scene.backgroundMusic) metadata.backgroundMusic = scene.backgroundMusic;
+    const resolvedBgm = resolveSceneBackgroundMusic(scene, fw.features);
+    if (resolvedBgm) metadata.backgroundMusic = resolvedBgm;
+    const resolvedImages = resolvedSceneImagesArray(scene, fw.features);
+    if (resolvedImages) metadata.images = resolvedImages;
     if (scene.synthesizedBgm) metadata.synthesizedBgm = scene.synthesizedBgm;
     const sceneMessages = scene.messages?.map((m) => m?.trim()).filter(Boolean) as string[] | undefined;
     if (sceneMessages?.length) metadata.messages = sceneMessages;
-    if (terminalFailure) {
-      metadata.branchTerminal = true;
-      const failureBgm = fw.features?.branchFailureEnding?.backgroundMusic?.trim();
-      if (failureBgm) metadata.backgroundMusic = failureBgm;
-      const failureImages = fw.features?.branchFailureEnding?.images
-        ?.map((u) => u?.trim())
-        .filter(Boolean) as string[] | undefined;
-      if (failureImages?.length) metadata.images = failureImages;
-    }
-    const failureSuffix = terminalFailure
-      ? `\n\n${renderBranchFailureTemplate(branchFailureTemplate, terminalFailure)}`
+    if (isBranchFailureEnding) metadata.branchTerminal = true;
+    const failureSuffix = isBranchFailureEnding
+      ? `\n\n${renderBranchFailureTemplate(branchFailureTemplate, {
+          failureEnding: scene.branchFailureEndingText?.trim() ?? '',
+          rootSceneName: '',
+          branchOptionId: '',
+        })}`
       : '';
 
     passages.set(pid, {

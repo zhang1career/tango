@@ -129,4 +129,8 @@ export interface GameScene {
    * 分页子页仍使用「继续」，仅末页出口使用此文案。
    */
   mainlineLinkDisplayText?: string;
+  /** 是否为支线失败结局（人工设置；空 BGM/配图时回落 story-features 统一预设） */
+  branchFailureEnding?: boolean;
+  /** 汇编失败结局模板时填入 {{failureEnding}} */
+  branchFailureEndingText?: string;
 }

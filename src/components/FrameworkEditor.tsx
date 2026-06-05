@@ -28,6 +28,8 @@ import {
   collectSceneFullText,
 } from '../utils/scene-passage-text';
 import {getAiBlocks, getScenePassageBlocks} from '../utils/passage-blocks';
+import {resolveSceneBackgroundMusic, resolvedSceneImagesArray} from '../utils/scene-media';
+import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {runAssembleScene} from '@/services/scene-block-generation';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
@@ -109,10 +111,12 @@ function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Recor
     ? scene.characterOverrides
     : undefined;
   m.openingAnimation = scene.openingAnimation || undefined;
-  const validImages = scene.images?.filter((u) => u?.trim());
-  m.images = validImages?.length ? validImages.map((u) => u.trim()) : undefined;
-  m.backgroundMusic = scene.backgroundMusic || undefined;
+  const resolvedImages = resolvedSceneImagesArray(scene, fw.features);
+  m.images = resolvedImages;
+  const resolvedBgm = resolveSceneBackgroundMusic(scene, fw.features);
+  m.backgroundMusic = resolvedBgm;
   m.synthesizedBgm = scene.synthesizedBgm || undefined;
+  if (scene.branchFailureEnding) m.branchTerminal = true;
   return m;
 }
 
@@ -169,7 +173,13 @@ async function fetchListData(gameId: string): Promise<Partial<StoryFramework>> {
       }
     },
     {url: getRulesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
-    {url: getFeaturesFetchUrl(gameId), parse: (d: unknown) => (d && typeof d === 'object' && !Array.isArray(d) ? d : undefined) as import('../schema/features').FeaturesConfig | undefined},
+    {
+      url: getFeaturesFetchUrl(gameId),
+      parse: (d: unknown) =>
+        d && typeof d === 'object' && !Array.isArray(d)
+          ? normalizeFeaturesConfig(d as import('../schema/features').FeaturesConfig)
+          : undefined,
+    },
   ];
   const keys: (keyof StoryFramework)[] = ['characters', 'scenes', 'maps', 'events', 'items', 'metadata', 'gameRules', 'features'];
   for (let i = 0; i < apis.length; i++) {

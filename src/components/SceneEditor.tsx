@@ -3,7 +3,7 @@
  */
 
 import React, {useEffect, useMemo, useState} from 'react';
-import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl} from '@/config';
+import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl} from '@/config';
 import {runGenerateAiBlock} from '@/services/scene-block-generation';
 import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
 import {useGameId} from '@/context/GameIdContext';
@@ -40,6 +40,9 @@ import {
 import {SceneRoutingFields} from './SceneRoutingFields';
 import {SingleSelectField} from './ui/SingleSelectField';
 import {MultiSelectField} from './ui/MultiSelectField';
+import {resolveSceneBackgroundMusic, sceneMediaDefaultsOnBranchFailureToggle} from '../utils/scene-media';
+import {normalizeFeaturesConfig} from '../utils/normalize-features';
+import type {FeaturesConfig} from '../schema/features';
 
 function FieldRow({
                     label,
@@ -366,6 +369,7 @@ function SceneFormContent({
   const linkedEventBgm = linkedEventId
     ? eventIds.find((e) => e.id === linkedEventId)?.backgroundMusic
     : undefined;
+  const effectiveSceneBgm = resolveSceneBackgroundMusic(scene, fw?.features);
   const [generatingAiIndex, setGeneratingAiIndex] = useState<number | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
@@ -852,6 +856,49 @@ function SceneFormContent({
         <SceneRoutingFields fw={fw} scene={scene} editable={editable && !!onUpdate} onUpdate={onUpdate} />
       ) : null}
 
+      <SingleSelectField
+        label="支线失败结局"
+        options={[
+          {id: 'yes', name: '是'},
+          {id: 'no', name: '否'},
+        ]}
+        value={scene.branchFailureEnding ? 'yes' : 'no'}
+        allowEmpty={false}
+        hint="选「是」且 BGM/配图为空时，汇编与运行将回落「功能」页的统一失败结局预设。"
+        readOnly={!editable || !onUpdate}
+        onChange={
+          onUpdate
+            ? (id) => {
+                const yes = id === 'yes';
+                onUpdate((s) => ({
+                  ...s,
+                  branchFailureEnding: yes,
+                  ...sceneMediaDefaultsOnBranchFailureToggle(),
+                }));
+              }
+            : undefined
+        }
+      />
+      {scene.branchFailureEnding ? (
+        <FieldRow
+          label="失败结局说明"
+          value={scene.branchFailureEndingText ?? ''}
+          editable={editable && !!onUpdate}
+        >
+          <input
+            value={scene.branchFailureEndingText ?? ''}
+            onChange={(e) =>
+              onUpdate!((s) => ({
+                ...s,
+                branchFailureEndingText: e.target.value || undefined,
+              }))
+            }
+            style={styles.input}
+            placeholder="汇编模板占位符 {{failureEnding}}"
+          />
+        </FieldRow>
+      ) : null}
+
       <FieldRow
         label="主线出口文案"
         value={scene.mainlineLinkDisplayText ?? ''}
@@ -878,22 +925,29 @@ function SceneFormContent({
       />
       <MediaUrlField
         label="配图"
-        value={scene.images?.[0]}
-        onChange={(v) => onUpdate?.((s) => ({...s, images: v ? [v] : undefined}))}
+        value={scene.images?.[0] ?? ''}
+        onChange={(v) =>
+          onUpdate?.((s) => ({
+            ...s,
+            images: v === undefined ? undefined : [v ?? ''],
+          }))
+        }
         placeholder={defaultSceneImageSavePath(scene.id)}
         editable={editable && !!onUpdate}
+        preserveEmptyString
       />
       <MediaUrlField
         label="背景音乐"
-        value={scene.backgroundMusic}
+        value={scene.backgroundMusic ?? ''}
         onChange={(v) => onUpdate?.((s) => ({...s, backgroundMusic: v}))}
         placeholder={`media_custom/bgm/${scene.id}.wav`}
         editable={editable && !!onUpdate}
+        preserveEmptyString
       />
       <BgmSynthesisField
         gameId={formGameId}
         sceneId={scene.id}
-        sceneBgm={scene.backgroundMusic}
+        sceneBgm={effectiveSceneBgm}
         eventBgm={linkedEventBgm}
         synthesizedBgm={scene.synthesizedBgm}
         onSynthesizedBgmChange={
@@ -932,6 +986,15 @@ async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFrame
     } catch {
       // ignore
     }
+  }
+  try {
+    const res = await fetch(getFeaturesFetchUrl(gameId));
+    if (res.ok) {
+      const data = (await res.json()) as FeaturesConfig;
+      updateFw((d) => ({...d, features: normalizeFeaturesConfig(data)}));
+    }
+  } catch {
+    // ignore
   }
 }
 

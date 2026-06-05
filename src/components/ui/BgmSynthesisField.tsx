@@ -36,7 +36,9 @@ export type BgmSynthesisContext = {
 function validateMixInputs(ctx: BgmSynthesisContext): string | null {
   const scenePath = ctx.sceneBgm?.trim();
   const eventPath = ctx.eventBgm?.trim();
-  if (!scenePath) return '请先填写场景「背景音乐」（须为 media_custom 下的 wav 路径）';
+  if (!scenePath) {
+    return '场景「背景音乐」为空，且无可回落的统一失败结局 BGM。请填写场景 BGM，或在「功能」页配置支线失败结局统一背景音乐';
+  }
   if (!eventPath) return '请先为关联事件填写「背景音乐」（须为 wav 路径）';
   if (!isWavLogicalPath(scenePath)) return '场景背景音乐仅支持 .wav 文件';
   if (!isWavLogicalPath(eventPath)) return '事件背景音乐仅支持 .wav 文件';

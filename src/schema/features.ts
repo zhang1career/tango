@@ -13,8 +13,8 @@ export interface BattleConfig {
 export interface BranchFailureEndingConfig {
   /** 统一背景音乐 URL */
   backgroundMusic?: string;
-  /** 统一背景图（支持轮播） */
-  images?: string[];
+  /** 统一背景图 */
+  image?: string;
   /**
    * 失败结局模板（支持占位符）
    * - {{failureEnding}}: branchOptions.failureEnding

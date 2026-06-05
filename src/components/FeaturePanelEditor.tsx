@@ -7,7 +7,8 @@ import {getFeaturesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {FeaturesConfig} from '../schema/features';
-import {MediaCarouselField, MediaUrlField} from './ui/MediaFields';
+import {MediaUrlField} from './ui/MediaFields';
+import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {formatJsonCompact} from '../utils/json-format';
 import {editorStyles as styles} from '../styles/editorStyles';
 
@@ -19,7 +20,7 @@ async function loadFeatures(gameId: string): Promise<FeaturesConfig> {
     const res = await fetch(getFeaturesFetchUrl(gameId));
     if (!res.ok) return DEFAULT_FEATURES;
     const data = await res.json();
-    return data ?? DEFAULT_FEATURES;
+    return normalizeFeaturesConfig(data ?? DEFAULT_FEATURES);
   } catch {
     return DEFAULT_FEATURES;
   }
@@ -148,13 +149,13 @@ export function FeaturePanelEditor() {
             placeholder="所有支线失败结局统一使用"
             editable={true}
           />
-          <MediaCarouselField
+          <MediaUrlField
             label="统一背景图"
-            value={features.branchFailureEnding?.images}
+            value={features.branchFailureEnding?.image}
             onChange={(v) =>
               updateFeatures((f) => ({
                 ...f,
-                branchFailureEnding: { ...f.branchFailureEnding, images: v.length ? v : undefined },
+                branchFailureEnding: {...f.branchFailureEnding, image: v},
               }))
             }
             editable={true}
