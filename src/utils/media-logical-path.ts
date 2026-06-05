@@ -7,6 +7,7 @@ import {
   GENERATED_MEDIA_FS_DIR,
   GENERATED_MEDIA_LOGICAL_PREFIX,
 } from '../config/media-paths';
+import {parseBgmMixVolume, readBgmVolumeFromMap, wavBasenameFromLogicalPath} from './bgm-volumes';
 import {isMp3LogicalPath, isWavLogicalPath, normalizeLogicalMediaPath} from './media-path-helpers';
 
 export {isMp3LogicalPath, isWavLogicalPath, normalizeLogicalMediaPath};
@@ -68,6 +69,26 @@ export function bgmEventVolumesFsPath(projectRoot: string): string {
   return resolve(projectRoot, CUSTOM_MEDIA_FS_DIR, 'bgm', BGM_EVENT_VOLUMES_FILENAME);
 }
 
+export function readBgmVolumesFromFile(
+  projectRoot: string,
+  readFile: (p: string) => string,
+  exists: (p: string) => boolean
+): Record<string, number> {
+  const configPath = bgmEventVolumesFsPath(projectRoot);
+  if (!exists(configPath)) return {};
+  try {
+    const parsed = JSON.parse(readFile(configPath)) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const volume = parseBgmMixVolume(value);
+      if (volume != null) out[key] = volume;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 /** Node 环境读取 BGM 轨音量（vite 中间件用；场景轨与事件轨共用同一配置表） */
 export function readBgmVolumeFromFile(
   wavLogicalPath: string,
@@ -75,19 +96,9 @@ export function readBgmVolumeFromFile(
   readFile: (p: string) => string,
   exists: (p: string) => boolean
 ): number {
-  const basename = normalizeLogicalMediaPath(wavLogicalPath).split('/').pop() ?? '';
+  const basename = wavBasenameFromLogicalPath(wavLogicalPath);
   if (!basename) return DEFAULT_BGM_MIX_VOLUME;
-
-  const configPath = bgmEventVolumesFsPath(projectRoot);
-  if (!exists(configPath)) return DEFAULT_BGM_MIX_VOLUME;
-  try {
-    const parsed = JSON.parse(readFile(configPath)) as Record<string, unknown>;
-    const v = parsed[basename];
-    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
-  } catch {
-    // ignore
-  }
-  return DEFAULT_BGM_MIX_VOLUME;
+  return readBgmVolumeFromMap(readBgmVolumesFromFile(projectRoot, readFile, exists), wavLogicalPath);
 }
 
 /** @deprecated 使用 readBgmVolumeFromFile */

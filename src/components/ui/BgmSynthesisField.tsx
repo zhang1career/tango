@@ -1,8 +1,22 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
+import {resolveMediaUrl} from '@/config';
 import {editorStyles as styles} from '../../styles/editorStyles';
-import {defaultSynthesizedBgmPath} from '@/config/media-paths';
+import {
+  BGM_MIX_VOLUME_MAX,
+  BGM_MIX_VOLUME_MIN,
+  BGM_MIX_VOLUME_STEP,
+  DEFAULT_BGM_MIX_VOLUME,
+  defaultSynthesizedBgmPath,
+} from '@/config/media-paths';
 import {mixSceneBgm} from '@/services/bgm-mix';
+import {fetchBgmVolumes, saveBgmVolumes} from '@/services/bgm-volumes';
+import {
+  roundBgmMixVolume,
+  savedBgmMixVolume,
+  wavBasenameFromLogicalPath,
+} from '@/utils/bgm-volumes';
 import {isWavLogicalPath} from '@/utils/media-path-helpers';
+import {mediaUrlExists} from '@/utils/scene-bgm';
 
 function FieldRow({
   label,
@@ -19,6 +33,67 @@ function FieldRow({
     <div style={styles.row}>
       <label style={styles.label}>{label}</label>
       {editable && children ? children : <div style={styles.readOnlyValue}>{value ?? '-'}</div>}
+    </div>
+  );
+}
+
+function formatSavedVolumeLabel(volume: number): string {
+  return volume === DEFAULT_BGM_MIX_VOLUME
+    ? `${volume}（默认）`
+    : String(volume);
+}
+
+function VolumeControl({
+  label,
+  filename,
+  savedVolume,
+  draftVolume,
+  onDraftChange,
+}: {
+  label: string;
+  filename: string;
+  savedVolume: number;
+  draftVolume: number;
+  onDraftChange: (v: number) => void;
+}) {
+  const dirty = roundBgmMixVolume(draftVolume) !== roundBgmMixVolume(savedVolume);
+
+  return (
+    <div style={{marginBottom: 10}}>
+      <div style={{display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4}}>
+        <span style={{fontSize: 13, color: '#ccc'}}>
+          {label}
+          {filename ? ` (${filename})` : ''}
+        </span>
+        <span style={{fontSize: 12, color: dirty ? '#fbbf24' : '#888', flexShrink: 0}}>
+          当前设定 {formatSavedVolumeLabel(savedVolume)}
+          {dirty ? ' · 未保存' : ''}
+        </span>
+      </div>
+      <div style={{display: 'flex', alignItems: 'center', gap: 10}}>
+        <input
+          type="range"
+          min={BGM_MIX_VOLUME_MIN}
+          max={BGM_MIX_VOLUME_MAX}
+          step={BGM_MIX_VOLUME_STEP}
+          value={draftVolume}
+          onChange={(e) => onDraftChange(roundBgmMixVolume(Number(e.target.value)))}
+          style={{flex: 1}}
+        />
+        <input
+          type="number"
+          min={BGM_MIX_VOLUME_MIN}
+          max={BGM_MIX_VOLUME_MAX}
+          step={BGM_MIX_VOLUME_STEP}
+          value={draftVolume}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isNaN(n)) return;
+            onDraftChange(roundBgmMixVolume(n));
+          }}
+          style={{...styles.input, width: 72, flexShrink: 0}}
+        />
+      </div>
     </div>
   );
 }
@@ -56,11 +131,120 @@ export function BgmSynthesisField({
   editable,
 }: BgmSynthesisContext) {
   const [mixing, setMixing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [volumeConfig, setVolumeConfig] = useState<Record<string, number>>({});
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [draftSceneVolume, setDraftSceneVolume] = useState(DEFAULT_BGM_MIX_VOLUME);
+  const [draftEventVolume, setDraftEventVolume] = useState(DEFAULT_BGM_MIX_VOLUME);
+  const [outputReady, setOutputReady] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevSceneBasename = useRef('');
+  const prevEventBasename = useRef('');
 
   const defaultOutput = useMemo(() => defaultSynthesizedBgmPath(gameId, sceneId), [gameId, sceneId]);
   const outputValue = synthesizedBgm ?? '';
-  const showMixButton = import.meta.env.DEV && editable && !!onSynthesizedBgmChange;
+  const outputPath = (outputValue || defaultOutput).trim();
+  const showDevControls = import.meta.env.DEV && editable && !!onSynthesizedBgmChange;
+
+  const sceneBasename = wavBasenameFromLogicalPath(sceneBgm);
+  const eventBasename = wavBasenameFromLogicalPath(eventBgm);
+  const savedSceneVolume = savedBgmMixVolume(volumeConfig, sceneBasename);
+  const savedEventVolume = savedBgmMixVolume(volumeConfig, eventBasename);
+  const volumesDirty =
+    roundBgmMixVolume(draftSceneVolume) !== savedSceneVolume ||
+    roundBgmMixVolume(draftEventVolume) !== savedEventVolume;
+
+  useEffect(() => {
+    if (!showDevControls) return;
+    let cancelled = false;
+    void fetchBgmVolumes().then((result) => {
+      if (cancelled) return;
+      if (result.ok && result.volumes) {
+        setVolumeConfig(result.volumes);
+      }
+      setConfigLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [showDevControls]);
+
+  useEffect(() => {
+    if (!configLoaded) return;
+    if (sceneBasename !== prevSceneBasename.current) {
+      prevSceneBasename.current = sceneBasename;
+      setDraftSceneVolume(savedSceneVolume);
+    }
+  }, [configLoaded, sceneBasename, savedSceneVolume]);
+
+  useEffect(() => {
+    if (!configLoaded) return;
+    if (eventBasename !== prevEventBasename.current) {
+      prevEventBasename.current = eventBasename;
+      setDraftEventVolume(savedEventVolume);
+    }
+  }, [configLoaded, eventBasename, savedEventVolume]);
+
+  useEffect(() => {
+    if (!outputPath) {
+      setOutputReady(false);
+      return;
+    }
+    let cancelled = false;
+    const url = resolveMediaUrl(outputPath, gameId);
+    void mediaUrlExists(url).then((ok) => {
+      if (!cancelled) setOutputReady(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [outputPath, gameId]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onEnded = () => setPlaying(false);
+    const onPause = () => setPlaying(false);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('pause', onPause);
+    return () => {
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('pause', onPause);
+      audio.pause();
+    };
+  }, []);
+
+  const handleSaveVolumes = async () => {
+    if (!sceneBasename && !eventBasename) {
+      alert('请先填写场景与事件的 wav 背景音乐');
+      return;
+    }
+    const updates: Record<string, number> = {};
+    if (sceneBasename) updates[sceneBasename] = draftSceneVolume;
+    if (eventBasename) updates[eventBasename] = draftEventVolume;
+
+    setSaving(true);
+    setStatus(null);
+    try {
+      const result = await saveBgmVolumes(updates);
+      if (!result.ok || !result.volumes) {
+        const message = result.error ?? '保存失败';
+        setStatus(message);
+        alert(message);
+        return;
+      }
+      setVolumeConfig(result.volumes);
+      setStatus('音量设置已保存');
+    } catch (e) {
+      const message = String(e);
+      setStatus(message);
+      alert(`保存失败: ${message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleMix = async () => {
     const err = validateMixInputs({
@@ -68,7 +252,7 @@ export function BgmSynthesisField({
       sceneId,
       sceneBgm,
       eventBgm,
-      synthesizedBgm: outputValue || defaultOutput,
+      synthesizedBgm: outputPath,
       editable,
       onSynthesizedBgmChange,
     });
@@ -76,7 +260,6 @@ export function BgmSynthesisField({
       alert(err);
       return;
     }
-    const outputPath = (outputValue || defaultOutput).trim();
     setMixing(true);
     setStatus(null);
     try {
@@ -85,6 +268,8 @@ export function BgmSynthesisField({
         sceneBgmPath: sceneBgm!.trim(),
         eventBgmPath: eventBgm!.trim(),
         outputPath,
+        sceneVolume: draftSceneVolume,
+        eventVolume: draftEventVolume,
       });
       if (!result.ok) {
         setStatus(result.error ?? '合成失败');
@@ -104,6 +289,7 @@ export function BgmSynthesisField({
         : `合成完成：${result.outputPath}`;
       setStatus(msg);
       onSynthesizedBgmChange?.(outputPath);
+      setOutputReady(true);
       alert(msg);
     } catch (e) {
       const message = String(e);
@@ -111,6 +297,36 @@ export function BgmSynthesisField({
       alert(`合成失败: ${message}`);
     } finally {
       setMixing(false);
+    }
+  };
+
+  const handlePlay = async () => {
+    if (!outputPath) {
+      alert('请先填写合成输出路径');
+      return;
+    }
+    const url = resolveMediaUrl(outputPath, gameId);
+    const exists = await mediaUrlExists(url);
+    if (!exists) {
+      alert('合成文件不存在，请先点击「合成声音」');
+      return;
+    }
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+    }
+    const audio = audioRef.current;
+    if (playing) {
+      audio.pause();
+      setPlaying(false);
+      return;
+    }
+    audio.src = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    setPlaying(true);
+    try {
+      await audio.play();
+    } catch (e) {
+      setPlaying(false);
+      alert(`播放失败: ${String(e)}`);
     }
   };
 
@@ -134,18 +350,69 @@ export function BgmSynthesisField({
           placeholder={defaultOutput}
         />
       </FieldRow>
-      {showMixButton && (
+      {showDevControls && (
         <div style={{...styles.row, marginTop: -8}}>
           <span style={styles.label} />
-          <div>
-            <button
-              type="button"
-              style={styles.btn}
-              disabled={mixing}
-              onClick={() => void handleMix()}
-            >
-              {mixing ? '合成中…' : '合成声音'}
-            </button>
+          <div style={{flex: 1}}>
+            {configLoaded ? (
+              <>
+                {sceneBasename ? (
+                  <VolumeControl
+                    label="场景轨音量"
+                    filename={sceneBasename}
+                    savedVolume={savedSceneVolume}
+                    draftVolume={draftSceneVolume}
+                    onDraftChange={setDraftSceneVolume}
+                  />
+                ) : (
+                  <p style={{fontSize: 12, color: '#888', marginBottom: 10}}>
+                    场景轨音量：请先填写场景 wav 背景音乐
+                  </p>
+                )}
+                {eventBasename ? (
+                  <VolumeControl
+                    label="事件轨音量"
+                    filename={eventBasename}
+                    savedVolume={savedEventVolume}
+                    draftVolume={draftEventVolume}
+                    onDraftChange={setDraftEventVolume}
+                  />
+                ) : (
+                  <p style={{fontSize: 12, color: '#888', marginBottom: 10}}>
+                    事件轨音量：请先为关联事件填写 wav 背景音乐
+                  </p>
+                )}
+              </>
+            ) : (
+              <p style={{fontSize: 12, color: '#888', marginBottom: 10}}>加载音量设置…</p>
+            )}
+            <div style={{display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8}}>
+              <button
+                type="button"
+                style={styles.btn}
+                disabled={mixing || !configLoaded}
+                onClick={() => void handleMix()}
+              >
+                {mixing ? '合成中…' : '合成声音'}
+              </button>
+              <button
+                type="button"
+                style={styles.btn}
+                disabled={!outputReady && !playing}
+                onClick={() => void handlePlay()}
+                title={outputReady ? '试听合成 mp3' : '需先合成'}
+              >
+                {playing ? '停止' : '播放'}
+              </button>
+              <button
+                type="button"
+                style={styles.btn}
+                disabled={saving || !configLoaded || !volumesDirty}
+                onClick={() => void handleSaveVolumes()}
+              >
+                {saving ? '保存中…' : '保存设置'}
+              </button>
+            </div>
             {status && (
               <pre
                 style={{

@@ -2,7 +2,7 @@
  * 场景编辑界面
  */
 
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl} from '@/config';
 import {runGenerateAiBlock} from '@/services/scene-block-generation';
 import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
@@ -43,6 +43,65 @@ import {MultiSelectField} from './ui/MultiSelectField';
 import {resolveSceneBackgroundMusic, sceneMediaDefaultsOnBranchFailureToggle} from '../utils/scene-media';
 import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import type {FeaturesConfig} from '../schema/features';
+
+const collapsibleStyles: Record<string, React.CSSProperties> = {
+  section: {marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6},
+  head: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    cursor: 'pointer',
+    fontSize: 13,
+    color: '#bbb',
+    userSelect: 'none',
+  },
+  title: {flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'},
+  body: {paddingTop: 8},
+};
+
+function CollapsibleSection({
+  title,
+  expanded,
+  onToggle,
+  rightAction,
+  children,
+}: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+  rightAction?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={collapsibleStyles.section}>
+      <div
+        style={collapsibleStyles.head}
+        onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && onToggle()}
+      >
+        <span style={collapsibleStyles.title}>{title}</span>
+        <span style={{display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0}}>
+          {rightAction && <span onClick={(e) => e.stopPropagation()}>{rightAction}</span>}
+          <span>{expanded ? '▼' : '▶'}</span>
+        </span>
+      </div>
+      {expanded && <div style={collapsibleStyles.body}>{children}</div>}
+    </div>
+  );
+}
+
+function aiBlockCollapseTitle(block: ScenePassageAiBlock, aiIndex: number): string {
+  const summary = block.summary?.trim();
+  const hint = summary
+    ? summary.length > 40
+      ? `${summary.slice(0, 40)}…`
+      : summary
+    : '（未填 summary）';
+  return `AI 块 ${aiIndex + 1} · ${hint}`;
+}
 
 function FieldRow({
                     label,
@@ -360,6 +419,7 @@ function SceneFormContent({
                             onUpdateRule,
                             onSaveRules,
                             onUpdate,
+                            collapsibleDefaultExpanded = false,
                             fw,
                             gameId: formGameId,
                             onScenePatched,
@@ -394,6 +454,7 @@ function SceneFormContent({
     }
     const passageIdx = aiIndexToPassageBlockIndex(scene, aiIndex);
     if (passageIdx == null) return;
+    setExpandedAiBlocks((prev) => new Set([...prev, aiIndex]));
     setGeneratingAiIndex(aiIndex);
     setGenError(null);
     try {
@@ -407,6 +468,26 @@ function SceneFormContent({
   };
   const leadingRaw = getLeadingRawBlock(scene);
   const aiBlocks = getAiBlocks(scene);
+  const [expandedAiBlocks, setExpandedAiBlocks] = useState<Set<number>>(() =>
+    collapsibleDefaultExpanded ? new Set(aiBlocks.map((_, i) => i)) : new Set()
+  );
+  const prevAiBlockCount = useRef(aiBlocks.length);
+
+  useEffect(() => {
+    if (aiBlocks.length > prevAiBlockCount.current) {
+      setExpandedAiBlocks((prev) => new Set([...prev, aiBlocks.length - 1]));
+    }
+    prevAiBlockCount.current = aiBlocks.length;
+  }, [aiBlocks.length]);
+
+  const toggleAiBlock = (aiIndex: number) => {
+    setExpandedAiBlocks((prev) => {
+      const next = new Set(prev);
+      if (next.has(aiIndex)) next.delete(aiIndex);
+      else next.add(aiIndex);
+      return next;
+    });
+  };
   const overrideMap = scene.characterOverrides ?? {};
   const overrideCharacterIds = Object.keys(overrideMap);
   const toBehaviorId = (charId: string) =>
@@ -463,18 +544,13 @@ function SceneFormContent({
 
       {genError && <p style={{color: '#f88', fontSize: 13}}>{genError}</p>}
       {aiBlocks.map((block, aiIndex) => (
-        <div key={`ai-${aiIndex}`} style={{marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6}}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 8,
-              gap: 8,
-            }}
-          >
-            <div style={{fontSize: 13, color: '#bbb'}}>AI 块 {aiIndex + 1}</div>
-            {editable && onUpdate && (
+        <CollapsibleSection
+          key={`ai-${aiIndex}`}
+          title={aiBlockCollapseTitle(block, aiIndex)}
+          expanded={expandedAiBlocks.has(aiIndex)}
+          onToggle={() => toggleAiBlock(aiIndex)}
+          rightAction={
+            editable && onUpdate ? (
               <button
                 type="button"
                 style={{
@@ -487,8 +563,9 @@ function SceneFormContent({
               >
                 ×
               </button>
-            )}
-          </div>
+            ) : undefined
+          }
+        >
           <AiBlockFields
             block={block}
             aiIndex={aiIndex}
@@ -500,7 +577,7 @@ function SceneFormContent({
             onGenerate={() => void handleGenerateBlock(aiIndex)}
             onSave={editable && onSaveScene ? () => onSaveScene() : undefined}
           />
-        </div>
+        </CollapsibleSection>
       ))}
       {editable && onUpdate && (
         <button type="button" style={{...styles.btnSmall, marginBottom: 12}} onClick={() => onUpdate(addAiBlock)}>

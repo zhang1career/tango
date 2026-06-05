@@ -5,6 +5,8 @@ export type MixBgmRequest = {
   sceneBgmPath: string;
   eventBgmPath: string;
   outputPath: string;
+  sceneVolume?: number;
+  eventVolume?: number;
 };
 
 export type MixBgmResponse = {

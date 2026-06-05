@@ -156,6 +156,11 @@ export function getMixBgmApiUrl(): string {
   return getDevApiUrl('/api/media/mix-bgm');
 }
 
+/** BGM 音量表 API（仅 dev） */
+export function getBgmVolumesApiUrl(): string {
+  return getDevApiUrl('/api/media/bgm-volumes');
+}
+
 /** 静态资源 fetch URL：生产环境会加上 Vite base（如 /tango/），避免子路径部署时请求到站点根目录 */
 export function toFetchUrl(relativePath: string): string {
   if (/^https?:\/\//i.test(relativePath)) return relativePath;

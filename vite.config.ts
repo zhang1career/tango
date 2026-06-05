@@ -5,12 +5,15 @@ import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFi
 import {CUSTOM_MEDIA_FS_DIR, GENERATED_MEDIA_FS_DIR} from './src/config/media-paths';
 import { formatJsonCompact } from './src/utils/json-format';
 import { bundleStoryTwForProd } from './src/utils/bundle-game-for-prod';
+import {applyBgmVolumeUpdates, normalizeBgmVolumesMap, parseBgmMixVolume} from './src/utils/bgm-volumes';
 import {
+  bgmEventVolumesFsPath,
   ensureParentDir,
   isMp3LogicalPath,
   isWavLogicalPath,
   normalizeLogicalMediaPath,
-  readEventBgmVolumeFromFile,
+  readBgmVolumeFromFile,
+  readBgmVolumesFromFile,
   resolveMediaToFsPath,
 } from './src/utils/media-logical-path';
 import { runBgmMixFfmpeg } from './src/utils/run-bgm-mix';
@@ -163,6 +166,58 @@ export default defineConfig(({ mode }) => {
             }
           });
         });
+        server.middlewares.use('/api/media/bgm-volumes', (req, res, next) => {
+          const configPath = bgmEventVolumesFsPath(cwd);
+          if (req.method === 'GET') {
+            try {
+              const volumes = normalizeBgmVolumesMap(
+                readBgmVolumesFromFile(
+                  cwd,
+                  (p) => readFileSync(p, 'utf-8'),
+                  existsSync
+                )
+              );
+              res.writeHead(200, {'Content-Type': 'application/json'});
+              res.end(JSON.stringify({ok: true, volumes}));
+            } catch (e) {
+              res.writeHead(500, {'Content-Type': 'application/json'});
+              res.end(JSON.stringify({ok: false, error: String((e as Error).message)}));
+            }
+            return;
+          }
+          if (req.method !== 'POST') return next();
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const payload = JSON.parse(body) as {updates?: Record<string, unknown>};
+              const rawUpdates = payload.updates ?? {};
+              const updates: Record<string, number> = {};
+              for (const [filename, value] of Object.entries(rawUpdates)) {
+                const volume = parseBgmMixVolume(value);
+                if (volume == null) {
+                  res.writeHead(400, {'Content-Type': 'application/json'});
+                  res.end(JSON.stringify({ok: false, error: `非法音量: ${filename}`}));
+                  return;
+                }
+                updates[filename] = volume;
+              }
+              const current = readBgmVolumesFromFile(
+                cwd,
+                (p) => readFileSync(p, 'utf-8'),
+                existsSync
+              );
+              const volumes = normalizeBgmVolumesMap(applyBgmVolumeUpdates(current, updates));
+              ensureParentDir(configPath, mkdirSync);
+              writeFileSync(configPath, formatJsonCompact(volumes) + '\n', 'utf-8');
+              res.writeHead(200, {'Content-Type': 'application/json'});
+              res.end(JSON.stringify({ok: true, volumes}));
+            } catch (e) {
+              res.writeHead(400, {'Content-Type': 'application/json'});
+              res.end(JSON.stringify({ok: false, error: String((e as Error).message)}));
+            }
+          });
+        });
         server.middlewares.use('/api/media/mix-bgm', (req, res, next) => {
           if (req.method !== 'POST') return next();
           let body = '';
@@ -174,6 +229,8 @@ export default defineConfig(({ mode }) => {
                 sceneBgmPath?: string;
                 eventBgmPath?: string;
                 outputPath?: string;
+                sceneVolume?: number;
+                eventVolume?: number;
               };
               const gameId = String(payload.gameId ?? '').trim();
               if (!/^[a-zA-Z0-9_-]+$/.test(gameId)) {
@@ -233,17 +290,23 @@ export default defineConfig(({ mode }) => {
                 }));
                 return;
               }
-              const eventVolume = readEventBgmVolumeFromFile(
-                eventBgmPath,
-                cwd,
-                (p) => readFileSync(p, 'utf-8'),
-                existsSync
-              );
+              const readVolume = (wavPath: string) =>
+                readBgmVolumeFromFile(
+                  wavPath,
+                  cwd,
+                  (p) => readFileSync(p, 'utf-8'),
+                  existsSync
+                );
+              const sceneVolume =
+                parseBgmMixVolume(payload.sceneVolume) ?? readVolume(sceneBgmPath);
+              const eventVolume =
+                parseBgmMixVolume(payload.eventVolume) ?? readVolume(eventBgmPath);
               ensureParentDir(outResolved.fsPath, mkdirSync);
               const mixResult = runBgmMixFfmpeg({
                 sceneFsPath: sceneResolved.fsPath,
                 eventFsPath: eventResolved.fsPath,
                 outputFsPath: outResolved.fsPath,
+                sceneVolume,
                 eventVolume,
               });
               if (!mixResult.ok) {
@@ -256,6 +319,7 @@ export default defineConfig(({ mode }) => {
                 ok: true,
                 outputPath,
                 outputFsPath: outResolved.fsPath,
+                sceneVolume,
                 eventVolume,
               }));
             } catch (e) {

@@ -9,6 +9,9 @@ export const GENERATED_MEDIA_LOGICAL_PREFIX = 'media_gen';
 /** 场景/事件轨音量表：位于 assets/media_custom/bgm/bgm-event-volumes.json（按 wav 文件名） */
 export const BGM_EVENT_VOLUMES_FILENAME = 'bgm-event-volumes.json';
 export const DEFAULT_BGM_MIX_VOLUME = 1;
+export const BGM_MIX_VOLUME_MIN = 0;
+export const BGM_MIX_VOLUME_MAX = 1;
+export const BGM_MIX_VOLUME_STEP = 0.1;
 
 export function defaultSceneImageSavePath(sceneId: string): string {
   return `${CUSTOM_MEDIA_LOGICAL_PREFIX}/bg/${sceneId}.png`;
