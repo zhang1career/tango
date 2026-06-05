@@ -21,7 +21,6 @@ import {BgmSynthesisField} from './ui/BgmSynthesisField';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
-import {RuleUsageBindings} from './RuleUsageBindings';
 import {editorStyles as styles} from '../styles/editorStyles';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
@@ -39,6 +38,8 @@ import {
   upsertLeadingRaw,
 } from '../utils/passage-blocks';
 import {SceneRoutingFields} from './SceneRoutingFields';
+import {SingleSelectField} from './ui/SingleSelectField';
+import {MultiSelectField} from './ui/MultiSelectField';
 
 function FieldRow({
                     label,
@@ -180,16 +181,6 @@ function AiBlockFields({
       ? '（继承场景出场人物，当前无）'
       : '（本块无对白角色）';
 
-  const toggleBlockCharacter = (charId: string, checked: boolean) => {
-    const base = block.characterIds !== undefined ? [...block.characterIds] : [...sceneCharacterIds];
-    const next = checked ? (base.includes(charId) ? base : [...base, charId]) : base.filter((id) => id !== charId);
-    if (idsEqual(next, sceneCharacterIds)) {
-      patch({characterIds: undefined});
-    } else {
-      patch({characterIds: next});
-    }
-  };
-
   return (
     <>
       <FieldRow label="summary *" value={block.summary} editable={editable && !!onUpdate}>
@@ -242,46 +233,41 @@ function AiBlockFields({
       <FieldRow label="voice" value={block.voice ?? ''} editable={editable && !!onUpdate}>
         <input value={block.voice ?? ''} onChange={(e) => patch({voice: e.target.value || undefined})} style={styles.input} placeholder="第一人称限知" />
       </FieldRow>
-      <div style={styles.row}>
-        <label style={styles.label}>本块可发言人物</label>
-        {editable && onUpdate ? (
-          <div>
-            <p style={{fontSize: 12, color: '#999', margin: '0 0 8px'}}>
-              仅限场景「出场人物」；不自定义时与出场人物一致，可缩小本块可发言范围。
-            </p>
-            {pool.length > 0 ? (
-              <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-                {pool.map((c) => (
-                  <label
-                    key={`ai${aiIndex}-${c.id}`}
-                    style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(c.id)}
-                      onChange={(e) => toggleBlockCharacter(c.id, e.target.checked)}
-                    />
-                    {c.name}
-                  </label>
-                ))}
-              </div>
-            ) : (
-              <p style={{fontSize: 12, color: '#888'}}>请先在下方勾选场景「出场人物」。</p>
-            )}
-            {!inheritsScene && (
-              <button
-                type="button"
-                style={{...styles.btnSmall, marginTop: 8}}
-                onClick={() => patch({characterIds: undefined})}
-              >
-                恢复继承场景人物
-              </button>
-            )}
-          </div>
+      {editable && onUpdate ? (
+        pool.length > 0 ? (
+          <MultiSelectField
+            label="本块可发言人物"
+            hint="仅限场景「出场人物」；不自定义时与出场人物一致，可缩小本块可发言范围。"
+            options={pool}
+            value={selectedIds}
+            addPlaceholder="添加可发言人物…"
+            emptyHint="（本块无对白角色）"
+            onChange={(ids) => {
+              if (idsEqual(ids, sceneCharacterIds)) {
+                patch({characterIds: undefined});
+              } else {
+                patch({characterIds: ids.length ? ids : []});
+              }
+            }}
+          />
         ) : (
-          <div style={styles.readOnlyValue}>{displayValue}</div>
-        )}
-      </div>
+          <div style={styles.row}>
+            <label style={styles.label}>本块可发言人物</label>
+            <p style={{fontSize: 12, color: '#888'}}>请先在下方添加场景「出场人物」。</p>
+          </div>
+        )
+      ) : (
+        <FieldRow label="本块可发言人物" value={displayValue} editable={false} />
+      )}
+      {editable && onUpdate && !inheritsScene && pool.length > 0 && (
+        <button
+          type="button"
+          style={{...styles.btnSmall, marginBottom: 12}}
+          onClick={() => patch({characterIds: undefined})}
+        >
+          恢复继承场景人物
+        </button>
+      )}
       <FieldRow label="anchors（每行一条）" value={(block.anchors ?? []).join('\n')} editable={editable && !!onUpdate}>
         <textarea
           value={(block.anchors ?? []).join('\n')}
@@ -518,148 +504,77 @@ function SceneFormContent({
         </button>
       )}
 
-      <div style={styles.row}>
-        <label style={styles.label}>关联地图节点</label>
-        {editable && onUpdate ? (
-          <select
-            value={scene.mapNodeId ?? ''}
-            onChange={(e) => onUpdate((s) => ({...s, mapNodeId: e.target.value || undefined}))}
-            style={styles.input}
-          >
-            <option value="">无</option>
-            {mapNodeIds.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.mapName} / {n.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <div style={styles.readOnlyValue}>
-            {scene.mapNodeId ? mapNodeIds.find((n) => n.id === scene.mapNodeId)?.name ?? scene.mapNodeId : '-'}
-          </div>
-        )}
-      </div>
+      <SingleSelectField
+        label="关联地图节点"
+        options={mapNodeIds.map((n) => ({id: n.id, name: `${n.mapName} / ${n.name}`}))}
+        value={scene.mapNodeId}
+        onChange={
+          editable && onUpdate
+            ? (id) => onUpdate((s) => ({...s, mapNodeId: id}))
+            : undefined
+        }
+        readOnly={!editable || !onUpdate}
+      />
 
-      <div style={styles.row}>
-        <label style={styles.label}>出场人物</label>
-        {editable && onUpdate ? (
-          <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-            {characterIds.map((c) => {
-              const selected = (scene.characterIds ?? []).includes(c.id);
-              return (
-                <label key={c.id} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={(e) => {
-                      const ids = scene.characterIds ?? [];
-                      const next = e.target.checked ? [...ids, c.id] : ids.filter((x) => x !== c.id);
-                      onUpdate((s) => ({...s, characterIds: next.length ? next : undefined}));
-                    }}
-                  />
-                  {c.name}
-                </label>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={styles.readOnlyValue}>
-            {(scene.characterIds ?? []).map((id) => characterIds.find((c) => c.id === id)?.name ?? id).join(', ') || '-'}
-          </div>
-        )}
-      </div>
+      <MultiSelectField
+        label="出场人物"
+        options={characterIds}
+        value={scene.characterIds ?? []}
+        addPlaceholder="添加出场人物…"
+        onChange={
+          editable && onUpdate
+            ? (ids) => onUpdate((s) => ({...s, characterIds: ids.length ? ids : undefined}))
+            : undefined
+        }
+        readOnly={!editable || !onUpdate}
+      />
 
-      <div style={styles.row}>
-        <label style={styles.label}>对手戏人物集（counterpartCharacterIds）</label>
-        {editable && onUpdate ? (
-          <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-            {characterIds.map((c) => {
-              const selected = (scene.counterpartCharacterIds ?? []).includes(c.id);
-              return (
-                <label key={`cp-${c.id}`} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={(e) => {
-                      const ids = scene.counterpartCharacterIds ?? [];
-                      const next = e.target.checked ? [...ids, c.id] : ids.filter((x) => x !== c.id);
-                      onUpdate((s) => ({...s, counterpartCharacterIds: next.length ? next : undefined}));
-                    }}
-                  />
-                  {c.name}
-                </label>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={styles.readOnlyValue}>
-            {(scene.counterpartCharacterIds ?? []).map((id) => characterIds.find((c) => c.id === id)?.name ?? id).join(', ') || '-'}
-          </div>
-        )}
-      </div>
+      <MultiSelectField
+        label="对手戏人物集（counterpartCharacterIds）"
+        options={characterIds}
+        value={scene.counterpartCharacterIds ?? []}
+        addPlaceholder="添加对手戏人物…"
+        onChange={
+          editable && onUpdate
+            ? (ids) => onUpdate((s) => ({...s, counterpartCharacterIds: ids.length ? ids : undefined}))
+            : undefined
+        }
+        readOnly={!editable || !onUpdate}
+      />
 
-      <div style={styles.row}>
-        <label style={styles.label}>关联事件</label>
-        {editable && onUpdate ? (
-          <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-            {eventIds.map((evt) => {
-              const selected = linkedEventId === evt.id;
-              return (
-                <label key={evt.id} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
-                  <input
-                    type="radio"
-                    name={`scene-event-${scene.id}`}
-                    checked={selected}
-                    onChange={() => onUpdate((s) => ({...s, eventIds: [evt.id]}))}
-                  />
-                  {evt.name}
-                </label>
-              );
-            })}
-            {eventIds.length > 0 && (
-              <label style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
-                <input
-                  type="radio"
-                  name={`scene-event-${scene.id}`}
-                  checked={!linkedEventId}
-                  onChange={() => onUpdate((s) => ({...s, eventIds: undefined}))}
-                />
-                （无）
-              </label>
-            )}
-          </div>
-        ) : (
-          <div style={styles.readOnlyValue}>
-            {(scene.eventIds ?? []).map((id) => eventIds.find((e) => e.id === id)?.name ?? id).join(', ') || '-'}
-          </div>
-        )}
-      </div>
+      <SingleSelectField
+        label="关联事件"
+        options={eventIds}
+        value={linkedEventId}
+        onChange={
+          editable && onUpdate
+            ? (id) => onUpdate((s) => ({...s, eventIds: id ? [id] : undefined}))
+            : undefined
+        }
+        readOnly={!editable || !onUpdate}
+      />
 
       <div style={styles.row}>
         <label style={styles.label}>角色覆写（characterOverrides）</label>
         {editable && onUpdate ? (
           <>
-            <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10}}>
-              {characterIds.map((c) => {
-                const selected = !!overrideMap[c.id];
-                return (
-                  <label key={`ovr-sel-${c.id}`} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          updateOverride(c.id, (x) => x);
-                        } else {
-                          removeOverride(c.id);
-                        }
-                      }}
-                    />
-                    {c.name}
-                  </label>
-                );
-              })}
-            </div>
+            <MultiSelectField
+              label=""
+              options={characterIds}
+              value={overrideCharacterIds}
+              addPlaceholder="添加覆写角色…"
+              emptyHint="未启用角色覆写"
+              onChange={(ids) => {
+                const prev = new Set(overrideCharacterIds);
+                const next = new Set(ids);
+                for (const id of prev) {
+                  if (!next.has(id)) removeOverride(id);
+                }
+                for (const id of ids) {
+                  if (!prev.has(id)) updateOverride(id, (x) => x);
+                }
+              }}
+            />
             {overrideCharacterIds.length === 0 ? (
               <div style={styles.readOnlyValue}>未启用角色覆写</div>
             ) : (
@@ -887,12 +802,8 @@ function SceneFormContent({
         onChange={(ids) => onUpdate?.((s) => ({...s, ruleIds: ids.length ? ids : undefined}))}
         readOnly={!editable || !onUpdate}
         label="规则"
-      />
-      <RuleUsageBindings
-        ruleIds={scene.ruleIds}
         gameRules={gameRules}
-        context={{sceneId: scene.id}}
-        editable={editable}
+        usageContext={{sceneId: scene.id}}
         onUpdateRule={onUpdateRule}
         onSaveRules={onSaveRules}
       />

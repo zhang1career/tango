@@ -10,6 +10,7 @@ import {
   buildSceneChapterContextIndex,
   getSceneRoutingView,
 } from '../utils/scene-routing';
+import {MultiSelectField} from './ui/MultiSelectField';
 
 const hintStyle: React.CSSProperties = {
   fontSize: 12,
@@ -83,7 +84,7 @@ function SceneRoutingSummary({fw, scene}: {fw: StoryFramework; scene: GameScene}
         </>
       )}
       <p style={{...hintStyle, marginBottom: 0, marginTop: 8}}>
-        章内主线顺序 =「剧情」页本章场景列表顺序，排除被 branchSceneIds 引用的支线场景。调整顺序请用剧情页 ↑↓。
+        章内主线顺序 =「剧情」页本章场景列表顺序，排除被 branchSceneIds 引用的支线场景。调整顺序请拖拽场景行左侧 ⋮⋮ 手柄。
       </p>
     </div>
   );
@@ -109,26 +110,6 @@ function BranchOptionCard({
   const branchIds = option.branchSceneIds ?? [];
   const needContinue = branchIds.length > 1;
   const continueTexts = option.continueDisplayTexts ?? [];
-
-  const toggleBranchScene = (sceneId: string) => {
-    onChange((o) => {
-      const cur = [...(o.branchSceneIds ?? [])];
-      const i = cur.indexOf(sceneId);
-      if (i >= 0) {
-        cur.splice(i, 1);
-      } else if (cur.length < 2) {
-        cur.push(sceneId);
-      } else {
-        alert('每条支线最多 2 个场景');
-        return o;
-      }
-      const nextContinue =
-        cur.length > 1
-          ? (o.continueDisplayTexts ?? []).slice(0, cur.length - 1)
-          : undefined;
-      return {...o, branchSceneIds: cur, continueDisplayTexts: nextContinue};
-    });
-  };
 
   return (
     <div style={{...cardStyle, marginTop: 8}}>
@@ -170,29 +151,35 @@ function BranchOptionCard({
       ) : (
         <div style={styles.readOnlyValue}>{option.failureEnding}</div>
       )}
-      <label style={styles.label}>支线路径场景（branchSceneIds，1–2 个，须已在本章场景列表中）</label>
       {editable ? (
-        <div style={{marginBottom: 8}}>
-          {candidateScenes.length === 0 ? (
-            <p style={hintStyle}>请先在剧情页将支线场景加入本章。</p>
-          ) : (
-            candidateScenes.map((c) => (
-              <label key={c.id} style={{display: 'block', fontSize: 13, marginBottom: 4, cursor: 'pointer'}}>
-                <input
-                  type="checkbox"
-                  checked={branchIds.includes(c.id)}
-                  onChange={() => toggleBranchScene(c.id)}
-                  style={{marginRight: 8}}
-                />
-                {c.name}（{c.id}）
-              </label>
-            ))
-          )}
-        </div>
+        candidateScenes.length === 0 ? (
+          <p style={hintStyle}>请先在剧情页将支线场景加入本章。</p>
+        ) : (
+          <MultiSelectField
+            label="支线路径场景（branchSceneIds，1–2 个）"
+            hint="须已在本章场景列表中；顺序即支线路径"
+            options={candidateScenes.map((c) => ({id: c.id, name: `${c.name}（${c.id}）`}))}
+            value={branchIds}
+            maxSelection={2}
+            addPlaceholder="添加支线场景…"
+            emptyHint="（未选择支线场景）"
+            onChange={(ids) =>
+              onChange((o) => ({
+                ...o,
+                branchSceneIds: ids,
+                continueDisplayTexts:
+                  ids.length > 1 ? (o.continueDisplayTexts ?? []).slice(0, ids.length - 1) : undefined,
+              }))
+            }
+          />
+        )
       ) : (
-        <div style={styles.readOnlyValue}>
-          {branchIds.length ? branchIds.join(' → ') : '-'}
-        </div>
+        <>
+          <label style={styles.label}>支线路径场景（branchSceneIds）</label>
+          <div style={styles.readOnlyValue}>
+            {branchIds.length ? branchIds.join(' → ') : '-'}
+          </div>
+        </>
       )}
       {needContinue && (
         <>

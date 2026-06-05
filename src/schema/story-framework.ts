@@ -9,6 +9,7 @@ import type {GameEvent} from './game-event';
 import type {GameMetadata} from './metadata';
 import type {GameItem} from './game-item';
 import type {GameScene} from './game-scene';
+import {ONLY_ONCE_RULE_ID} from './game-rule';
 import type {GameRule} from './game-rule';
 import type {FeaturesConfig} from './features';
 
@@ -192,6 +193,18 @@ export function validateFramework(fw: StoryFramework): { valid: boolean; errors:
     for (const entry of ch.sceneEntries ?? []) {
       if (!sceneIds.has(entry.sceneId)) {
         errors.push(`章节 "${ch.title}" 引用了不存在的场景: ${entry.sceneId}`);
+      }
+      const scene = (fw.scenes ?? []).find((s) => s.id === entry.sceneId);
+      if (
+        scene &&
+        (scene.branchOptions ?? []).filter(Boolean).length > 0
+      ) {
+        const ruleIds = new Set([...(entry.ruleIds ?? []), ...(scene.ruleIds ?? [])]);
+        if (ruleIds.has(ONLY_ONCE_RULE_ID)) {
+          errors.push(
+            `章节「${ch.title}」场景「${scene.name}」配置了 branchOptions，不可使用 onlyOnce（${ONLY_ONCE_RULE_ID}）；支线 onlyOnce 请写在「场景」页的 scene.ruleIds`
+          );
+        }
       }
     }
   }

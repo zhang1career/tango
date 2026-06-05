@@ -17,6 +17,7 @@ import {AttributesEditorCard} from './cards/AttributesEditorCard';
 import {ItemsEditorCard} from './cards/ItemsEditorCard';
 import {formatJsonCompact} from '../utils/json-format';
 import {assignBehaviorIds} from '../utils/behavior-ids';
+import {MultiSelectField} from './ui/MultiSelectField';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 
@@ -317,35 +318,22 @@ function DialogueLibrarySection({
               </select>
             </div>
           )}
-          <div style={styles.row}>
-            <label style={styles.label}>限定场景 sceneIds</label>
-            {scenes.length === 0 ? (
+          {scenes.length === 0 ? (
+            <div style={styles.row}>
+              <label style={styles.label}>限定场景 sceneIds</label>
               <div style={styles.readOnlyValue}>请先在「场景」页添加场景</div>
-            ) : (
-              <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-                {scenes.map((scene) => {
-                  const selected = (b.sceneIds ?? []).includes(scene.id);
-                  return (
-                    <label key={scene.id} style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={(e) => {
-                          const ids = b.sceneIds ?? [];
-                          const next = e.target.checked
-                            ? [...ids, scene.id]
-                            : ids.filter((x) => x !== scene.id);
-                          update(i, (x) => ({...x, sceneIds: next.length ? next : undefined}));
-                        }}
-                      />
-                      {scene.name}
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-            <div style={{fontSize: 12, color: '#888', marginTop: 4}}>不勾选表示所有场景均可用</div>
-          </div>
+            </div>
+          ) : (
+            <MultiSelectField
+              label="限定场景 sceneIds"
+              hint="不选择表示所有场景均可用"
+              options={scenes}
+              value={b.sceneIds ?? []}
+              addPlaceholder="添加限定场景…"
+              emptyHint="（所有场景均可用）"
+              onChange={(ids) => update(i, (x) => ({...x, sceneIds: ids.length ? ids : undefined}))}
+            />
+          )}
           <div style={styles.row}>
             <label style={styles.label}>条件表达式</label>
             <input

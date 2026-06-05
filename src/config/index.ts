@@ -142,6 +142,20 @@ export function getBehaviorHistoryPageSize(): number {
   return Number.isNaN(n) || n < 1 ? getBehaviorListLimit() : n;
 }
 
+/**
+ * 开发环境 Vite 中间件 API（如 /api/games/...、/api/media/mix-bgm）。
+ * 须以 / 开头挂在站点根路径，不要加 Vite BASE_URL 前缀。
+ */
+export function getDevApiUrl(apiPath: string): string {
+  const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  return normalized;
+}
+
+/** BGM 合成 API（仅 dev；依赖 vite.config 中的 mix-bgm 中间件） */
+export function getMixBgmApiUrl(): string {
+  return getDevApiUrl('/api/media/mix-bgm');
+}
+
 /** 静态资源 fetch URL：生产环境会加上 Vite base（如 /tango/），避免子路径部署时请求到站点根目录 */
 export function toFetchUrl(relativePath: string): string {
   if (/^https?:\/\//i.test(relativePath)) return relativePath;

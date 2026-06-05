@@ -14,6 +14,7 @@ import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
 import type {GameRule} from '../schema/game-rule';
+import {ONLY_ONCE_RULE_ID} from '../schema/game-rule';
 import {getAIGCApiKey, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
@@ -28,8 +29,8 @@ import {
 } from '../utils/scene-passage-text';
 import {getAiBlocks, getScenePassageBlocks} from '../utils/passage-blocks';
 import {runAssembleScene} from '@/services/scene-block-generation';
+import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
-import {RuleUsageBindings} from './RuleUsageBindings';
 
 type ImportZipFile = {path: string; contentBase64: string};
 type ImportPendingData = {
@@ -246,9 +247,13 @@ function normalizePassageKey(name: string): string {
 }
 
 function resolveStoryStartPassageName(fw: StoryFramework): string | null {
-  const story = frameworkToStory(fw);
-  const startPassage = story.passages.get(story.startPassageId);
-  return startPassage?.name ?? null;
+  try {
+    const story = frameworkToStory(fw);
+    const startPassage = story.passages.get(story.startPassageId);
+    return startPassage?.name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function getScenePassageLookupKeys(
@@ -541,6 +546,7 @@ export function FrameworkEditor({
     for (const n of map.nodes) mapNodeIds.push({id: n.id, name: n.name, mapName: map.name});
   }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
+  const catalogItems = fw.items ?? [];
   const gameRules = fw.gameRules ?? [];
   const {valid, errors} = validateFramework(fw);
   const handleNew = useCallback(() => {
@@ -1062,6 +1068,36 @@ export function FrameworkEditor({
       </section>
 
       <section style={styles.section}>
+        <InventoryValuesCard
+          items={catalogItems}
+          inventory={fw.initialState?.inventory ?? []}
+          onChange={(ids) =>
+            updateFwWithErrorReset((d) => {
+              const inventory = ids.length ? ids : undefined;
+              const variables = d.initialState?.variables;
+              const hasVariables = variables && Object.keys(variables).length > 0;
+              if (!inventory && !hasVariables) {
+                return {...d, initialState: undefined};
+              }
+              return {
+                ...d,
+                initialState: {
+                  ...d.initialState,
+                  variables: hasVariables ? variables : undefined,
+                  inventory,
+                },
+              };
+            })
+          }
+          title="开局背包（initialState.inventory）"
+          readOnly={false}
+        />
+        <p style={{fontSize: 12, color: '#888', marginTop: 8, marginBottom: 0}}>
+          游戏启动时玩家已持有的物品 id；写入 story-fm.json，编译 story.tw 后生效。与场景「进入时 give/take」不同。
+        </p>
+      </section>
+
+      <section style={styles.section}>
         <label style={styles.label}>故事标题</label>
         <input
           type="text"
@@ -1202,6 +1238,7 @@ function ChapterBlock({
   const isExpanded = expandedCh.has(ch.id);
   const entries = ch.sceneEntries ?? [];
   const sceneMap = new Map(scenes.map((s) => [s.id, s]));
+  const [draggingSceneIndex, setDraggingSceneIndex] = useState<number | null>(null);
 
   const updateChapter = (fn: (c: FrameworkChapter) => FrameworkChapter) =>
     updateFw((d) => ({
@@ -1234,15 +1271,40 @@ function ChapterBlock({
     }));
   };
 
-  const moveSceneEntry = (si: number, dir: -1 | 1) => {
-    const j = si + dir;
-    if (j < 0 || j >= entries.length) return;
+  const reorderSceneEntry = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || toIndex < 0 || toIndex >= entries.length) return;
     updateChapter((c) => {
       const list = [...c.sceneEntries];
-      const [item] = list.splice(si, 1);
-      list.splice(j, 0, item);
+      const [item] = list.splice(fromIndex, 1);
+      list.splice(toIndex, 0, item);
       return {...c, sceneEntries: list};
     });
+  };
+
+  const handleSceneDragStart = (e: React.DragEvent, index: number) => {
+    e.stopPropagation();
+    setDraggingSceneIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+
+  const handleSceneDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleSceneDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (!Number.isNaN(fromIndex) && fromIndex !== toIndex) {
+      reorderSceneEntry(fromIndex, toIndex);
+    }
+    setDraggingSceneIndex(null);
+  };
+
+  const handleSceneDragEnd = () => {
+    setDraggingSceneIndex(null);
   };
 
   return (
@@ -1357,6 +1419,7 @@ function ChapterBlock({
 
           {entries.map((entry, si) => {
             const scene = sceneMap.get(entry.sceneId);
+            const branchRootScene = (scene?.branchOptions ?? []).filter(Boolean).length > 0;
             const entryKey = `${chi}-${si}`;
             const isEntryExpanded = expandedEntry.has(entryKey);
             const isGenerating = generatingEntry === entryKey;
@@ -1366,34 +1429,37 @@ function ChapterBlock({
             return (
               <div key={entryKey} style={styles.scene}>
                 <div
-                  style={styles.sceneHead}
+                  style={{
+                    ...styles.sceneHead,
+                    ...(draggingSceneIndex === si ? styles.sceneHeadDragging : {}),
+                  }}
                   onClick={() => onToggleEntry(si)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => e.key === 'Enter' && onToggleEntry(si)}
+                  onDragOver={handleSceneDragOver}
+                  onDrop={(e) => handleSceneDrop(e, si)}
                 >
-                  <span style={styles.sceneTitle}>
-                    {isEntryExpanded ? '▼' : '▶'} {scene?.name ?? entry.sceneId}
-                  </span>
-                  <div onClick={(ev) => ev.stopPropagation()} style={{display: 'flex', gap: 4, alignItems: 'center'}}>
-                    <button
-                      type="button"
-                      style={styles.btnSmall}
-                      onClick={() => moveSceneEntry(si, -1)}
-                      disabled={si === 0}
-                      title="上移（影响章内主线顺序）"
+                  <div style={styles.sceneHeadLeft}>
+                    <span
+                      draggable
+                      onDragStart={(e) => handleSceneDragStart(e, si)}
+                      onDragEnd={handleSceneDragEnd}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={styles.sceneDragHandle}
+                      title="拖拽调整章内顺序（影响主线链）"
                     >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.btnSmall}
-                      onClick={() => moveSceneEntry(si, 1)}
-                      disabled={si >= entries.length - 1}
-                      title="下移（影响章内主线顺序）"
-                    >
-                      ↓
-                    </button>
+                      ⋮⋮
+                    </span>
+                    <span style={styles.sceneTitle}>
+                      {isEntryExpanded ? '▼' : '▶'} {scene?.name ?? entry.sceneId}
+                    </span>
+                  </div>
+                  <div
+                    onClick={(ev) => ev.stopPropagation()}
+                    style={styles.sceneHeadActions}
+                  >
                     <button
                       type="button"
                       style={{
@@ -1451,21 +1517,28 @@ function ChapterBlock({
                     <RuleIdsSelector
                       ruleList={ruleList}
                       value={entry.ruleIds ?? []}
-                      onChange={(ids) =>
+                      onChange={(ids) => {
                         updateEntry(si, (e0) => ({
                           ...e0,
                           ruleIds: ids.length ? ids : undefined,
-                        }))
-                      }
+                        }));
+                      }}
                       label="规则"
-                    />
-                    <RuleUsageBindings
-                      ruleIds={entry.ruleIds}
                       gameRules={gameRules}
-                      context={{sceneId: entry.sceneId}}
-                      editable={!!onUpdateRule}
+                      usageContext={{sceneId: entry.sceneId}}
                       onUpdateRule={onUpdateRule}
                       onSaveRules={onSaveRules}
+                      disabledAddOptions={
+                        branchRootScene
+                          ? [
+                              {
+                                id: ONLY_ONCE_RULE_ID,
+                                reason:
+                                  '该场景含 branchOptions，本章规则不能使用 onlyOnce。支线场景的 onlyOnce 请在「场景」页写入 scene.ruleIds。',
+                              },
+                            ]
+                          : undefined
+                      }
                     />
                   </div>
                 )}
@@ -1614,14 +1687,38 @@ const styles: Record<string, React.CSSProperties> = {
   scene: {marginBottom: 12},
   sceneHead: {
     display: 'flex',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
     padding: '6px 0',
     cursor: 'pointer',
     fontSize: 13,
     color: '#a78bfa',
   },
-  sceneTitle: {fontSize: 14},
+  sceneHeadDragging: {opacity: 0.55},
+  sceneHeadLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'left',
+  },
+  sceneHeadActions: {
+    display: 'flex',
+    gap: 4,
+    alignItems: 'center',
+    flexShrink: 0,
+    marginLeft: 'auto',
+  },
+  sceneDragHandle: {
+    color: '#888',
+    fontSize: 14,
+    userSelect: 'none',
+    cursor: 'grab',
+    flexShrink: 0,
+    padding: '0 2px',
+  },
+  sceneTitle: {fontSize: 14, flex: 1, minWidth: 0, textAlign: 'left'},
   sceneBody: {padding: '8px 0 0 0'},
   sceneEditHint: {fontSize: 12, color: '#888', margin: '0 0 12px', lineHeight: 1.5},
   linksHead: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 8},
