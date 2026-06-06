@@ -2,9 +2,16 @@
  * 场景编辑界面
  */
 
-import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl} from '@/config';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {runGenerateAiBlock} from '@/services/scene-block-generation';
+import {
+  loadStoryFromGame,
+  lookupKeysForSceneEntry,
+  syncRoutingLinksForGame,
+} from '@/services/scene-routing-sync-service';
+import {collectRoutingStaleScenes} from '../utils/scene-routing-sync';
+import {toPersistedFramework} from '../schema/story-framework';
 import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
@@ -190,6 +197,9 @@ type SceneFormProps = {
   fw?: StoryFramework;
   onScenePatched?: (scene: GameScene) => void;
   onSaveScene?: () => void | Promise<void>;
+  routingStaleEntry?: import('../utils/scene-routing-sync').RoutingStaleEntry;
+  onSyncSceneRouting?: () => void | Promise<void>;
+  syncingSceneRouting?: boolean;
 };
 
 function parseLines(text: string): string[] | undefined {
@@ -424,6 +434,9 @@ function SceneFormContent({
                             gameId: formGameId,
                             onScenePatched,
                             onSaveScene,
+                            routingStaleEntry,
+                            onSyncSceneRouting,
+                            syncingSceneRouting,
                           }: SceneFormProps) {
   const linkedEventId = scene.eventIds?.[0];
   const linkedEventBgm = linkedEventId
@@ -930,7 +943,17 @@ function SceneFormContent({
       />
 
       {fw ? (
-        <SceneRoutingFields fw={fw} scene={scene} editable={editable && !!onUpdate} onUpdate={onUpdate} />
+        <SceneRoutingFields
+          fw={fw}
+          scene={scene}
+          editable={editable && !!onUpdate}
+          onUpdate={onUpdate}
+          routingStale={!!routingStaleEntry}
+          expectedLinks={routingStaleEntry?.expectedLinks}
+          actualLinks={routingStaleEntry?.actualLinks}
+          onSyncRouting={onSyncSceneRouting}
+          syncingRouting={syncingSceneRouting}
+        />
       ) : null}
 
       <SingleSelectField
@@ -1084,6 +1107,63 @@ export function SceneEditor({
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
+  const [parsedStory, setParsedStory] = useState<Awaited<ReturnType<typeof loadStoryFromGame>>>(null);
+  const [syncingSceneRoutingId, setSyncingSceneRoutingId] = useState<string | null>(null);
+
+  const reloadParsedStory = useCallback(async () => {
+    try {
+      setParsedStory(await loadStoryFromGame(gameId));
+    } catch {
+      setParsedStory(null);
+    }
+  }, [gameId]);
+
+  useEffect(() => {
+    void reloadParsedStory();
+  }, [reloadParsedStory, fw]);
+
+  const persistFrameworkRouting = useCallback(
+    async (nextFw: StoryFramework) => {
+      const res = await fetch(getStoryFmFetchUrl(gameId), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: formatJsonCompact(toPersistedFramework(nextFw)),
+      });
+      const data = (await res.json().catch(() => ({}))) as {ok?: boolean; error?: string};
+      if (!res.ok || !data.ok) throw new Error(data.error || `保存剧情框架失败: ${res.status}`);
+    },
+    [gameId]
+  );
+
+  const syncSceneRouting = useCallback(
+    async (sceneId: string) => {
+      setSyncingSceneRoutingId(sceneId);
+      try {
+        const result = await syncRoutingLinksForGame(gameId, fw, [sceneId]);
+        updateFw(() => result.fw);
+        await persistFrameworkRouting(result.fw);
+        await reloadParsedStory();
+      } finally {
+        setSyncingSceneRoutingId(null);
+      }
+    },
+    [fw, gameId, updateFw, persistFrameworkRouting, reloadParsedStory]
+  );
+
+  const routingStaleForScene = useCallback(
+    (sceneId: string) => {
+      if (!parsedStory) return undefined;
+      try {
+        return collectRoutingStaleScenes(fw, parsedStory, (chi, sid) =>
+          lookupKeysForSceneEntry(fw, chi, sid)
+        ).find((s) => s.sceneId === sceneId);
+      } catch {
+        return undefined;
+      }
+    },
+    [fw, parsedStory]
+  );
+
   useEffect(() => {
     preloadForScenes(updateFw, gameId);
   }, [updateFw, gameId]);
@@ -1173,7 +1253,18 @@ export function SceneEditor({
     const normalized = scenes.map((s) => ({...s, messages: normalizeStringList(s.messages)}));
     setScenes(() => normalized);
     const result = await saveScenesToPreset(normalized, gameId);
-    if (!result.ok) alert(`保存失败: ${result.error}`);
+    if (!result.ok) {
+      alert(`保存失败: ${result.error}`);
+      return;
+    }
+    const editingScene = editIndex != null ? normalized[editIndex] : undefined;
+    if (editingScene) {
+      try {
+        await syncSceneRouting(editingScene.id);
+      } catch (e) {
+        alert(`场景已保存，但路由链接同步失败：${(e as Error).message}`);
+      }
+    }
   };
 
   const updateRule = (ruleId: string, fn: (r: GameRule) => GameRule) =>
@@ -1264,6 +1355,8 @@ export function SceneEditor({
             ruleIds={ruleIds}
             gameRules={gameRules}
             collapsibleDefaultExpanded
+            fw={fw}
+            routingStaleEntry={routingStaleForScene(scenes[detailIndex].id)}
           />
         </DetailEditModal>
       )}
@@ -1290,6 +1383,9 @@ export function SceneEditor({
             onSaveRules={() => checkAuthForSave(saveRules)}
             onUpdate={(fn) => updateScene(editIndex, fn)}
             onSaveScene={() => checkAuthForSave(persistScenes)}
+            routingStaleEntry={routingStaleForScene(scenes[editIndex].id)}
+            onSyncSceneRouting={() => checkAuthForSave(() => syncSceneRouting(scenes[editIndex].id))}
+            syncingSceneRouting={syncingSceneRoutingId === scenes[editIndex].id}
             {...narrativeFormProps}
           />
         </DetailEditModal>

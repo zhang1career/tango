@@ -19,7 +19,7 @@ import {getAIGCApiKey, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
 import {useAuth} from '@/context/AuthContext';
-import {frameworkToStory, parseTwee, serializeStorySugarcube, syncStoryTitleFromFramework} from '@/engine';
+import {frameworkToStory, parseTwee, syncStoryTitleFromFramework} from '@/engine';
 
 import {EDIT_MODAL_MAX_WIDTH} from '../styles/editorStyles';
 import {formatJsonCompact} from '../utils/json-format';
@@ -31,6 +31,19 @@ import {getAiBlocks, getScenePassageBlocks} from '../utils/passage-blocks';
 import {resolveSceneBackgroundMusic, resolvedSceneImagesArray} from '../utils/scene-media';
 import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {runAssembleScene} from '@/services/scene-block-generation';
+import {
+  loadStoryFromGame,
+  lookupKeysForSceneEntry,
+  saveStoryTw,
+  syncRoutingLinksForGame,
+} from '@/services/scene-routing-sync-service';
+import {
+  collectRoutingStaleScenes,
+  getSceneEntryRoutingFingerprint,
+  patchRoutingFingerprints,
+  syncPassageLinksInStory,
+  type RoutingStaleEntry,
+} from '../utils/scene-routing-sync';
 import {InventoryValuesCard} from './cards/InventoryValuesCard';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 
@@ -271,14 +284,7 @@ function getScenePassageLookupKeys(
   chapterIndex: number,
   sceneId: string
 ): string[] {
-  const pid = toPassageId(chapterIndex, sceneId);
-  const keys = [pid];
-  const template = frameworkToStory(fw).passages.get(pid);
-  if (template?.name) {
-    const byName = normalizePassageKey(template.name);
-    if (!keys.includes(byName)) keys.push(byName);
-  }
-  return keys;
+  return lookupKeysForSceneEntry(fw, chapterIndex, sceneId);
 }
 
 function getSceneEntryFingerprint(
@@ -420,21 +426,16 @@ async function compileSceneEntry(
   const {passageText} = await runAssembleScene(gameId, scene, ch.id);
   applySceneTextToStory(story, frameworkToStory(fw), fw, scene, chapterIndex, passageText);
   return {
-    fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => ({...e, compiledFingerprint: fp})),
+    fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => {
+      const routingFp = getSceneEntryRoutingFingerprint(fw, ch, sceneIndex, sceneMap);
+      return {
+        ...e,
+        compiledFingerprint: fp,
+        ...(routingFp ? {routingFingerprint: routingFp} : {}),
+      };
+    }),
     story,
   };
-}
-
-async function saveStoryTw(gameId: string, story: ReturnType<typeof parseTwee>): Promise<void> {
-  const res = await fetch(getGameContentUrl(gameId), {
-    method: 'PUT',
-    headers: {'Content-Type': 'text/plain; charset=utf-8'},
-    body: serializeStorySugarcube(story),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({error: res.statusText}));
-    throw new Error((err as { error?: string }).error ?? '保存 story.tw 失败');
-  }
 }
 
 /** 若 story.tw 标题与 story-fm 不一致，则仅同步 StoryTitle 并写回 */
@@ -507,10 +508,40 @@ export function FrameworkEditor({
   const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
   const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
   const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
+  const [parsedStory, setParsedStory] = useState<ReturnType<typeof parseTwee> | null>(null);
+  const [syncingRouting, setSyncingRouting] = useState(false);
+  const [syncingSceneRoutingKey, setSyncingSceneRoutingKey] = useState<string | null>(null);
+
+  const reloadParsedStory = useCallback(async () => {
+    try {
+      const story = await loadStoryFromGame(gameId);
+      setParsedStory(story);
+    } catch {
+      setParsedStory(null);
+    }
+  }, [gameId]);
+
+  useEffect(() => {
+    void reloadParsedStory();
+  }, [reloadParsedStory, fw]);
 
   useEffect(() => {
     preloadListData(updateFw, gameId);
   }, [updateFw, gameId]);
+
+  const lookupKeysCallback = useCallback(
+    (chapterIndex: number, sceneId: string) => lookupKeysForSceneEntry(fw, chapterIndex, sceneId),
+    [fw]
+  );
+
+  const routingStaleEntries = useMemo(() => {
+    if (!parsedStory) return [];
+    try {
+      return collectRoutingStaleScenes(fw, parsedStory, lookupKeysCallback);
+    } catch {
+      return [];
+    }
+  }, [fw, parsedStory, lookupKeysCallback]);
 
   const updateFwWithErrorReset = useCallback(
     (fn: (d: StoryFramework) => StoryFramework) => {
@@ -617,12 +648,84 @@ export function FrameworkEditor({
     try {
       await saveFrameworkToStorage(gameId, fw);
       await persistStoryTitleToTw(gameId, fw);
+
+      let nextFw = fw;
+      if (parsedStory && routingStaleEntries.length > 0) {
+        const syncResult = await syncRoutingLinksForGame(
+          gameId,
+          fw,
+          routingStaleEntries.map((s) => s.sceneId)
+        );
+        nextFw = syncResult.fw;
+        await saveFrameworkToStorage(gameId, nextFw);
+        updateFw(() => nextFw);
+        await reloadParsedStory();
+        addNotification(
+          'info',
+          `保存成功；已同步 ${syncResult.syncedCount} 个场景的路由链接`
+        );
+      } else {
+        addNotification('info', '保存成功');
+      }
       setJsonError(null);
-      addNotification('info', '保存成功');
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
     }
-  }, [fw, gameId, addNotification]);
+  }, [fw, gameId, addNotification, parsedStory, routingStaleEntries, updateFw, reloadParsedStory]);
+
+  const handleSyncAllRoutingLinks = useCallback(async () => {
+    if (routingStaleEntries.length === 0) {
+      addNotification('info', '路由链接已与框架一致');
+      return;
+    }
+    setSyncingRouting(true);
+    setJsonError(null);
+    try {
+      const syncResult = await syncRoutingLinksForGame(
+        gameId,
+        fw,
+        routingStaleEntries.map((s) => s.sceneId)
+      );
+      await saveFrameworkToStorage(gameId, syncResult.fw);
+      updateFw(() => syncResult.fw);
+      await reloadParsedStory();
+      addNotification(
+        'info',
+        `已同步 ${syncResult.syncedCount} 个场景的路由链接` +
+          (syncResult.skippedCount > 0 ? `（${syncResult.skippedCount} 个跳过）` : '')
+      );
+    } catch (e) {
+      setJsonError((e as Error).message || '同步路由链接失败');
+    } finally {
+      setSyncingRouting(false);
+    }
+  }, [fw, gameId, routingStaleEntries, updateFw, addNotification, reloadParsedStory]);
+
+  const handleSyncSceneRouting = useCallback(
+    async (chi: number, si: number) => {
+      const ch = fw.chapters[chi];
+      const entry = ch?.sceneEntries?.[si];
+      if (!entry) return;
+      const sk = `${chi}-${si}`;
+      setSyncingSceneRoutingKey(sk);
+      setJsonError(null);
+      try {
+        const syncResult = await syncRoutingLinksForGame(gameId, fw, [entry.sceneId]);
+        await saveFrameworkToStorage(gameId, syncResult.fw);
+        updateFw(() => syncResult.fw);
+        await reloadParsedStory();
+        addNotification(
+          'info',
+          `已同步场景路由链接：${(fw.scenes ?? []).find((s) => s.id === entry.sceneId)?.name ?? entry.sceneId}`
+        );
+      } catch (e) {
+        setJsonError((e as Error).message || '同步路由链接失败');
+      } finally {
+        setSyncingSceneRoutingKey(null);
+      }
+    },
+    [fw, gameId, updateFw, addNotification, reloadParsedStory]
+  );
 
   const handleImportClick = useCallback(() => {
     importFileInputRef.current?.click();
@@ -727,6 +830,26 @@ export function FrameworkEditor({
           } else {
             setJsonError(null);
             addNotification('info', `导入成功；已编译 ${changedTargets.length} 个变更场景`);
+          }
+          try {
+            const routingStale = collectRoutingStaleScenes(
+              nextFw,
+              story,
+              (chi, sid) => lookupKeysForSceneEntry(nextFw, chi, sid)
+            );
+            if (routingStale.length > 0) {
+              const routeSync = syncPassageLinksInStory(story, nextFw, {
+                sceneIds: routingStale.map((s) => s.sceneId),
+                lookupKeysForScene: (chi, sid) => lookupKeysForSceneEntry(nextFw, chi, sid),
+              });
+              nextFw = patchRoutingFingerprints(nextFw, routeSync.synced);
+              await saveStoryTw(targetGameId, story);
+              await saveFrameworkToStorage(targetGameId, nextFw);
+              updateFw(() => nextFw);
+              addNotification('info', `已同步 ${routeSync.synced.length} 个场景的路由链接`);
+            }
+          } catch (routeErr) {
+            addNotification('error', `路由链接同步失败：${(routeErr as Error).message}`);
           }
         }
       } else {
@@ -964,6 +1087,15 @@ export function FrameworkEditor({
             新建
           </button>
           <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={() => checkAuthForSave(handleSave)}/>
+          <button
+            type="button"
+            style={styles.btn}
+            disabled={syncingRouting || routingStaleEntries.length === 0}
+            onClick={() => checkAuthForSave(handleSyncAllRoutingLinks)}
+            title="仅更新 story.tw 中的 passage 链接，不改正文、不调用 AI"
+          >
+            {syncingRouting ? '同步路由中…' : `同步路由链接${routingStaleEntries.length > 0 ? ` (${routingStaleEntries.length})` : ''}`}
+          </button>
           <button type="button" style={styles.btn} onClick={handleImportClick}>
             导入
           </button>
@@ -1044,6 +1176,30 @@ export function FrameworkEditor({
           {jsonError && <div style={styles.errorItem}>{jsonError}</div>}
         </div>
       )}
+      {routingStaleEntries.length > 0 && (
+        <div style={{...styles.errors, backgroundColor: 'rgba(255,152,0,0.12)', color: '#ffb74d'}}>
+          <div style={{fontWeight: 600, marginBottom: 6}}>
+            检测到 {routingStaleEntries.length} 个场景路由过期（story.tw 链接与框架不一致）
+          </div>
+          {routingStaleEntries.slice(0, 12).map((it, idx) => (
+            <div key={`route-${it.sceneId}-${idx}`} style={styles.errorItem}>
+              {it.chapterTitle} / {it.sceneName}（{it.sceneId}）
+            </div>
+          ))}
+          {routingStaleEntries.length > 12 && (
+            <div style={styles.errorItem}>... 还有 {routingStaleEntries.length - 12} 个</div>
+          )}
+          <button
+            type="button"
+            style={{...styles.btnSmall, marginTop: 8}}
+            disabled={syncingRouting}
+            onClick={() => checkAuthForSave(handleSyncAllRoutingLinks)}
+          >
+            {syncingRouting ? '同步中…' : '一键同步全部路由链接'}
+          </button>
+        </div>
+      )}
+
       {staleSceneEntries.length > 0 && (
         <div style={{...styles.errors, backgroundColor: 'rgba(255,193,7,0.12)', color: '#ffd54f'}}>
           <div style={{fontWeight: 600, marginBottom: 6}}>
@@ -1178,6 +1334,13 @@ export function FrameworkEditor({
             onToggleEntry={(si) => toggleScene(chi, si)}
             updateFw={updateFwWithErrorReset}
             onAssembleScene={(si) => handleAssembleScene(chi, si)}
+            onSyncSceneRouting={(si) => handleSyncSceneRouting(chi, si)}
+            routingStaleBySceneIndex={new Map(
+              routingStaleEntries
+                .filter((s) => s.chapterIndex === chi)
+                .map((s) => [s.sceneIndex, s])
+            )}
+            syncingSceneRoutingKey={syncingSceneRoutingKey}
             generatingEntry={generatingSceneKey}
             sceneTextDrafts={editingSceneText}
             loadingSceneTextKey={loadingSceneTextKey}
@@ -1210,6 +1373,9 @@ function ChapterBlock({
   onToggleEntry,
   updateFw,
   onAssembleScene,
+  onSyncSceneRouting,
+  routingStaleBySceneIndex,
+  syncingSceneRoutingKey,
   generatingEntry,
   sceneTextDrafts,
   loadingSceneTextKey,
@@ -1234,6 +1400,9 @@ function ChapterBlock({
   onToggleEntry: (si: number) => void;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
   onAssembleScene: (si: number) => void;
+  onSyncSceneRouting: (si: number) => void;
+  routingStaleBySceneIndex: Map<number, RoutingStaleEntry>;
+  syncingSceneRoutingKey: string | null;
   generatingEntry: string | null;
   sceneTextDrafts: Record<string, string>;
   loadingSceneTextKey: string | null;
@@ -1433,6 +1602,8 @@ function ChapterBlock({
             const entryKey = `${chi}-${si}`;
             const isEntryExpanded = expandedEntry.has(entryKey);
             const isGenerating = generatingEntry === entryKey;
+            const isSyncingRouting = syncingSceneRoutingKey === entryKey;
+            const routingStale = routingStaleBySceneIndex.get(si);
             const isLoadingText = loadingSceneTextKey === entryKey;
             const isSavingText = savingSceneTextKey === entryKey;
             const textDraft = sceneTextDrafts[entryKey] ?? '';
@@ -1464,12 +1635,30 @@ function ChapterBlock({
                     </span>
                     <span style={styles.sceneTitle}>
                       {isEntryExpanded ? '▼' : '▶'} {scene?.name ?? entry.sceneId}
+                      {routingStale ? (
+                        <span style={{marginLeft: 8, fontSize: 11, color: '#ffb74d'}} title="路由链接过期">
+                          路由过期
+                        </span>
+                      ) : null}
                     </span>
                   </div>
                   <div
                     onClick={(ev) => ev.stopPropagation()}
                     style={styles.sceneHeadActions}
                   >
+                    <button
+                      type="button"
+                      style={{
+                        ...styles.btnSmall,
+                        ...(isSyncingRouting ? {opacity: 0.6} : {}),
+                        ...(routingStale ? {borderColor: '#ffb74d', color: '#ffb74d'} : {}),
+                      }}
+                      onClick={() => onSyncSceneRouting(si)}
+                      disabled={isSyncingRouting || !routingStale}
+                      title="仅更新 story.tw 中的 passage 链接，不改正文"
+                    >
+                      {isSyncingRouting ? '同步中...' : '同步链接'}
+                    </button>
                     <button
                       type="button"
                       style={{

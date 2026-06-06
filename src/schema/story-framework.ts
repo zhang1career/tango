@@ -30,6 +30,8 @@ export interface SceneEntry {
   ruleIds?: string[];
   /** story.tw 已编译对应的源版本指纹；与当前指纹不一致则表示正文过期 */
   compiledFingerprint?: string;
+  /** story.tw 路由链接指纹；与当前不一致则表示链接过期（可「同步链接」修复，无需重跑 AI 汇编） */
+  routingFingerprint?: string;
 }
 
 /** 章节：地图节点级叙事单元（title 仅治理用，宜与 maps.nodes[].name 一致） */

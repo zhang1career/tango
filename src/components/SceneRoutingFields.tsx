@@ -3,6 +3,7 @@
  */
 
 import React from 'react';
+import type {PassageLink} from '@/types';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene, SceneBranchOption} from '../schema/game-scene';
 import {editorStyles as styles} from '../styles/editorStyles';
@@ -10,6 +11,7 @@ import {
   buildSceneChapterContextIndex,
   getSceneRoutingView,
 } from '../utils/scene-routing';
+import {stripPassageLinkPrefix} from '../utils/scene-routing-sync';
 import {MultiSelectField} from './ui/MultiSelectField';
 
 const hintStyle: React.CSSProperties = {
@@ -17,6 +19,17 @@ const hintStyle: React.CSSProperties = {
   color: '#888',
   margin: '0 0 10px',
   lineHeight: 1.5,
+};
+
+const warnStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#ffb74d',
+  margin: '8px 0 0',
+  lineHeight: 1.5,
+  padding: '8px 10px',
+  backgroundColor: 'rgba(255,193,7,0.1)',
+  borderRadius: 6,
+  border: '1px solid rgba(255,193,7,0.35)',
 };
 
 const cardStyle: React.CSSProperties = {
@@ -37,7 +50,30 @@ function newBranchOptionId(): string {
   return `br_${Date.now().toString(36).slice(-6)}`;
 }
 
-function SceneRoutingSummary({fw, scene}: {fw: StoryFramework; scene: GameScene}) {
+function formatLinkSummary(links: PassageLink[]): string {
+  if (links.length === 0) return '（无链接）';
+  return links
+    .map((l) => `「${stripPassageLinkPrefix(l.displayText)}」→ ${l.passageName}`)
+    .join('；');
+}
+
+function SceneRoutingSummary({
+  fw,
+  scene,
+  routingStale,
+  expectedLinks,
+  actualLinks,
+  onSyncRouting,
+  syncingRouting,
+}: {
+  fw: StoryFramework;
+  scene: GameScene;
+  routingStale?: boolean;
+  expectedLinks?: PassageLink[];
+  actualLinks?: PassageLink[];
+  onSyncRouting?: () => void;
+  syncingRouting?: boolean;
+}) {
   const routing = getSceneRoutingView(fw, scene);
   if (!routing.inChapter) {
     return (
@@ -73,18 +109,48 @@ function SceneRoutingSummary({fw, scene}: {fw: StoryFramework; scene: GameScene}
           </div>
           {routing.hasNextMainline && routing.nextMainline ? (
             <div style={readOnlyLine}>
-              下一主线：<strong>{routing.nextMainline.name}</strong>（{routing.nextMainline.sceneId}）
+              章内下一主线：<strong>{routing.nextMainline.name}</strong>（{routing.nextMainline.sceneId}）
               {scene.mainlineLinkDisplayText?.trim()
                 ? ` · 出口文案「${scene.mainlineLinkDisplayText.trim()}」`
                 : ' · 出口文案默认「继续」'}
             </div>
+          ) : routing.crossChapterExit ? (
+            <div style={readOnlyLine}>
+              跨章出口：<strong>{routing.crossChapterExit.displayText}</strong> →{' '}
+              {routing.crossChapterExit.targetSceneName}（{routing.crossChapterExit.targetSceneId}）
+              <span style={{color: '#9ca3af'}}>
+                {' '}
+                · 地图边 {routing.crossChapterExit.mapEdgeFrom}→{routing.crossChapterExit.mapEdgeTo}
+              </span>
+            </div>
           ) : (
-            <div style={readOnlyLine}>下一主线：无（本章末主线或跨章由地图边生成）</div>
+            <div style={readOnlyLine}>下一主线：无（终章末或无跨章配置）</div>
           )}
         </>
       )}
+      {routingStale && expectedLinks ? (
+        <div style={warnStyle}>
+          <div style={{fontWeight: 600, marginBottom: 4}}>story.tw 路由链接与框架不一致</div>
+          <div>期望：{formatLinkSummary(expectedLinks)}</div>
+          {actualLinks && actualLinks.length > 0 ? (
+            <div style={{marginTop: 4}}>当前：{formatLinkSummary(actualLinks)}</div>
+          ) : (
+            <div style={{marginTop: 4}}>当前：story.tw 中尚未写入或 passage 不存在</div>
+          )}
+          {onSyncRouting ? (
+            <button
+              type="button"
+              style={{...styles.btnSmall, marginTop: 8}}
+              disabled={syncingRouting}
+              onClick={onSyncRouting}
+            >
+              {syncingRouting ? '同步中…' : '仅同步链接（不改正文）'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <p style={{...hintStyle, marginBottom: 0, marginTop: 8}}>
-        章内主线顺序 =「剧情」页本章场景列表顺序，排除被 branchSceneIds 引用的支线场景。调整顺序请拖拽场景行左侧 ⋮⋮ 手柄。
+        章内主线顺序 =「剧情」页本章场景列表顺序，排除被 branchSceneIds 引用的支线场景。跨章出口由章节边界与地图边推导；调整后在剧情页「同步路由链接」或保存剧情框架时自动修复。
       </p>
     </div>
   );
@@ -244,11 +310,21 @@ export function SceneRoutingFields({
   scene,
   editable,
   onUpdate,
+  routingStale,
+  expectedLinks,
+  actualLinks,
+  onSyncRouting,
+  syncingRouting,
 }: {
   fw?: StoryFramework;
   scene: GameScene;
   editable: boolean;
   onUpdate?: (fn: (s: GameScene) => GameScene) => void;
+  routingStale?: boolean;
+  expectedLinks?: PassageLink[];
+  actualLinks?: PassageLink[];
+  onSyncRouting?: () => void | Promise<void>;
+  syncingRouting?: boolean;
 }) {
   if (!fw) {
     return (
@@ -276,7 +352,15 @@ export function SceneRoutingFields({
 
   return (
     <div style={{marginTop: 8, marginBottom: 16}}>
-      <SceneRoutingSummary fw={fw} scene={scene} />
+      <SceneRoutingSummary
+        fw={fw}
+        scene={scene}
+        routingStale={routingStale}
+        expectedLinks={expectedLinks}
+        actualLinks={actualLinks}
+        onSyncRouting={onSyncRouting ? () => void onSyncRouting() : undefined}
+        syncingRouting={syncingRouting}
+      />
 
       {!routing.isBranchScene && (
         <div>
@@ -305,7 +389,7 @@ export function SceneRoutingFields({
           </div>
           <p style={hintStyle}>
             仅主线根场景填写。支线场景须在剧情页加入本章，且 scene.ruleIds 含 rule_0001（onlyOnce）；根场景不可含
-            rule_0001。保存后请在剧情页「汇编内容」更新 story.tw。
+            rule_0001。保存场景或剧情框架后，请同步路由链接（无需重跑 AI 汇编）。
           </p>
           {(scene.branchOptions ?? []).length === 0 ? (
             <div style={styles.readOnlyValue}>（无支线）</div>

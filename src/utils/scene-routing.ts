@@ -4,6 +4,7 @@
 
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene, SceneBranchOption} from '../schema/game-scene';
+import {computeCrossChapterExit, type CrossChapterExit} from './scene-passage-links';
 
 export interface BranchOwnerInfo {
   rootSceneId: string;
@@ -30,13 +31,17 @@ export interface BranchOptionView {
 export interface SceneRoutingView {
   inChapter: boolean;
   chapterTitle?: string;
+  chapterIndex?: number;
   isBranchScene: boolean;
   branchOwner?: BranchOwnerInfo;
   mainlinePosition?: {index: number; total: number};
   nextMainline?: {sceneId: string; name: string};
   hasNextMainline: boolean;
+  crossChapterExit?: CrossChapterExit;
   branchOptionViews: BranchOptionView[];
 }
+
+export type {CrossChapterExit};
 
 function buildBranchOwnersForChapter(
   entries: Array<{sceneId: string}>,
@@ -127,9 +132,19 @@ export function getSceneRoutingView(
       };
     });
 
+  let crossChapterExit: CrossChapterExit | undefined;
+  if (!isBranchScene && !hasNextMainline) {
+    try {
+      crossChapterExit = computeCrossChapterExit(fw, ctx.chapterIndex, scene.id);
+    } catch {
+      crossChapterExit = undefined;
+    }
+  }
+
   return {
     inChapter: true,
     chapterTitle: ctx.chapterTitle,
+    chapterIndex: ctx.chapterIndex,
     isBranchScene,
     branchOwner,
     mainlinePosition:
@@ -138,6 +153,7 @@ export function getSceneRoutingView(
         : undefined,
     nextMainline: nextScene ? {sceneId: nextScene.id, name: nextScene.name} : undefined,
     hasNextMainline,
+    crossChapterExit,
     branchOptionViews,
   };
 }
