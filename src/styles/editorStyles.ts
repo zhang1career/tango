@@ -2,6 +2,7 @@
  * 编辑页通用样式（规则、场景等）
  */
 import type React from 'react';
+import {listBtnIcon} from './listStyles';
 
 /** 详情/编辑弹窗最大宽度（与编辑页内容区一致） */
 export const EDIT_MODAL_MAX_WIDTH = 720;
@@ -53,13 +54,6 @@ export const editorStyles: Record<string, React.CSSProperties> = {
     backgroundColor: '#252540',
   },
   row: {marginBottom: 12},
-  btnIcon: {
-    padding: '2px 8px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 16
-  },
+  btnIcon: listBtnIcon,
   readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
 };

@@ -20,6 +20,8 @@ import {assignBehaviorIds} from '../utils/behavior-ids';
 import {MultiSelectField} from './ui/MultiSelectField';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -263,13 +265,14 @@ function DialogueLibrarySection({
   };
   return (
     <div style={styles.row}>
+      <ListSectionHead title={<span style={{fontSize: 12, color: '#888'}}>行为库</span>} addTitle="添加行为" onAdd={add} />
       {lib.map((b, i) => (
         <div key={b.id} style={styles.dialogueItem}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center'}}>
             <span style={{fontSize: 12, color: '#888'}}>行为 #{i + 1}</span>
-            <button type="button" style={styles.btnSmall} onClick={() => remove(i)}>
-              删除
-            </button>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => remove(i)} />
+            </ListOpsCell>
           </div>
           <div style={styles.row}>
             <label style={styles.label}>请求</label>
@@ -354,9 +357,6 @@ function DialogueLibrarySection({
           </div>
         </div>
       ))}
-      <button type="button" style={styles.btn} onClick={add}>
-        + 添加行为
-      </button>
     </div>
   );
 }
@@ -822,44 +822,20 @@ export function CharacterEditor({fw, updateFw}: {
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>人物</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加人物
-        </button>
+        <ListAddButton title="添加人物" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {characters.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无人物，点击「添加人物」创建。</p>
-        )}
-
-        {characters.map((char, ci) => (
-          <div key={`char-${ci}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ci)}
-              >
-                {char.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {char.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ci)} title="编辑">
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={() => removeCharacterWithAuth(ci)}
-                  title="删除"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={characters.length}
+          emptyHint="暂无人物，点击 + 创建。"
+          getKey={(ci) => `char-${ci}`}
+          getPrimary={(ci) => characters[ci]!.name}
+          getMeta={(ci) => characters[ci]!.id}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeCharacterWithAuth}
+        />
       </section>
 
       {detailIndex !== null && characters[detailIndex] && (

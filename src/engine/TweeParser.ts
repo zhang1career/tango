@@ -219,7 +219,7 @@ function parseSugarcubeContent(rawContent: string): {
   text = text.replace(new RegExp(`<<if\\s+${SUGARCUBE_MACRO_CLOSE}([\\s\\S]*?)<<endif>>`, 'gi'), (_, cond, inner) => {
     // 仅匹配 SugarCube setter 链接形态：[[text|target][setter]]
     // 不允许跨行吞并后续普通链接（如 [[A|B]]\n[[C|D]]）
-    const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\[(.*?)]]/g;
+    const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)\]\[(.*?)]]/g;
     const plainLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]|\[\[([^\]|]+)->([^\]]+)]]|\[\[([^\]|]+)<-([^\]]+)]]/g;
     let found = false;
     inner.replace(setterLinkRe, (m: string, d: string, t: string, setter: string) => {
@@ -243,7 +243,7 @@ function parseSugarcubeContent(rawContent: string): {
 
   // 仅匹配 SugarCube setter 链接形态：[[text|target][setter]]
   // 不允许跨行吞并后续普通链接（如 [[A|B]]\n[[C|D]]）
-  const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\[(.*?)]]/g;
+  const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)\]\[(.*?)]]/g;
   text = text.replace(setterLinkRe, (_, display: string, target: string, setter: string) => {
     pushLink(display, target, undefined, parseSetterToActions(setter));
     return '';

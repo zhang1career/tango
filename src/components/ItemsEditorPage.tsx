@@ -11,6 +11,8 @@ import type {GameItem} from '../schema/game-item';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaCarouselField, MediaUrlField} from './ui/MediaFields';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton} from './ui/ListPrimitives';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -231,36 +233,20 @@ export function ItemsEditorPage({fw, updateFw}: {
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>物品</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加物品
-        </button>
+        <ListAddButton title="添加物品" onClick={openAddModal} />
       </header>
 
       <section>
-        {items.length === 0 && <p style={{color: '#888'}}>暂无物品，点击「添加物品」创建。</p>}
-        {items.map((item, i) => (
-          <div key={`item-${i}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(i)}
-              >
-                {item.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  · {item.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
-                  ✎
-                </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeItemWithAuth(i)} title="删除">
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={items.length}
+          emptyHint="暂无物品，点击 + 创建。"
+          getKey={(i) => `item-${i}`}
+          getPrimary={(i) => items[i]!.name}
+          getMeta={(i) => `· ${items[i]!.id}`}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeItemWithAuth}
+        />
       </section>
 
       {detailIndex !== null && items[detailIndex] && (

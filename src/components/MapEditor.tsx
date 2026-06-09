@@ -28,6 +28,8 @@ import '@xyflow/react/dist/style.css';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameMap, MapEdge, MapNode} from '../schema/game-map';
 import {formatJsonCompact} from '../utils/json-format';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListSectionHead} from './ui/ListPrimitives';
 import {DetailEditModal} from './ui/DetailEditModal';
 
 const GRID_GAP = 120;
@@ -704,43 +706,17 @@ export function MapEditor({
         <h1 style={styles.title}>地图</h1>
       </header>
       <section style={styles.section}>
-        <div style={styles.sectionHead}>
-          <label style={styles.label}>地图</label>
-          <button type="button" style={styles.btnSmall} onClick={openAddModal}>
-            + 添加地图
-          </button>
-        </div>
-        {maps.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无地图，点击「添加地图」创建。</p>
-        )}
-        {maps.map((map, mi) => (
-          <div key={map.id} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailMapIndex(mi)}
-              >
-                {map.name || map.id}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  · {map.nodes.length} 个节点 · {map.edges.length} 条连接
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setActiveMapIndex(mi)} title="编辑">
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={() => removeMapWithAuth(mi)}
-                  title="删除地图"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <ListSectionHead title={<label style={styles.label}>地图</label>} addTitle="添加地图" onAdd={openAddModal} />
+        <EntityFlatList
+          count={maps.length}
+          emptyHint="暂无地图，点击 + 创建。"
+          getKey={(mi) => maps[mi]!.id}
+          getPrimary={(mi) => maps[mi]!.name || maps[mi]!.id}
+          getMeta={(mi) => `· ${maps[mi]!.nodes.length} 个节点 · ${maps[mi]!.edges.length} 条连接`}
+          onOpen={setDetailMapIndex}
+          onEdit={setActiveMapIndex}
+          onDelete={removeMapWithAuth}
+        />
         {detailMapIndex !== null && maps[detailMapIndex] && (
           <MapDetailModal
             map={maps[detailMapIndex]}

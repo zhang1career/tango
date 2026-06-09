@@ -8,6 +8,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import type {ChapterNarrativeEdge} from '../schema/story-framework';
+import {semanticColors} from '../theme/semantic-colors';
 import {
   findPathRatioNearPoint,
   getPathAngleAtRatio,
@@ -63,7 +64,8 @@ export function NarrativeBezierEdge({
   const labelPosition = data?.effectiveLabelPosition ?? data?.labelPosition ?? DEFAULT_NARRATIVE_LABEL_POSITION;
   const {x: labelX, y: labelY} = getPathPointAtRatio(edgePath, labelPosition);
   const labelText = data?.displayText ?? '继续';
-  const strokeColor = typeof style?.stroke === 'string' ? style.stroke : '#a78bfa';
+  const strokeColor =
+    typeof style?.stroke === 'string' ? style.stroke : semanticColors.mainline.stroke;
   const arrowRatio = arrowRatioForTarget(targetPosition);
   const arrowTip = getPathPointAtRatio(edgePath, arrowRatio);
   const arrowAngle = getPathAngleAtRatio(edgePath, arrowRatio);
@@ -123,7 +125,7 @@ export function NarrativeBezierEdge({
             maxWidth: 120,
             textAlign: 'center',
             cursor: isDragging ? 'grabbing' : 'grab',
-            border: selected ? '1px solid #a78bfa' : '1px solid transparent',
+            border: selected ? `1px solid ${strokeColor}` : '1px solid transparent',
             userSelect: 'none',
             whiteSpace: 'nowrap',
             overflow: 'hidden',

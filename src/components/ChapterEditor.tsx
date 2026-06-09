@@ -37,21 +37,60 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {compileChapterScene} from '../services/chapter-scene-compile';
 import {collectStaleCompiledScenes} from '../utils/chapter-compile-helpers';
 import {getChapterSceneMeta} from '../utils/chapter-scene';
+import {semanticColors} from '../theme/semantic-colors';
+import {listBtnIcon, listGrids, listStyles} from '../styles/listStyles';
+import {
+  ListAddButton,
+  ListDeleteButton,
+  ListOpsCell,
+  ListSectionHead,
+  ListTableHeader,
+  ListTableRow,
+} from './ui/ListPrimitives';
 
 const COMPILE_STALE_HINT = '正文待汇编：场景 passageBlocks 已变更，尚未写入 story.tw';
 
-function CompileHammerIcon({style}: {style?: React.CSSProperties}) {
-  return (
+function CompileHammerIcon({
+  style,
+  size = 18,
+  stale = false,
+}: {
+  style?: React.CSSProperties;
+  size?: number;
+  stale?: boolean;
+}) {
+  const icon = (
     <svg
-      width="14"
-      height="14"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
-      fill="currentColor"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       style={{display: 'block', flexShrink: 0, ...style}}
       aria-hidden
     >
-      <path d="M15.5 2.5 21.5 8.5 20 10 14 4 15.5 2.5ZM4 20l1.2-4.8 13.6-9.2 3.6 3.6-8.4 8.4L4 20Z" />
+      <path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9" />
+      <path d="m18 15 4-4" />
+      <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756l-.455.453" />
     </svg>
+  );
+  if (!stale) return icon;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 4,
+        borderRadius: 4,
+        backgroundColor: semanticColors.warning.bg,
+      }}
+    >
+      {icon}
+    </span>
   );
 }
 
@@ -89,6 +128,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   cardBody: {padding: 14},
   row: {marginBottom: 12},
+  sectionTitle: {
+    display: 'block',
+    fontSize: 14,
+    fontWeight: 600,
+    color: '#d1d5db',
+    marginBottom: 8,
+  },
   label: {display: 'block', fontSize: 12, color: '#9ca3af', marginBottom: 4},
   input: {
     width: '100%',
@@ -99,26 +145,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e8e8e8',
     fontSize: 13,
   },
-  table: {width: '100%', borderCollapse: 'collapse', fontSize: 12},
-  th: {textAlign: 'left', padding: 6, borderBottom: '1px solid #444', color: '#9ca3af'},
-  td: {padding: 6, borderBottom: '1px solid #333', verticalAlign: 'top'},
   hint: {fontSize: 12, color: '#888', marginBottom: 12},
-  sectionHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
   compileIconFresh: {color: '#e8e8e8'},
-  compileIconStale: {color: '#ffd54f'},
-  btnIcon: {
-    padding: '2px 8px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 16,
-  },
+  compileIconStale: {color: semanticColors.warning.fg},
 };
 
 export function ChapterEditor({
@@ -314,7 +343,7 @@ export function ChapterEditor({
               '汇编中…'
             ) : staleScenes.length > 0 ? (
               <>
-                <CompileHammerIcon style={styles.compileIconStale} />
+                <CompileHammerIcon style={styles.compileIconStale} stale />
                 <span style={styles.compileIconFresh}>汇编(</span>
                 <span style={styles.compileIconStale}>待更新{staleScenes.length}</span>
                 <span style={styles.compileIconFresh}>)</span>
@@ -332,9 +361,8 @@ export function ChapterEditor({
           <button type="button" style={styles.btn} onClick={() => void handleSave()}>
             保存
           </button>
-          <button
-            type="button"
-            style={styles.btn}
+          <ListAddButton
+            title="添加章节"
             onClick={() =>
               updateFw((d) => ({
                 ...d,
@@ -350,9 +378,7 @@ export function ChapterEditor({
                 ],
               }))
             }
-          >
-            + 章节
-          </button>
+          />
         </div>
       </div>
 
@@ -393,7 +419,7 @@ export function ChapterEditor({
               }
             >
               <span>
-                {open ? '▼' : '▶'} {ch.title} <span style={{color: '#888'}}>({ch.id})</span>
+                {open ? '▼' : '▶'} {ch.title}
               </span>
               <button
                 type="button"
@@ -409,7 +435,7 @@ export function ChapterEditor({
             {open && (
               <div style={styles.cardBody}>
                 <div style={styles.row}>
-                  <label style={styles.label}>标题</label>
+                  <label style={styles.sectionTitle}>标题</label>
                   <input
                     style={styles.input}
                     value={ch.title}
@@ -417,7 +443,7 @@ export function ChapterEditor({
                   />
                 </div>
                 <div style={styles.row}>
-                  <label style={styles.label}>叙事入口 startSceneId</label>
+                  <label style={styles.sectionTitle}>叙事入口</label>
                   <select
                     style={styles.input}
                     value={ch.startSceneId ?? ''}
@@ -437,8 +463,20 @@ export function ChapterEditor({
                   </select>
                 </div>
 
+                <ChapterSceneList
+                  chi={chi}
+                  ch={ch}
+                  pool={pool}
+                  scenes={fw.scenes ?? []}
+                  sceneMap={sceneMap}
+                  staleByChapter={staleByChapter}
+                  compiling={compiling}
+                  updateChapter={updateChapter}
+                  onCompileScene={(sid) => checkAuthForSave(() => void handleCompileScene(chi, sid))}
+                />
+
                 <div style={{marginBottom: 24}}>
-                  <div style={styles.label}>叙事图</div>
+                  <div style={styles.sectionTitle}>叙事图</div>
                   <ChapterGraphCanvas
                     ch={ch}
                     pool={pool}
@@ -453,18 +491,6 @@ export function ChapterEditor({
                     }
                   />
                 </div>
-
-                <ChapterSceneList
-                  chi={chi}
-                  ch={ch}
-                  pool={pool}
-                  scenes={fw.scenes ?? []}
-                  sceneMap={sceneMap}
-                  staleByChapter={staleByChapter}
-                  compiling={compiling}
-                  updateChapter={updateChapter}
-                  onCompileScene={(sid) => checkAuthForSave(() => void handleCompileScene(chi, sid))}
-                />
 
                 <TransitionsEditor
                   chi={chi}
@@ -524,21 +550,15 @@ function ChapterSceneList({
   };
 
   return (
-    <div>
-      <div style={styles.sectionHead}>
-        <strong>场景</strong>
-        <button
-          type="button"
-          style={styles.btn}
-          onClick={openPicker}
-          disabled={available.length === 0}
-          title={available.length === 0 ? '所有场景已引入本章' : undefined}
-        >
-          引入
-        </button>
-      </div>
+    <div style={{marginBottom: 24}}>
+      <ListSectionHead
+        title={<span style={{...styles.sectionTitle, marginBottom: 0}}>场景</span>}
+        addTitle={available.length === 0 ? '所有场景已引入本章' : '引入场景'}
+        onAdd={openPicker}
+        addDisabled={available.length === 0}
+      />
       {pool.length === 0 && (
-        <p style={{color: '#888', fontSize: 12, margin: '0 0 8px'}}>暂无场景，点击「引入」将已有场景关联到本章。</p>
+        <p style={{color: '#888', fontSize: 12, margin: '0 0 8px'}}>暂无场景，点击 + 将已有场景关联到本章。</p>
       )}
       <DetailEditModal
         title="引入场景"
@@ -557,94 +577,87 @@ function ChapterSceneList({
         </select>
       </DetailEditModal>
       {pool.length > 0 && (
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>名称</th>
-              <th style={styles.th}>是否开放世界</th>
-              <th style={styles.th}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pool.map((sid) => {
-              const isStale = staleByChapter.get(ch.id)?.has(sid);
-              const hasCompiled = !!getChapterSceneMeta(ch, sid)?.compiledFingerprint;
-              return (
-                <tr key={sid}>
-                  <td style={styles.td}>{sceneMap.get(sid)?.name ?? sid}</td>
-                  <td style={styles.td}>
-                    <input
-                      type="checkbox"
-                      checked={!isNarrativeGraph(ch, sid)}
-                      onChange={(e) =>
-                        updateChapter(chi, (c) => {
-                          const next = {...(c.narrativeGraph ?? {})};
-                          if (e.target.checked) delete next[sid];
-                          else next[sid] = true;
-                          return {
-                            ...c,
-                            narrativeGraph: Object.keys(next).length ? next : undefined,
-                          };
-                        })
-                      }
+        <div>
+          <ListTableHeader grid={listGrids.scenePool}>
+            <span>名称</span>
+            <span>是否开放世界</span>
+            <span style={listStyles.cellOps}>操作</span>
+          </ListTableHeader>
+          {pool.map((sid) => {
+            const isStale = staleByChapter.get(ch.id)?.has(sid);
+            const hasCompiled = !!getChapterSceneMeta(ch, sid)?.compiledFingerprint;
+            return (
+              <ListTableRow key={sid} grid={listGrids.scenePool}>
+                <span>{sceneMap.get(sid)?.name ?? sid}</span>
+                <span>
+                  <input
+                    type="checkbox"
+                    checked={!isNarrativeGraph(ch, sid)}
+                    onChange={(e) =>
+                      updateChapter(chi, (c) => {
+                        const next = {...(c.narrativeGraph ?? {})};
+                        if (e.target.checked) delete next[sid];
+                        else next[sid] = true;
+                        return {
+                          ...c,
+                          narrativeGraph: Object.keys(next).length ? next : undefined,
+                        };
+                      })
+                    }
+                  />
+                </span>
+                <ListOpsCell>
+                  <button
+                    type="button"
+                    style={{
+                      ...listBtnIcon,
+                      display: 'flex',
+                      alignItems: 'center',
+                      ...(isStale ? {padding: '4px 8px'} : {}),
+                    }}
+                    disabled={compiling}
+                    onClick={() => onCompileScene(sid)}
+                    title={
+                      isStale
+                        ? COMPILE_STALE_HINT
+                        : hasCompiled
+                          ? '汇编：将 passageBlocks 写入 story.tw'
+                          : '汇编：首次将 passageBlocks 写入 story.tw'
+                    }
+                  >
+                    <CompileHammerIcon
+                      stale={!!isStale}
+                      style={isStale ? styles.compileIconStale : styles.compileIconFresh}
                     />
-                  </td>
-                  <td style={styles.td}>
-                    <div style={{display: 'flex', gap: 4, alignItems: 'center'}}>
-                      <button
-                        type="button"
-                        style={{
-                          ...styles.btnIcon,
-                          display: 'flex',
-                          alignItems: 'center',
-                          ...(isStale ? styles.compileIconStale : styles.compileIconFresh),
-                        }}
-                        disabled={compiling}
-                        onClick={() => onCompileScene(sid)}
-                        title={
-                          isStale
-                            ? COMPILE_STALE_HINT
-                            : hasCompiled
-                              ? '汇编：将 passageBlocks 写入 story.tw'
-                              : '汇编：首次将 passageBlocks 写入 story.tw'
-                        }
-                      >
-                        <CompileHammerIcon />
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.btnIcon}
-                        title="移出"
-                        onClick={() =>
-                          updateChapter(chi, (c) => {
-                            const nextGraph = Object.fromEntries(
-                              Object.entries(c.narrativeGraph ?? {}).filter(([k]) => k !== sid)
-                            );
-                            const nextLayout = Object.fromEntries(
-                              Object.entries(c.graphLayout ?? {}).filter(([k]) => k !== sid)
-                            );
-                            return {
-                              ...c,
-                              availableSceneIds: getChapterAvailableSceneIds(c).filter((x) => x !== sid),
-                              narrativeEdges: (c.narrativeEdges ?? []).filter(
-                                (e) => e.fromSceneId !== sid && e.toSceneId !== sid
-                              ),
-                              transitions: (c.transitions ?? []).filter((t) => t.fromSceneId !== sid),
-                              graphLayout: Object.keys(nextLayout).length ? nextLayout : undefined,
-                              narrativeGraph: Object.keys(nextGraph).length ? nextGraph : undefined,
-                            };
-                          })
-                        }
-                      >
-                        ×
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </button>
+                  <ListDeleteButton
+                    title="移出"
+                    onClick={() =>
+                      updateChapter(chi, (c) => {
+                        const nextGraph = Object.fromEntries(
+                          Object.entries(c.narrativeGraph ?? {}).filter(([k]) => k !== sid)
+                        );
+                        const nextLayout = Object.fromEntries(
+                          Object.entries(c.graphLayout ?? {}).filter(([k]) => k !== sid)
+                        );
+                        return {
+                          ...c,
+                          availableSceneIds: getChapterAvailableSceneIds(c).filter((x) => x !== sid),
+                          narrativeEdges: (c.narrativeEdges ?? []).filter(
+                            (e) => e.fromSceneId !== sid && e.toSceneId !== sid
+                          ),
+                          transitions: (c.transitions ?? []).filter((t) => t.fromSceneId !== sid),
+                          graphLayout: Object.keys(nextLayout).length ? nextLayout : undefined,
+                          narrativeGraph: Object.keys(nextGraph).length ? nextGraph : undefined,
+                        };
+                      })
+                    }
+                  />
+                </ListOpsCell>
+              </ListTableRow>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -671,27 +684,21 @@ function TransitionsEditor({
 
   return (
     <div style={{marginTop: 20}}>
-      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
-        <strong>跨章过渡</strong>
-        <button
-          type="button"
-          style={styles.btn}
-          onClick={() =>
-            patch([
-              ...transitions,
-              {
-                fromSceneId: endScenes[0] ?? '',
-                toChapterId: chapters[chi + 1]?.id ?? '',
-                displayText: '下一章',
-              },
-            ])
-          }
-          disabled={endScenes.length === 0}
-          title={endScenes.length === 0 ? '当前无章末场景，请检查叙事图' : undefined}
-        >
-          + 过渡
-        </button>
-      </div>
+      <ListSectionHead
+        title={<span style={{...styles.sectionTitle, marginBottom: 0}}>跨章过渡</span>}
+        addTitle={endScenes.length === 0 ? '当前无章末场景，请检查叙事图' : '添加过渡'}
+        addDisabled={endScenes.length === 0}
+        onAdd={() =>
+          patch([
+            ...transitions,
+            {
+              fromSceneId: endScenes[0] ?? '',
+              toChapterId: chapters[chi + 1]?.id ?? '',
+              displayText: '下一章',
+            },
+          ])
+        }
+      />
       <p style={{fontSize: 12, color: '#888', margin: '0 0 8px'}}>
         起跳场景为程序根据叙事图推断的章末场景
         {endScenes.length > 0
@@ -699,73 +706,56 @@ function TransitionsEditor({
           : '（当前无）'}
         ；落地场景由目标章「叙事入口」决定。
       </p>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>起跳场景</th>
-            <th style={styles.th}>目标章</th>
-            <th style={styles.th}>文案</th>
-            <th style={styles.th}>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {transitions.map((tr, ti) => (
-              <tr key={`${tr.fromSceneId}-${tr.toChapterId}-${ti}`}>
-                <td style={styles.td}>
-                  <select
-                    style={styles.input}
-                    value={tr.fromSceneId}
-                    onChange={(e) =>
-                      patch(transitions.map((x, i) => (i === ti ? {...x, fromSceneId: e.target.value} : x)))
-                    }
-                  >
-                    {endScenes.map((id) => (
-                      <option key={id} value={id}>
-                        {sceneMap.get(id)?.name ?? id}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td style={styles.td}>
-                  <select
-                    style={styles.input}
-                    value={tr.toChapterId}
-                    onChange={(e) =>
-                      patch(transitions.map((x, i) => (i === ti ? {...x, toChapterId: e.target.value} : x)))
-                    }
-                  >
-                    {chapters
-                      .filter((c) => c.id !== ch.id)
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.title}
-                        </option>
-                      ))}
-                  </select>
-                </td>
-                <td style={styles.td}>
-                  <input
-                    style={styles.input}
-                    value={tr.displayText}
-                    onChange={(e) =>
-                      patch(transitions.map((x, i) => (i === ti ? {...x, displayText: e.target.value} : x)))
-                    }
-                  />
-                </td>
-                <td style={styles.td}>
-                  <button
-                    type="button"
-                    style={styles.btnIcon}
-                    title="删除"
-                    onClick={() => patch(transitions.filter((_, i) => i !== ti))}
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-          ))}
-        </tbody>
-      </table>
+      <div>
+        <ListTableHeader grid={listGrids.transition}>
+          <span>起跳场景</span>
+          <span>目标章</span>
+          <span>文案</span>
+          <span style={listStyles.cellOps}>操作</span>
+        </ListTableHeader>
+        {transitions.map((tr, ti) => (
+          <ListTableRow key={`${tr.fromSceneId}-${tr.toChapterId}-${ti}`} grid={listGrids.transition}>
+            <select
+              style={styles.input}
+              value={tr.fromSceneId}
+              onChange={(e) =>
+                patch(transitions.map((x, i) => (i === ti ? {...x, fromSceneId: e.target.value} : x)))
+              }
+            >
+              {endScenes.map((id) => (
+                <option key={id} value={id}>
+                  {sceneMap.get(id)?.name ?? id}
+                </option>
+              ))}
+            </select>
+            <select
+              style={styles.input}
+              value={tr.toChapterId}
+              onChange={(e) =>
+                patch(transitions.map((x, i) => (i === ti ? {...x, toChapterId: e.target.value} : x)))
+              }
+            >
+              {chapters
+                .filter((c) => c.id !== ch.id)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.title}
+                  </option>
+                ))}
+            </select>
+            <input
+              style={styles.input}
+              value={tr.displayText}
+              onChange={(e) =>
+                patch(transitions.map((x, i) => (i === ti ? {...x, displayText: e.target.value} : x)))
+              }
+            />
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => patch(transitions.filter((_, i) => i !== ti))} />
+            </ListOpsCell>
+          </ListTableRow>
+        ))}
+      </div>
     </div>
   );
 }

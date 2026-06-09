@@ -12,6 +12,8 @@ import type {AttributeType, CharacterAttributeDef, GameMetadata} from '../schema
 import {getAttrKey} from '../schema/metadata';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListSectionHead} from './ui/ListPrimitives';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -242,40 +244,24 @@ export function MetadataEditor({
       </header>
 
       <section>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-          <h2 style={{fontSize: 16, margin: 0}}>人物属性</h2>
-          <button type="button" style={styles.btn} onClick={openAddModal}>
-            + 添加人物属性
-          </button>
-        </div>
-        {attrs.length === 0 && (
-          <p style={{color: '#888'}}>暂无属性，点击「添加人物属性」创建。属性供编辑时间线、编辑人物等页面的属性操作使用。</p>
-        )}
-
-        {attrs.map((a, i) => (
-          <div key={`attr-${i}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(i)}
-              >
-                {a.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  · {a.type}{a.type === 'number' && a.valueRange ? ` (${a.valueRange})` : ''}
-                  {a.subId ? ` · ${getAttrKey(a)}` : ''}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(i)} title="编辑">
-                  ✎
-                </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeAttrWithAuth(i)} title="删除">
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <ListSectionHead
+          title={<h2 style={{fontSize: 16, margin: 0}}>人物属性</h2>}
+          addTitle="添加人物属性"
+          onAdd={openAddModal}
+        />
+        <EntityFlatList
+          count={attrs.length}
+          emptyHint="暂无属性，点击 + 创建。属性供编辑时间线、编辑人物等页面的属性操作使用。"
+          getKey={(i) => `attr-${i}`}
+          getPrimary={(i) => attrs[i]!.name}
+          getMeta={(i) => {
+            const a = attrs[i]!;
+            return `· ${a.type}${a.type === 'number' && a.valueRange ? ` (${a.valueRange})` : ''}${a.subId ? ` · ${getAttrKey(a)}` : ''}`;
+          }}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeAttrWithAuth}
+        />
       </section>
 
       {detailIndex !== null && attrs[detailIndex] && (

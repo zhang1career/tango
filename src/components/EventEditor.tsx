@@ -17,6 +17,8 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {normalizeStringList, StringListField} from './ui/StringListField';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
@@ -166,13 +168,14 @@ function EventBehaviorContentsEditor({
 
   return (
     <div style={styles.row}>
+      <ListSectionHead title={<span style={{fontSize: 12, color: '#888'}}>内容列表</span>} addTitle="添加内容" onAdd={add} />
       {contents.map((b, i) => (
         <div key={b.id} style={styles.contentItem}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center'}}>
             <span style={{fontSize: 12, color: '#888'}}>行为 #{i + 1}</span>
-            <button type="button" style={styles.btnSmall} onClick={() => remove(i)}>
-              删除
-            </button>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => remove(i)} />
+            </ListOpsCell>
           </div>
           <div style={styles.row}>
             <label style={styles.label}>请求</label>
@@ -248,9 +251,6 @@ function EventBehaviorContentsEditor({
           </div>
         </div>
       ))}
-      <button type="button" style={styles.btn} onClick={add}>
-        + 添加内容
-      </button>
     </div>
   );
 }
@@ -320,14 +320,18 @@ function BehaviorSequenceEditor({
 
   return (
     <div style={styles.section}>
-      <label style={styles.label}>行为序列</label>
+      <ListSectionHead
+        title={<label style={{...styles.label, marginBottom: 0}}>行为序列</label>}
+        addTitle="添加行为"
+        onAdd={addSeqItem}
+      />
       {seq.map((item, idx) => (
         <div key={idx} style={styles.seqItem}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center'}}>
             <span style={{fontSize: 13, color: '#a78bfa'}}>行为序列项 #{idx + 1}</span>
-            <button type="button" style={styles.btnSmall} onClick={() => removeSeqItem(idx)}>
-              删除
-            </button>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => removeSeqItem(idx)} />
+            </ListOpsCell>
           </div>
           <div style={styles.row}>
             <label style={styles.label}>主体</label>
@@ -370,9 +374,6 @@ function BehaviorSequenceEditor({
           </div>
         </div>
       ))}
-      <button type="button" style={styles.btn} onClick={addSeqItem}>
-        + 添加行为
-      </button>
     </div>
   );
 }
@@ -591,43 +592,20 @@ export function EventEditor({fw, updateFw}: {
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>事件</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加事件
-        </button>
+        <ListAddButton title="添加事件" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {events.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无事件，点击「添加事件」创建。</p>
-        )}
-        {events.map((evt, ei) => (
-          <div key={`evt-${ei}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ei)}
-              >
-                {evt.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {evt.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ei)} title="编辑">
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={() => removeEventWithAuth(ei)}
-                  title="删除"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={events.length}
+          emptyHint="暂无事件，点击 + 创建。"
+          getKey={(ei) => `evt-${ei}`}
+          getPrimary={(ei) => events[ei]!.name}
+          getMeta={(ei) => events[ei]!.id}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeEventWithAuth}
+        />
       </section>
 
       {detailIndex !== null && events[detailIndex] && (

@@ -3,7 +3,9 @@
  */
 
 import React from 'react';
+import {listGrids} from '../../styles/listStyles';
 import {editorStyles as styles} from '../../styles/editorStyles';
+import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead, ListTableRow} from './ListPrimitives';
 
 export function StringListField({
   label,
@@ -12,7 +14,7 @@ export function StringListField({
   onChange,
   editable,
   placeholder = '消息文案',
-  addButtonLabel = '+ 添加消息',
+  addButtonLabel = '添加消息',
 }: {
   label: string;
   hint?: string;
@@ -52,26 +54,23 @@ export function StringListField({
 
   return (
     <div style={styles.row}>
-      <label style={styles.label}>{label}</label>
+      <ListSectionHead title={<label style={{...styles.label, marginBottom: 0}}>{label}</label>} addTitle={addButtonLabel} onAdd={add} />
       {hint && <p style={{margin: '0 0 8px', fontSize: 12, color: '#888'}}>{hint}</p>}
       <div>
         {list.map((text, i) => (
-          <div key={i} style={{display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start'}}>
+          <ListTableRow key={i} grid={listGrids.fieldOps}>
             <textarea
               value={text}
               onChange={(e) => update(i, e.target.value)}
-              style={{...styles.input, flex: 1, minHeight: 48, resize: 'vertical'}}
+              style={{...styles.input, minHeight: 48, resize: 'vertical'}}
               placeholder={`${placeholder} ${i + 1}`}
               rows={2}
             />
-            <button type="button" style={styles.btnIcon} onClick={() => remove(i)} title="删除">
-              ×
-            </button>
-          </div>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => remove(i)} />
+            </ListOpsCell>
+          </ListTableRow>
         ))}
-        <button type="button" style={styles.btnSmall} onClick={add}>
-          {addButtonLabel}
-        </button>
       </div>
     </div>
   );

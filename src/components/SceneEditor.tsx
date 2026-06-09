@@ -29,6 +29,8 @@ import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton} from './ui/ListPrimitives';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
 import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-story-rules';
@@ -1291,39 +1293,20 @@ export function SceneEditor({
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>场景</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加场景
-        </button>
+        <ListAddButton title="添加场景" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {scenes.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无场景，点击「添加场景」创建。</p>
-        )}
-
-        {scenes.map((scene, ci) => (
-          <div key={`scene-${ci}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ci)}
-              >
-                {scene.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {scene.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ci)} title="编辑">
-                  ✎
-                </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeSceneWithAuth(ci)} title="删除">
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={scenes.length}
+          emptyHint="暂无场景，点击 + 创建。"
+          getKey={(ci) => `scene-${ci}`}
+          getPrimary={(ci) => scenes[ci]!.name}
+          getMeta={(ci) => scenes[ci]!.id}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeSceneWithAuth}
+        />
       </section>
 
       {detailIndex !== null && scenes[detailIndex] && (

@@ -3,7 +3,9 @@
  */
 
 import React from 'react';
+import {listGrids} from '../../styles/listStyles';
 import {editorStyles as styles} from '../../styles/editorStyles';
+import {ListDeleteButton, ListOpsCell, ListSectionHead, ListTableRow} from './ListPrimitives';
 
 function FieldRow({
   label,
@@ -94,20 +96,25 @@ export function MediaCarouselField({
 
   return (
     <div style={styles.row}>
-      <label style={styles.label}>{label}</label>
+      <ListSectionHead
+        title={<label style={{...styles.label, marginBottom: 0}}>{label}</label>}
+        addTitle="添加图片"
+        onAdd={add}
+      />
       <div>
         {list.map((url, i) => (
-          <div key={i} style={{display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center'}}>
+          <ListTableRow key={i} grid={listGrids.fieldOps}>
             <input
               value={url}
               onChange={(e) => update(i, e.target.value)}
-              style={{...styles.input, flex: 1}}
+              style={styles.input}
               placeholder={`图片 ${i + 1} URL`}
             />
-            <button type="button" style={styles.btnIcon} onClick={() => remove(i)} title="删除">×</button>
-          </div>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => remove(i)} />
+            </ListOpsCell>
+          </ListTableRow>
         ))}
-        <button type="button" style={styles.btn} onClick={add}>+ 添加图片</button>
       </div>
     </div>
   );

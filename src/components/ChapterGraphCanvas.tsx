@@ -32,6 +32,7 @@ import {
   NarrativeBezierEdge,
   NarrativeEdgeActionsContext,
 } from './NarrativeBezierEdge';
+import {narrativeEdgeStroke, sceneModePalette, semanticColors} from '../theme/semantic-colors';
 
 const GRID_GAP = 140;
 const NODE_WIDTH = 88;
@@ -69,10 +70,6 @@ type NarrativeFlowEdge = Edge & {pathOptions?: {curvature: number}};
 
 function layoutSymmetricNarrativeEdges(edges: Edge[], nodes: Node[]): Edge[] {
   return enrichNarrativeEdgeVisuals(edges, nodes);
-}
-
-function narrativeEdgeStroke(isBranch?: boolean): string {
-  return isBranch ? '#f59e0b' : '#a78bfa';
 }
 
 function narrativeEdgeStyle(stroke: string): React.CSSProperties {
@@ -138,14 +135,14 @@ function SceneNodeComponent({
   data: {label: string; narrativeGraph: boolean; sceneId: string};
   selected?: boolean;
 }) {
-  const modeColor = data.narrativeGraph ? '#a78bfa' : '#6b7280';
+  const mode = sceneModePalette(data.narrativeGraph);
   return (
     <div
       style={{
         padding: '5px 8px',
         minWidth: NODE_WIDTH,
-        backgroundColor: selected ? '#3d2d64' : '#252540',
-        border: `2px solid ${selected ? '#a78bfa' : modeColor}`,
+        backgroundColor: selected ? mode.selectedBg : mode.bg,
+        border: `2px solid ${selected ? mode.selectedBorder : mode.border}`,
         borderRadius: 6,
         color: '#e8e8e8',
         fontSize: 10,
@@ -158,7 +155,7 @@ function SceneNodeComponent({
       <Handle type="target" position={Position.Left} id="target-left" style={{background: '#888', width: 8, height: 8}} />
       <Handle type="target" position={Position.Right} id="target-right" style={{background: '#888', width: 8, height: 8}} />
       <div style={{fontWeight: 600, fontSize: 10}}>{data.label}</div>
-      <div style={{fontSize: 8, color: modeColor, marginTop: 2}}>
+      <div style={{fontSize: 8, color: mode.fg, marginTop: 2}}>
         {data.narrativeGraph ? '叙事' : '开放世界'}
       </div>
       <Handle type="source" position={Position.Top} id="source-top" style={{background: '#888', width: 8, height: 8}} />
@@ -350,7 +347,7 @@ function EdgePropsPanel({
 
   return (
     <div style={{background: '#1e1e32', borderRadius: 8, padding: 14, border: '1px solid #444', width: 280}}>
-      <div style={{fontSize: 13, color: '#a78bfa', marginBottom: 12}}>编辑叙事边</div>
+      <div style={{fontSize: 13, color: semanticColors.mainline.stroke, marginBottom: 12}}>编辑叙事边</div>
       <div style={{display: 'flex', gap: 8, marginBottom: 10}}>
         <div style={{flex: 1}}>
           <label style={{fontSize: 12, color: '#888'}}>从</label>
@@ -394,7 +391,15 @@ function EdgePropsPanel({
         <input value={condition} onChange={(e) => setCondition(e.target.value)} onBlur={commit} style={inputStyle} />
       </div>
       <div style={{marginBottom: 10}}>
-        <label style={{display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#888'}}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+            color: isBranch ? semanticColors.branch.stroke : '#888',
+          }}
+        >
           <input
             type="checkbox"
             checked={isBranch}
@@ -628,7 +633,7 @@ function ChapterGraphInner({
         snapToGrid
         snapGrid={[16, 16]}
         style={{width: '100%', height: '100%'}}
-        connectionLineStyle={{stroke: '#a78bfa'}}
+        connectionLineStyle={{stroke: semanticColors.mainline.stroke}}
         defaultEdgeOptions={{
           type: 'narrativeBezier',
           style: narrativeEdgeStyle(narrativeEdgeStroke()),
@@ -681,7 +686,14 @@ function ChapterGraphInner({
       {selNode && (
         <div style={panelOverlayStyle}>
           <div style={{background: '#1e1e32', borderRadius: 8, padding: 12, border: '1px solid #444', fontSize: 12}}>
-            <div style={{color: '#a78bfa', marginBottom: 8}}>{selNode.data?.label as string}</div>
+            <div
+              style={{
+                color: sceneModePalette(!!selNode.data?.narrativeGraph).fg,
+                marginBottom: 8,
+              }}
+            >
+              {selNode.data?.label as string}
+            </div>
             <button type="button" style={btnStyle} onClick={() => onOpenScene?.(selNode.id)}>
               打开场景编辑
             </button>

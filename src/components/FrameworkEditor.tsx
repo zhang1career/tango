@@ -31,6 +31,7 @@ import {useAuth} from '@/context/AuthContext';
 import {frameworkToStory, parseTwee, syncStoryTitleFromFramework} from '@/engine';
 
 import {EDIT_MODAL_MAX_WIDTH} from '../styles/editorStyles';
+import {semanticColors} from '../theme/semantic-colors';
 import {formatJsonCompact} from '../utils/json-format';
 import {
   applyScenePassageFullText,
@@ -757,7 +758,7 @@ export function FrameworkEditor({
       )}
 
       {staleSceneEntries.length > 0 && (
-        <div style={{...styles.errors, backgroundColor: 'rgba(255,193,7,0.12)', color: '#ffd54f'}}>
+        <div style={{...styles.errors, backgroundColor: semanticColors.warning.bgSubtle, color: semanticColors.warning.fg}}>
           <div style={{fontWeight: 600, marginBottom: 6}}>
             检测到 {staleSceneEntries.length} 个场景正文过期（story-fm 与 story.tw 版本不一致）
           </div>

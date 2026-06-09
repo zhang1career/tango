@@ -17,6 +17,16 @@ import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-sto
 import {RULE_EXECUTION_KIND_OPTIONS} from '../utils/rule-usage';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {editorStyles as styles} from '../styles/editorStyles';
+import {listGrids, listStyles} from '../styles/listStyles';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {
+  ListAddButton,
+  ListDeleteButton,
+  ListOpsCell,
+  ListSectionHead,
+  ListTableHeader,
+  ListTableRow,
+} from './ui/ListPrimitives';
 
 async function saveRulesToPreset(fw: StoryFramework, gameId: string): Promise<{ ok: boolean; error?: string }> {
   const payload = serializeStoryRulesBundle({
@@ -219,76 +229,57 @@ export function RuleEditor({
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>规则</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加规则
-        </button>
+        <ListAddButton title="添加规则" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {rules.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无规则，点击「添加规则」创建。</p>
-        )}
-
-        {rules.map((rule, ri) => (
-          <div key={`rule-${ri}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ri)}
-              >
-                {rule.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {rule.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ri)} title="编辑">
-                  ✎
-                </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeRuleWithAuth(ri)} title="删除">
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={rules.length}
+          emptyHint="暂无规则，点击 + 创建。"
+          getKey={(ri) => `rule-${ri}`}
+          getPrimary={(ri) => rules[ri]!.name}
+          getMeta={(ri) => rules[ri]!.id}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeRuleWithAuth}
+        />
       </section>
 
       <section style={{...styles.section, marginTop: 32}}>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-          <h2 style={{...styles.title, fontSize: 16, margin: 0}}>场景规则绑定（sceneBindings）</h2>
-          <button
-            type="button"
-            style={styles.btn}
-            onClick={() =>
-              checkAuthForSave(() => {
-                const ch = fw.chapters[0];
-                const pool = ch ? getChapterAvailableSceneIds(ch) : [];
-                const next: SceneRuleBinding[] = [
-                  ...bindings,
-                  {chapterId: ch?.id ?? '', sceneId: pool[0] ?? '', ruleIds: []},
-                ];
-                setBindings(() => next);
-                void saveBindings(next);
-              })
-            }
-          >
-            + 绑定
-          </button>
-        </div>
+        <ListSectionHead
+          title={<h2 style={{...styles.title, fontSize: 16, margin: 0}}>场景规则绑定（sceneBindings）</h2>}
+          addTitle="添加绑定"
+          onAdd={() =>
+            checkAuthForSave(() => {
+              const ch = fw.chapters[0];
+              const pool = ch ? getChapterAvailableSceneIds(ch) : [];
+              const next: SceneRuleBinding[] = [
+                ...bindings,
+                {chapterId: ch?.id ?? '', sceneId: pool[0] ?? '', ruleIds: []},
+              ];
+              setBindings(() => next);
+              void saveBindings(next);
+            })
+          }
+        />
         <p style={{fontSize: 12, color: '#888', marginBottom: 12}}>
           按章节×场景引用准入规则（写入 story-rules.json）。与场景自身的 ruleIds、conditions 按 and 合并。
         </p>
-        {bindings.length === 0 && (
+        {bindings.length === 0 ? (
           <p style={{color: '#888', fontSize: 14}}>暂无绑定。章节场景池中的准入规则应在此维护。</p>
-        )}
-        {bindings.map((b, bi) => {
-          const ch = fw.chapters.find((c) => c.id === b.chapterId);
-          const pool = ch ? getChapterAvailableSceneIds(ch) : [];
-          return (
-            <div key={`bind-${bi}`} style={styles.card}>
-              <div style={{...styles.cardHead, cursor: 'default'}}>
-                <div style={{display: 'flex', gap: 8, flex: 1, flexWrap: 'wrap', alignItems: 'center'}}>
+        ) : (
+          <div>
+            <ListTableHeader grid={listGrids.binding}>
+              <span>章节</span>
+              <span>场景</span>
+              <span>规则</span>
+              <span style={listStyles.cellOps}>操作</span>
+            </ListTableHeader>
+            {bindings.map((b, bi) => {
+              const ch = fw.chapters.find((c) => c.id === b.chapterId);
+              const pool = ch ? getChapterAvailableSceneIds(ch) : [];
+              return (
+                <ListTableRow key={`bind-${bi}`} grid={listGrids.binding}>
                   <select
                     value={b.chapterId}
                     onChange={(e) => {
@@ -298,7 +289,7 @@ export function RuleEditor({
                       setBindings(() => next);
                       void saveBindings(next);
                     }}
-                    style={{...styles.input, width: 160}}
+                    style={styles.input}
                   >
                     <option value="">选择章节</option>
                     {fw.chapters.map((c) => (
@@ -312,7 +303,7 @@ export function RuleEditor({
                       setBindings(() => next);
                       void saveBindings(next);
                     }}
-                    style={{...styles.input, width: 180}}
+                    style={styles.input}
                   >
                     <option value="">选择场景</option>
                     {pool.map((sid) => {
@@ -331,31 +322,28 @@ export function RuleEditor({
                       setBindings(() => next);
                       void saveBindings(next);
                     }}
-                    style={{...styles.input, minWidth: 200, minHeight: 56}}
+                    style={{...styles.input, minHeight: 56}}
                   >
                     {rules.map((r) => (
                       <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
                     ))}
                   </select>
-                </div>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  title="删除"
-                  onClick={() =>
-                    checkAuthForSave(() => {
-                      const next = bindings.filter((_, i) => i !== bi);
-                      setBindings(() => next);
-                      void saveBindings(next);
-                    })
-                  }
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          );
-        })}
+                  <ListOpsCell>
+                    <ListDeleteButton
+                      onClick={() =>
+                        checkAuthForSave(() => {
+                          const next = bindings.filter((_, i) => i !== bi);
+                          setBindings(() => next);
+                          void saveBindings(next);
+                        })
+                      }
+                    />
+                  </ListOpsCell>
+                </ListTableRow>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {detailIndex !== null && rules[detailIndex] && (
