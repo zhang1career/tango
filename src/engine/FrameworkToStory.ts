@@ -1,6 +1,5 @@
 /**
- * StoryFramework -> Story 转换，用于构建 .tw 文件
- * 链接由地图边与准入规则推导；章节起止衔接
+ * StoryFramework -> Story 转换
  */
 
 import type {Passage, Story} from '@/types';
@@ -10,11 +9,16 @@ import type {GameScene} from '../schema/game-scene';
 import {
   buildSceneRoutingPlan,
   computeAllScenePassageLinks,
+  getIncomingNarrativeEdges,
 } from '../utils/scene-passage-links';
 import {
   resolveSceneBackgroundMusic,
   resolvedSceneImagesArray,
 } from '../utils/scene-media';
+import {edgeIsBranch, sceneFailureEndingText, sceneIsFailure} from '../utils/branch-model';
+import {getFailureBranchConfig} from '../utils/failure-branch-features';
+import {inferChapterEndSceneIds, isNarrativeGraph} from '../utils/chapter-scene';
+import {ACTIVE_CHAPTER_VAR, chapterModeFromRouting, chapterModeVar} from '../utils/chapter-runtime-vars';
 
 function escapeHtml(text: string): string {
   return text
@@ -39,40 +43,75 @@ function sceneDraftText(scene: GameScene): string {
     .join('\n\n');
 }
 
-function chapterSceneKey(chapterIndex: number, sceneId: string): string {
-  return `${chapterIndex}::${sceneId}`;
-}
-
 const DEFAULT_BRANCH_FAILURE_TEMPLATE = '【失败结局】{{failureEnding}}\n\n你暂时偏离了主线目标。';
 
 function renderBranchFailureTemplate(
   template: string,
-  payload: { failureEnding: string; rootSceneName: string; branchOptionId: string }
+  payload: {failureEnding: string; rootSceneName: string; edgeId: string}
 ): string {
   return template
     .replace(/\{\{failureEnding\}\}/g, payload.failureEnding)
     .replace(/\{\{rootSceneName\}\}/g, payload.rootSceneName)
-    .replace(/\{\{branchOptionId\}\}/g, payload.branchOptionId);
+    .replace(/\{\{branchOptionId\}\}/g, payload.edgeId);
+}
+
+function failureSuffixForScene(
+  fw: StoryFramework,
+  chapterIndex: number,
+  sceneId: string
+): string {
+  const ch = fw.chapters[chapterIndex];
+  if (!ch) return '';
+  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+  const scene = sceneMap.get(sceneId);
+  if (!scene || !sceneIsFailure(scene)) return '';
+
+  const incoming = getIncomingNarrativeEdges(ch, sceneId).filter((e) => edgeIsBranch(e));
+  const edge = incoming[0];
+  const fromScene = edge ? sceneMap.get(edge.fromSceneId) : undefined;
+  const template =
+    getFailureBranchConfig(fw.features)?.template?.trim() || DEFAULT_BRANCH_FAILURE_TEMPLATE;
+  const failureEnding = sceneFailureEndingText(scene);
+  return `\n\n${renderBranchFailureTemplate(template, {
+    failureEnding,
+    rootSceneName: fromScene?.name ?? edge?.fromSceneId ?? '',
+    edgeId: edge?.id ?? sceneId,
+  })}`;
 }
 
 export function frameworkToStory(fw: StoryFramework): Story {
   const flatEntries = flattenSceneEntries(fw);
   const plan = buildSceneRoutingPlan(fw);
   const linksBySceneKey = computeAllScenePassageLinks(fw);
-  const branchOwnerByChapterScene = plan.branchOwnerByChapterScene;
 
   const passages = new Map<string, Passage>();
+  const chaptersMeta = (fw.chapters ?? []).map((ch, ci) => ({
+    id: ch.id,
+    index: ci,
+    narrativeGraph: ch.narrativeGraph ?? {},
+    startSceneId: ch.startSceneId,
+    endSceneIds: inferChapterEndSceneIds(ch),
+  }));
 
-  for (const {scene, chapterIndex, entry} of flatEntries) {
-    const pid = toPassageId(chapterIndex, entry.sceneId);
-    const thisSceneKey = chapterSceneKey(chapterIndex, scene.id);
-    const isBranchScene = branchOwnerByChapterScene.has(thisSceneKey);
+  for (const {scene, chapterIndex, sceneId} of flatEntries) {
+    const pid = toPassageId(chapterIndex, sceneId);
+    const ch = fw.chapters[chapterIndex]!;
+    const thisSceneKey = `${chapterIndex}::${sceneId}`;
     const links = linksBySceneKey.get(thisSceneKey) ?? [];
+    const chapterMode = chapterModeFromRouting(isNarrativeGraph(ch, sceneId));
+    const hasFailureScene = sceneIsFailure(scene);
+    const outEdges = (ch.narrativeEdges ?? []).filter((e) => e.fromSceneId === sceneId);
+    const isTerminal = outEdges.length === 0 && !(ch.transitions ?? []).some((t) => t.fromSceneId === sceneId);
 
-    const isBranchFailureEnding = !!scene.branchFailureEnding;
-    const branchFailureTemplate = fw.features?.branchFailureEnding?.template?.trim() || DEFAULT_BRANCH_FAILURE_TEMPLATE;
-
-    const metadata: Record<string, unknown> = { sceneId: scene.id };
+    const metadata: Record<string, unknown> = {
+      sceneId: scene.id,
+      chapterId: ch.id,
+      chapterMode,
+      set: {
+        activeChapterId: ch.id,
+        [chapterModeVar(ch.id).replace(/^\$/, '')]: chapterMode,
+      },
+    };
     if (scene.stateActions) {
       if (scene.stateActions.give) metadata.give = scene.stateActions.give;
       if (scene.stateActions.take) metadata.take = scene.stateActions.take;
@@ -90,21 +129,17 @@ export function frameworkToStory(fw: StoryFramework): Story {
     }
     if (scene.eventIds?.length) metadata.eventIds = scene.eventIds;
     if (scene.openingAnimation) metadata.openingAnimation = scene.openingAnimation;
-    const resolvedBgm = resolveSceneBackgroundMusic(scene, fw.features);
+    const mediaOpts = {useFailurePreset: hasFailureScene};
+    const resolvedBgm = resolveSceneBackgroundMusic(scene, fw.features, mediaOpts);
     if (resolvedBgm) metadata.backgroundMusic = resolvedBgm;
-    const resolvedImages = resolvedSceneImagesArray(scene, fw.features);
+    const resolvedImages = resolvedSceneImagesArray(scene, fw.features, mediaOpts);
     if (resolvedImages) metadata.images = resolvedImages;
     if (scene.synthesizedBgm) metadata.synthesizedBgm = scene.synthesizedBgm;
     const sceneMessages = scene.messages?.map((m) => m?.trim()).filter(Boolean) as string[] | undefined;
     if (sceneMessages?.length) metadata.messages = sceneMessages;
-    if (isBranchFailureEnding) metadata.branchTerminal = true;
-    const failureSuffix = isBranchFailureEnding
-      ? `\n\n${renderBranchFailureTemplate(branchFailureTemplate, {
-          failureEnding: scene.branchFailureEndingText?.trim() ?? '',
-          rootSceneName: '',
-          branchOptionId: '',
-        })}`
-      : '';
+    if (hasFailureScene && isTerminal) metadata.branchTerminal = true;
+
+    const failureSuffix = failureSuffixForScene(fw, chapterIndex, sceneId);
 
     passages.set(pid, {
       id: pid,
@@ -125,29 +160,36 @@ export function frameworkToStory(fw: StoryFramework): Story {
   const chapters = fw.chapters ?? [];
   let startPassageId = 'Start';
   const firstCh = chapters[0];
-  const firstMainline = plan.chapterMainlineEntries.get(0) ?? [];
-  if (firstMainline.length > 0) {
-    if (firstCh?.startMapNodeId) {
-      const matched = firstMainline.find((x) => x.scene.mapNodeId === firstCh.startMapNodeId);
-      if (matched) startPassageId = toPassageId(0, matched.entry.sceneId);
-    } else {
-      startPassageId = toPassageId(0, firstMainline[0].entry.sceneId);
-    }
+  if (firstCh) {
+    const startSceneId = firstCh.startSceneId ?? flatEntries.find((e) => e.chapterIndex === 0)?.sceneId;
+    if (startSceneId) startPassageId = toPassageId(0, startSceneId);
   }
   if (startPassageId === 'Start' && flatEntries.length > 0) {
-    startPassageId = toPassageId(0, flatEntries[0].entry.sceneId);
+    startPassageId = toPassageId(0, flatEntries[0]!.sceneId);
   }
 
+  const firstChapterId = firstCh?.id ?? '';
+  const firstMode = firstCh && firstCh.startSceneId
+    ? chapterModeFromRouting(isNarrativeGraph(firstCh, firstCh.startSceneId))
+    : 'open_world';
+
   const storyMetadata: Record<string, unknown> = {
-    variables: fw.initialState?.variables ?? {},
+    variables: {
+      ...(fw.initialState?.variables ?? {}),
+      activeChapterId: firstChapterId,
+      ...(firstChapterId
+        ? {[chapterModeVar(firstChapterId).replace(/^\$/, '')]: firstMode}
+        : {}),
+    },
     inventory: fw.initialState?.inventory ?? [],
-    reputation: (fw.initialState as { reputation?: Record<string, number> })?.reputation ?? {},
+    reputation: (fw.initialState as {reputation?: Record<string, number>})?.reputation ?? {},
     characters: fw.characters ?? [],
     gameRules: fw.gameRules ?? [],
     events: fw.events ?? [],
     scenes: fw.scenes ?? [],
     items: fw.items ?? [],
     features: fw.features ?? null,
+    chapters: chaptersMeta,
   };
 
   return {
@@ -158,7 +200,6 @@ export function frameworkToStory(fw: StoryFramework): Story {
   };
 }
 
-/** 将 story-fm.json 中的标题同步到已解析的 Story（写入 story.tw 的 StoryTitle） */
 export function syncStoryTitleFromFramework(story: Story, fw: StoryFramework): void {
   const title = fw.title?.trim();
   if (title) story.title = title;

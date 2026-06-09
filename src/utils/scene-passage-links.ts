@@ -1,26 +1,41 @@
 /**
- * 场景 passage 链接计算（与 FrameworkToStory 编译规则单一来源）
+ * 场景 passage 链接计算（章节图 + 开放世界双轨）
  */
 
 import type {PassageLink} from '@/types';
-import type {SceneEntry, StoryFramework} from '../schema/story-framework';
-import {flattenSceneEntries} from '../schema/story-framework';
+import type {FrameworkChapter, StoryFramework} from '../schema/story-framework';
+import {flattenSceneEntries, toPassageId} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import type {MapEdge} from '../schema/game-map';
-import {ONLY_ONCE_RULE_ID, type GameRule} from '../schema/game-rule';
+import type {GameRule} from '../schema/game-rule';
+import {
+  chapterSceneKey,
+  getChapterAvailableSceneIds,
+  getSceneBindings,
+  isNarrativeGraph,
+} from './chapter-scene';
+import {
+  ACTIVE_CHAPTER_VAR,
+  chapterModeCondition,
+} from './chapter-runtime-vars';
 
-export function chapterSceneKey(chapterIndex: number, sceneId: string): string {
-  return `${chapterIndex}::${sceneId}`;
+export {chapterSceneKey};
+
+function combineConditions(...parts: Array<string | undefined>): string | undefined {
+  const trimmed = parts.map((p) => p?.trim()).filter(Boolean) as string[];
+  if (trimmed.length === 0) return undefined;
+  return trimmed.map((p) => (p.includes(' and ') ? `(${p})` : p)).join(' and ');
 }
 
-/** 准入条件按顺序嵌套：先章节规则，再场景条件，再场景规则 */
+/** 准入：章节绑定规则 → 场景 conditions → 场景 ruleIds */
 export function buildAccessCondition(
-  entry: SceneEntry,
+  fw: StoryFramework,
+  chapterId: string,
   scene: GameScene,
   ruleMap: Map<string, GameRule>
 ): string | undefined {
   const parts: string[] = [];
-  for (const rid of entry.ruleIds ?? []) {
+  for (const rid of getSceneBindings(fw.sceneBindings, chapterId, scene.id)) {
     const rule = ruleMap.get(rid);
     if (rule?.judgeExpr?.trim()) parts.push(`(${rule.judgeExpr.trim()})`);
   }
@@ -33,31 +48,15 @@ export function buildAccessCondition(
   return parts.join(' and ');
 }
 
-type FlatEntry = {scene: GameScene; chapterIndex: number; entry: SceneEntry};
+type FlatEntry = {scene: GameScene; chapterIndex: number; sceneId: string};
 
 export interface SceneRoutingPlan {
   flatEntries: FlatEntry[];
   flatEntryByChapterScene: Map<string, FlatEntry>;
-  chapterMainlineEntries: Map<number, FlatEntry[]>;
-  branchOwnerByChapterScene: Map<string, {rootSceneId: string; optionId: string}>;
-  branchLinksByFrom: Map<string, Array<{displayText: string; targetSceneId: string; condition?: string}>>;
   edgesByFrom: Map<string, MapEdge[]>;
   ruleMap: Map<string, GameRule>;
 }
 
-function pushBranchLink(
-  branchLinksByFrom: Map<string, Array<{displayText: string; targetSceneId: string; condition?: string}>>,
-  chapterIndex: number,
-  fromSceneId: string,
-  link: {displayText: string; targetSceneId: string; condition?: string}
-): void {
-  const key = chapterSceneKey(chapterIndex, fromSceneId);
-  const list = branchLinksByFrom.get(key) ?? [];
-  list.push(link);
-  branchLinksByFrom.set(key, list);
-}
-
-/** 构建全剧路由计划（含支线校验，与 FrameworkToStory 一致） */
 export function buildSceneRoutingPlan(fw: StoryFramework): SceneRoutingPlan {
   const flatEntries = flattenSceneEntries(fw);
   const ruleMap = new Map<string, GameRule>();
@@ -65,7 +64,7 @@ export function buildSceneRoutingPlan(fw: StoryFramework): SceneRoutingPlan {
 
   const flatEntryByChapterScene = new Map<string, FlatEntry>();
   for (const item of flatEntries) {
-    flatEntryByChapterScene.set(chapterSceneKey(item.chapterIndex, item.scene.id), item);
+    flatEntryByChapterScene.set(chapterSceneKey(item.chapterIndex, item.sceneId), item);
   }
 
   const edgesByFrom = new Map<string, MapEdge[]>();
@@ -77,244 +76,210 @@ export function buildSceneRoutingPlan(fw: StoryFramework): SceneRoutingPlan {
     }
   }
 
-  const branchOwnerByChapterScene = new Map<string, {rootSceneId: string; optionId: string}>();
-  const branchLinksByFrom = new Map<
-    string,
-    Array<{displayText: string; targetSceneId: string; condition?: string}>
-  >();
+  validateChapterGraphs(fw, flatEntryByChapterScene, edgesByFrom);
 
-  for (let ci = 0; ci < (fw.chapters ?? []).length; ci++) {
-    const ch = fw.chapters![ci];
-    const chapterItems = flatEntries.filter((x) => x.chapterIndex === ci);
-    const chapterSceneIds = new Set(chapterItems.map((x) => x.scene.id));
-    for (const item of chapterItems) {
-      const rootScene = item.scene;
-      const options = (rootScene.branchOptions ?? []).filter(Boolean);
-      if (options.length === 0) continue;
-      const rootRuleIds = new Set<string>([...(item.entry.ruleIds ?? []), ...(rootScene.ruleIds ?? [])]);
-      if (rootRuleIds.has(ONLY_ONCE_RULE_ID)) {
-        throw new Error(
-          `场景 ${rootScene.id} 配置了 branchOptions，不可使用 onlyOnce 规则（${ONLY_ONCE_RULE_ID}）`
-        );
-      }
-      for (let oi = 0; oi < options.length; oi++) {
-        const option = options[oi];
-        const optionLabel = option.id || `index_${oi}`;
-        const displayText = option.displayText?.trim();
-        if (!displayText) {
-          throw new Error(`场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 缺少 displayText`);
-        }
-        const failureEnding = option.failureEnding?.trim();
-        if (!failureEnding) {
-          throw new Error(`场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 缺少 failureEnding`);
-        }
-        const branchSceneIds = (option.branchSceneIds ?? []).map((id) => id?.trim()).filter(Boolean);
-        if (branchSceneIds.length < 1 || branchSceneIds.length > 2) {
-          throw new Error(
-            `场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 的 branchSceneIds 必须是 1-2 个场景`
-          );
-        }
-        if (new Set(branchSceneIds).size !== branchSceneIds.length) {
-          throw new Error(`场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 存在重复场景 id`);
-        }
-        if (branchSceneIds.includes(rootScene.id)) {
-          throw new Error(`场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 不能把根场景自身放入 branchSceneIds`);
-        }
-        if (
-          option.continueDisplayTexts &&
-          option.continueDisplayTexts.length !== branchSceneIds.length - 1
-        ) {
-          throw new Error(
-            `场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 的 continueDisplayTexts 长度应为 branchSceneIds.length - 1`
-          );
-        }
-        pushBranchLink(branchLinksByFrom, ci, rootScene.id, {
-          displayText,
-          targetSceneId: branchSceneIds[0],
-          condition: option.condition?.trim() || undefined,
-        });
-        for (let bi = 0; bi < branchSceneIds.length; bi++) {
-          const sceneId = branchSceneIds[bi];
-          if (!chapterSceneIds.has(sceneId)) {
-            throw new Error(
-              `场景 ${rootScene.id} 的 branchOptions[${optionLabel}] 引用了当前章节不存在的场景 ${sceneId}`
-            );
-          }
-          const ownerKey = chapterSceneKey(ci, sceneId);
-          const owner = branchOwnerByChapterScene.get(ownerKey);
-          if (owner) {
-            throw new Error(
-              `章节 ${ch.id} 中场景 ${sceneId} 被多个支线复用（${owner.rootSceneId}/${owner.optionId} 与 ${rootScene.id}/${optionLabel}）`
-            );
-          }
-          branchOwnerByChapterScene.set(ownerKey, {rootSceneId: rootScene.id, optionId: optionLabel});
-          const branchItem = flatEntryByChapterScene.get(ownerKey);
-          if (!branchItem) {
-            throw new Error(`章节 ${ch.id} 中未找到支线场景 ${sceneId}`);
-          }
-          if (rootScene.mapNodeId !== branchItem.scene.mapNodeId) {
-            throw new Error(
-              `支线场景 ${sceneId} 必须与根场景 ${rootScene.id} 使用同一 mapNodeId（当前为 ${String(branchItem.scene.mapNodeId ?? '空')}，期望 ${String(rootScene.mapNodeId ?? '空')}）`
-            );
-          }
-          if (!(branchItem.scene.ruleIds ?? []).includes(ONLY_ONCE_RULE_ID)) {
-            throw new Error(
-              `支线场景 ${sceneId} 必须在 story-scenes.json.scene.ruleIds 中包含 ${ONLY_ONCE_RULE_ID}`
-            );
-          }
-          if (bi < branchSceneIds.length - 1) {
-            const txt = option.continueDisplayTexts?.[bi]?.trim() || '继续';
-            pushBranchLink(branchLinksByFrom, ci, sceneId, {displayText: txt, targetSceneId: branchSceneIds[bi + 1]});
-          } else {
-            pushBranchLink(branchLinksByFrom, ci, sceneId, {
-              displayText: option.returnDisplayText?.trim() || '返回主线',
-              targetSceneId: rootScene.id,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  const chapterOrderedEntries = new Map<number, FlatEntry[]>();
-  for (let ci = 0; ci < (fw.chapters ?? []).length; ci++) {
-    const ch = fw.chapters![ci];
-    const ordered: FlatEntry[] = [];
-    for (const entry of ch.sceneEntries ?? []) {
-      const item = flatEntryByChapterScene.get(chapterSceneKey(ci, entry.sceneId));
-      if (item) ordered.push(item);
-    }
-    chapterOrderedEntries.set(ci, ordered);
-  }
-
-  const chapterMainlineEntries = new Map<number, FlatEntry[]>();
-  for (const [ci, ordered] of chapterOrderedEntries) {
-    chapterMainlineEntries.set(
-      ci,
-      ordered.filter((item) => !branchOwnerByChapterScene.has(chapterSceneKey(ci, item.scene.id)))
-    );
-  }
-
-  return {
-    flatEntries,
-    flatEntryByChapterScene,
-    chapterMainlineEntries,
-    branchOwnerByChapterScene,
-    branchLinksByFrom,
-    edgesByFrom,
-    ruleMap,
-  };
+  return {flatEntries, flatEntryByChapterScene, edgesByFrom, ruleMap};
 }
 
-function appendCrossChapterLinks(
+/** 叙事图中不可达的场景须在地图上可达（否则报错） */
+function validateChapterGraphs(
   fw: StoryFramework,
-  plan: SceneRoutingPlan,
-  linksBySceneKey: Map<string, PassageLink[]>
+  flatEntryByChapterScene: Map<string, FlatEntry>,
+  edgesByFrom: Map<string, MapEdge[]>
 ): void {
-  const chapters = fw.chapters ?? [];
-  for (let ci = 0; ci < chapters.length; ci++) {
-    const ch = chapters[ci];
-    const chapterMainline = plan.chapterMainlineEntries.get(ci) ?? [];
-    const chapterLast = chapterMainline[chapterMainline.length - 1];
-    if (!chapterLast) continue;
-    const lastKey = chapterSceneKey(ci, chapterLast.scene.id);
-    const existing = linksBySceneKey.get(lastKey) ?? [];
+  for (let ci = 0; ci < (fw.chapters ?? []).length; ci++) {
+    const ch = fw.chapters![ci];
+    const pool = getChapterAvailableSceneIds(ch);
+    const narrativeReachable = new Set<string>();
+    for (const edge of ch.narrativeEdges ?? []) {
+      narrativeReachable.add(edge.fromSceneId);
+      narrativeReachable.add(edge.toSceneId);
+    }
+    if (ch.startSceneId) narrativeReachable.add(ch.startSceneId);
 
-    const nextCh = chapters[ci + 1];
-    if (!nextCh) {
-      linksBySceneKey.set(lastKey, [...existing, {displayText: '前往 完结', passageName: 'End'}]);
-      continue;
+    const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+    const poolNodes = new Set(
+      pool.map((id) => sceneMap.get(id)?.mapNodeId).filter(Boolean) as string[]
+    );
+
+    for (const sceneId of pool) {
+      if (narrativeReachable.has(sceneId)) continue;
+      const nodeId = sceneMap.get(sceneId)?.mapNodeId;
+      if (!nodeId) {
+        throw new Error(
+          `章节 ${ch.id} 场景 ${sceneId} 在叙事图中不可达且未配置 mapNodeId`
+        );
+      }
+      if (!isMapReachableFromPool(nodeId, poolNodes, edgesByFrom)) {
+        throw new Error(
+          `章节 ${ch.id} 场景 ${sceneId} 在叙事图与地图上均不可达（请检查池子与地图边）`
+        );
+      }
     }
 
-    if (!ch.endMapNodeId || !nextCh.startMapNodeId) continue;
-    const nextMainline = plan.chapterMainlineEntries.get(ci + 1) ?? [];
-    const nextStart = nextMainline.find((x) => x.scene.mapNodeId === nextCh.startMapNodeId);
-    if (!nextStart) {
-      throw new Error(
-        `章节 ${nextCh.id} 未找到 mapNodeId=${nextCh.startMapNodeId} 的主线场景，无法建立跨章连接`
-      );
+    for (const edge of ch.narrativeEdges ?? []) {
+      if (!pool.includes(edge.fromSceneId) || !pool.includes(edge.toSceneId)) {
+        throw new Error(`章节 ${ch.id} 叙事边 ${edge.id} 端点不在场景池内`);
+      }
     }
-    const endNode = ch.endMapNodeId;
-    const nextStartNode = nextCh.startMapNodeId;
-    const sharedBoundary = endNode === nextStartNode;
-    const edgeFrom = sharedBoundary
-      ? (ch.startMapNodeId ?? chapterLast.scene.mapNodeId ?? endNode)
-      : endNode;
-    const edgeTo = sharedBoundary ? endNode : nextStartNode;
-    const edge = (plan.edgesByFrom.get(edgeFrom) ?? []).find((e) => e.to === edgeTo);
-    if (!edge) {
-      throw new Error(
-        sharedBoundary
-          ? `章节边界缺少地图连边：${edgeFrom} -> ${edgeTo}（本章起点至终点，用于跨章「前往」文案）`
-          : `章节边界缺少地图连边：${edgeFrom} -> ${edgeTo}`
-      );
-    }
-    const nextAccess = buildAccessCondition(nextStart.entry, nextStart.scene, plan.ruleMap);
-    let crossCondition = edge.condition?.trim();
-    if (nextAccess) crossCondition = crossCondition ? `${crossCondition} and ${nextAccess}` : nextAccess;
-    const raw = edge.displayText?.trim() || '前往 下一章';
-    const displayText = raw.startsWith('前往') ? raw : `前往 ${raw}`;
-    linksBySceneKey.set(lastKey, [
-      ...existing,
-      {displayText, passageName: nextStart.scene.name, condition: crossCondition || undefined},
-    ]);
   }
+}
+
+function isMapReachableFromPool(
+  targetNode: string,
+  poolNodes: Set<string>,
+  edgesByFrom: Map<string, MapEdge[]>
+): boolean {
+  if (poolNodes.has(targetNode)) return true;
+  const visited = new Set<string>();
+  const queue = [...poolNodes];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (node === targetNode) return true;
+    if (visited.has(node)) continue;
+    visited.add(node);
+    for (const e of edgesByFrom.get(node) ?? []) {
+      if (!visited.has(e.to)) queue.push(e.to);
+    }
+  }
+  return false;
+}
+
+function narrativeLinksForScene(
+  fw: StoryFramework,
+  ch: FrameworkChapter,
+  chapterIndex: number,
+  sceneId: string,
+  plan: SceneRoutingPlan
+): PassageLink[] {
+  const chapterId = ch.id;
+  const modeCond = chapterModeCondition(chapterId, 'narrative');
+  const links: PassageLink[] = [];
+  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+
+  for (const edge of ch.narrativeEdges ?? []) {
+    if (edge.fromSceneId !== sceneId) continue;
+    const target = sceneMap.get(edge.toSceneId);
+    if (!target) continue;
+    const targetAccess = buildAccessCondition(fw, chapterId, target, plan.ruleMap);
+    links.push({
+      displayText: edge.displayText,
+      passageName: target.name,
+      condition: combineConditions(modeCond, edge.condition, targetAccess),
+    });
+  }
+  return links;
+}
+
+function openWorldLinksForScene(
+  fw: StoryFramework,
+  ch: FrameworkChapter,
+  chapterIndex: number,
+  scene: GameScene,
+  plan: SceneRoutingPlan
+): PassageLink[] {
+  const chapterId = ch.id;
+  const modeCond = chapterModeCondition(chapterId, 'open_world');
+  const pool = new Set(getChapterAvailableSceneIds(ch));
+  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+  const links: PassageLink[] = [];
+  const seen = new Set<string>();
+  const mapNodeId = scene.mapNodeId?.trim();
+  if (!mapNodeId) return links;
+
+  const addLink = (
+    targetId: string,
+    displayText: string,
+    extraCondition?: string
+  ) => {
+    if (targetId === scene.id || seen.has(targetId)) return;
+    if (!pool.has(targetId)) return;
+    const target = sceneMap.get(targetId);
+    if (!target) return;
+    const targetAccess = buildAccessCondition(fw, chapterId, target, plan.ruleMap);
+    links.push({
+      displayText,
+      passageName: target.name,
+      condition: combineConditions(modeCond, extraCondition, targetAccess),
+    });
+    seen.add(targetId);
+  };
+
+  for (const otherId of pool) {
+    const other = sceneMap.get(otherId);
+    if (other?.mapNodeId === mapNodeId) {
+      addLink(otherId, other.name);
+    }
+  }
+
+  for (const mapEdge of plan.edgesByFrom.get(mapNodeId) ?? []) {
+    const edgeCond = mapEdge.condition?.trim();
+    const label = mapEdge.displayText?.trim() || mapEdge.to;
+    for (const otherId of pool) {
+      const other = sceneMap.get(otherId);
+      if (other?.mapNodeId === mapEdge.to) {
+        addLink(otherId, label, edgeCond);
+      }
+    }
+  }
+
+  return links;
+}
+
+function transitionLinksForScene(
+  fw: StoryFramework,
+  ch: FrameworkChapter,
+  chapterIndex: number,
+  sceneId: string,
+  plan: SceneRoutingPlan
+): PassageLink[] {
+  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+  const links: PassageLink[] = [];
+
+  for (const tr of ch.transitions ?? []) {
+    if (tr.fromSceneId !== sceneId) continue;
+    const targetChIdx = fw.chapters.findIndex((c) => c.id === tr.toChapterId);
+    if (targetChIdx < 0) continue;
+    const targetCh = fw.chapters[targetChIdx]!;
+    const landingSceneId = targetCh.startSceneId;
+    if (!landingSceneId) continue;
+    const targetScene = sceneMap.get(landingSceneId);
+    if (!targetScene) continue;
+    const targetAccess = buildAccessCondition(fw, targetCh.id, targetScene, plan.ruleMap);
+    const raw = tr.displayText.trim();
+    const displayText = raw.startsWith('前往') ? raw : `前往 ${raw}`;
+    links.push({
+      displayText,
+      passageName: targetScene.name,
+      condition: combineConditions(tr.condition, targetAccess),
+      linkActions: {
+        set: {
+          activeChapterId: tr.toChapterId,
+        },
+      },
+    });
+  }
+  return links;
 }
 
 function computeBaseLinksForScene(
   fw: StoryFramework,
   plan: SceneRoutingPlan,
   chapterIndex: number,
-  scene: GameScene,
-  entry: SceneEntry
+  sceneId: string
 ): PassageLink[] {
-  const links: PassageLink[] = [];
-  const thisSceneKey = chapterSceneKey(chapterIndex, scene.id);
-  const isBranchScene = plan.branchOwnerByChapterScene.has(thisSceneKey);
+  const ch = fw.chapters[chapterIndex];
+  if (!ch) return [];
+  const item = plan.flatEntryByChapterScene.get(chapterSceneKey(chapterIndex, sceneId));
+  if (!item) return [];
 
-  if (!isBranchScene) {
-    const chapterMainline = plan.chapterMainlineEntries.get(chapterIndex) ?? [];
-    const idx = chapterMainline.findIndex((x) => x.scene.id === scene.id);
-    const hasNextMainline = idx >= 0 && idx < chapterMainline.length - 1;
-    const branchOptions = (scene.branchOptions ?? []).filter(Boolean);
-    if (hasNextMainline && branchOptions.length > 0) {
-      const mainlineText = scene.mainlineLinkDisplayText?.trim();
-      if (!mainlineText) {
-        throw new Error(
-          `场景 ${scene.id} 配置了 branchOptions 且同章有后续主线，须填写 mainlineLinkDisplayText`
-        );
-      }
-    }
-    if (hasNextMainline) {
-      const nextMainline = chapterMainline[idx + 1];
-      const targetAccess = buildAccessCondition(nextMainline.entry, nextMainline.scene, plan.ruleMap);
-      const displayText = scene.mainlineLinkDisplayText?.trim() || '继续';
-      links.push({
-        displayText,
-        passageName: nextMainline.scene.name,
-        condition: targetAccess || undefined,
-      });
-    }
-  }
-
-  const branchLinks = plan.branchLinksByFrom.get(thisSceneKey) ?? [];
-  for (const planned of branchLinks) {
-    const target = plan.flatEntryByChapterScene.get(chapterSceneKey(chapterIndex, planned.targetSceneId));
-    if (!target) continue;
-    const targetAccess = buildAccessCondition(target.entry, target.scene, plan.ruleMap);
-    let condition = planned.condition?.trim();
-    if (targetAccess) condition = condition ? `${condition} and ${targetAccess}` : targetAccess;
-    links.push({
-      displayText: planned.displayText,
-      passageName: target.scene.name,
-      condition: condition || undefined,
-    });
-  }
-
-  return links;
+  return [
+    ...narrativeLinksForScene(fw, ch, chapterIndex, sceneId, plan),
+    ...openWorldLinksForScene(fw, ch, chapterIndex, item.scene, plan),
+    ...transitionLinksForScene(fw, ch, chapterIndex, sceneId, plan),
+  ];
 }
 
-/** 计算单个场景在 story.tw 末页应有的全部链接（含跨章，若该场景为章末主线） */
 export function computeScenePassageLinks(
   fw: StoryFramework,
   chapterIndex: number,
@@ -322,82 +287,29 @@ export function computeScenePassageLinks(
   plan?: SceneRoutingPlan
 ): PassageLink[] {
   const routingPlan = plan ?? buildSceneRoutingPlan(fw);
-  const item = routingPlan.flatEntryByChapterScene.get(chapterSceneKey(chapterIndex, sceneId));
-  if (!item) return [];
-
-  const linksByKey = new Map<string, PassageLink[]>();
-  for (const {scene, chapterIndex: ci, entry} of routingPlan.flatEntries) {
-    linksByKey.set(
-      chapterSceneKey(ci, scene.id),
-      computeBaseLinksForScene(fw, routingPlan, ci, scene, entry)
-    );
-  }
-  appendCrossChapterLinks(fw, routingPlan, linksByKey);
-  return linksByKey.get(chapterSceneKey(chapterIndex, sceneId)) ?? [];
+  return computeBaseLinksForScene(fw, routingPlan, chapterIndex, sceneId);
 }
 
-/** 计算全剧各场景链接，键为 chapterIndex::sceneId */
 export function computeAllScenePassageLinks(fw: StoryFramework): Map<string, PassageLink[]> {
   const plan = buildSceneRoutingPlan(fw);
   const linksByKey = new Map<string, PassageLink[]>();
-  for (const {scene, chapterIndex, entry} of plan.flatEntries) {
+  for (const {chapterIndex, sceneId} of plan.flatEntries) {
     linksByKey.set(
-      chapterSceneKey(chapterIndex, scene.id),
-      computeBaseLinksForScene(fw, plan, chapterIndex, scene, entry)
+      chapterSceneKey(chapterIndex, sceneId),
+      computeBaseLinksForScene(fw, plan, chapterIndex, sceneId)
     );
   }
-  appendCrossChapterLinks(fw, plan, linksByKey);
   return linksByKey;
 }
 
-export interface CrossChapterExit {
-  displayText: string;
-  targetSceneId: string;
-  targetSceneName: string;
-  mapEdgeFrom: string;
-  mapEdgeTo: string;
+/** 某场景在章节内的入边（含失败边元数据） */
+export function getIncomingNarrativeEdges(
+  ch: FrameworkChapter,
+  sceneId: string
+) {
+  return (ch.narrativeEdges ?? []).filter((e) => e.toSceneId === sceneId);
 }
 
-/** 若该场景为章末主线，返回跨章出口信息（不含「前往 」前缀的展示文案） */
-export function computeCrossChapterExit(
-  fw: StoryFramework,
-  chapterIndex: number,
-  sceneId: string,
-  plan?: SceneRoutingPlan
-): CrossChapterExit | undefined {
-  const routingPlan = plan ?? buildSceneRoutingPlan(fw);
-  const chapters = fw.chapters ?? [];
-  const ch = chapters[chapterIndex];
-  if (!ch) return undefined;
-
-  const chapterMainline = routingPlan.chapterMainlineEntries.get(chapterIndex) ?? [];
-  const chapterLast = chapterMainline[chapterMainline.length - 1];
-  if (!chapterLast || chapterLast.scene.id !== sceneId) return undefined;
-
-  const nextCh = chapters[chapterIndex + 1];
-  if (!nextCh || !ch.endMapNodeId || !nextCh.startMapNodeId) return undefined;
-
-  const nextMainline = routingPlan.chapterMainlineEntries.get(chapterIndex + 1) ?? [];
-  const nextStart = nextMainline.find((x) => x.scene.mapNodeId === nextCh.startMapNodeId);
-  if (!nextStart) return undefined;
-
-  const endNode = ch.endMapNodeId;
-  const nextStartNode = nextCh.startMapNodeId;
-  const sharedBoundary = endNode === nextStartNode;
-  const edgeFrom = sharedBoundary
-    ? (ch.startMapNodeId ?? chapterLast.scene.mapNodeId ?? endNode)
-    : endNode;
-  const edgeTo = sharedBoundary ? endNode : nextStartNode;
-  const edge = (routingPlan.edgesByFrom.get(edgeFrom) ?? []).find((e) => e.to === edgeTo);
-  if (!edge) return undefined;
-
-  const raw = edge.displayText?.trim() || '下一章';
-  const displayText = raw.startsWith('前往') ? raw.slice(3).trim() : raw;
-  return {
-    displayText,
-    targetSceneId: nextStart.scene.id,
-    targetSceneName: nextStart.scene.name,
-    mapEdgeFrom: edgeFrom,
-    mapEdgeTo: edgeTo,
-  };
+export function getSceneUsesNarrativeRouting(ch: FrameworkChapter, sceneId: string): boolean {
+  return isNarrativeGraph(ch, sceneId);
 }

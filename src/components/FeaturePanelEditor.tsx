@@ -13,7 +13,7 @@ import {formatJsonCompact} from '../utils/json-format';
 import {editorStyles as styles} from '../styles/editorStyles';
 
 const DEFAULT_FAILURE_TEMPLATE = '【失败结局】{{failureEnding}}\n\n你暂时偏离了主线目标。';
-const DEFAULT_FEATURES: FeaturesConfig = { battle: {}, branchFailureEnding: {template: DEFAULT_FAILURE_TEMPLATE} };
+const DEFAULT_FEATURES: FeaturesConfig = {battle: {}, failureBranch: {template: DEFAULT_FAILURE_TEMPLATE}};
 
 async function loadFeatures(gameId: string): Promise<FeaturesConfig> {
   try {
@@ -124,7 +124,7 @@ export function FeaturePanelEditor() {
 
       <section style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>支线失败结局</h2>
+          <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>失败支线（failureBranch）</h2>
           <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleSaveBattle)} disabled={saving}>
             {saving ? '保存中...' : '保存'}
           </button>
@@ -139,23 +139,23 @@ export function FeaturePanelEditor() {
         >
           <MediaUrlField
             label="统一背景音乐"
-            value={features.branchFailureEnding?.backgroundMusic}
+            value={features.failureBranch?.backgroundMusic}
             onChange={(v) =>
               updateFeatures((f) => ({
                 ...f,
-                branchFailureEnding: { ...f.branchFailureEnding, backgroundMusic: v },
+                failureBranch: {...f.failureBranch, backgroundMusic: v},
               }))
             }
-            placeholder="所有支线失败结局统一使用"
+            placeholder="isFailure 场景未单独配置时使用"
             editable={true}
           />
           <MediaUrlField
             label="统一背景图"
-            value={features.branchFailureEnding?.image}
+            value={features.failureBranch?.image}
             onChange={(v) =>
               updateFeatures((f) => ({
                 ...f,
-                branchFailureEnding: {...f.branchFailureEnding, image: v},
+                failureBranch: {...f.failureBranch, image: v},
               }))
             }
             editable={true}
@@ -163,12 +163,12 @@ export function FeaturePanelEditor() {
           <div style={styles.row}>
             <label style={styles.label}>失败结局模板（支持占位符）</label>
             <textarea
-              value={features.branchFailureEnding?.template ?? ''}
+              value={features.failureBranch?.template ?? ''}
               onChange={(e) =>
                 updateFeatures((f) => ({
                   ...f,
-                  branchFailureEnding: {
-                    ...f.branchFailureEnding,
+                  failureBranch: {
+                    ...f.failureBranch,
                     template: e.target.value || undefined,
                   },
                 }))

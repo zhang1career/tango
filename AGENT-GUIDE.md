@@ -24,38 +24,69 @@ interface StoryFramework {
 }
 ```
 
-### 1.2 时间线：章节与场景
+### 1.2 章节图与场景池
+
+章节编排场景路由；场景正文在 `story-scenes.json`（`fw.scenes`）。
 
 ```ts
 interface FrameworkChapter {
   id: string;
   title: string;
   theme?: string;
-  scenes: FrameworkScene[];
+  availableSceneIds: string[];   // 场景池（无序）
+  narrativeGraph?: Record<string, boolean>;  // true = 叙事图；省略 = 开放世界
+  startSceneId?: string;
+  /** @deprecated 章末由 inferChapterEndSceneIds 推断 */
+  endSceneIds?: string[];
+  narrativeEdges?: ChapterNarrativeEdge[];
+  transitions?: ChapterTransition[];
+  graphLayout?: Record<string, {x: number; y: number}>;
+  sceneMeta?: Record<string, {compiledFingerprint?: string; routingFingerprint?: string}>;
 }
 
-interface FrameworkScene {
-  id: string;                    // 唯一 id，用作 passage 名
-  title?: string;
-  summary: string;               // 剧情概要，AI 据此生成正文
-  hints?: string;
-  links: FrameworkLink[];
-  stateActions?: FrameworkStateActions;
-  mapNodeId?: string;            // 关联地图节点 id
-  characterIds?: string[];       // 出场人物 id（非玩家控制时按脚本行动）
-  eventIds?: string[];           // 关联事件 id
+interface ChapterNarrativeEdge {
+  id: string;
+  fromSceneId: string;
+  toSceneId: string;
+  displayText: string;
+  condition?: string;
+  isBranch?: boolean; // 支线边；是否失败由目标场景 isFailure 定义
 }
 
-interface FrameworkLink {
-  displayText?: string;
-  target: string;                // 目标场景 id
-  condition?: string;            // 如 $items has "令牌"、$rep.尔朱荣 >= 5
+interface ChapterTransition {
+  fromSceneId: string;
+  toChapterId: string;
+  displayText: string;
+  condition?: string;
+}
+
+// story-scenes.json
+interface GameScene {
+  id: string;
+  name: string;
+  passageBlocks: PassageBlock[];
+  mapNodeId?: string;
+  conditions?: string;
+  ruleIds?: string[];
+  // 无 branchOptions / 路由字段
+}
+
+// story-rules.json
+interface StoryRulesBundle {
+  rules: GameRule[];
+  sceneBindings?: Array<{chapterId: string; sceneId: string; ruleIds?: string[]}>;
 }
 ```
 
+**路由编译**（`scene-passage-links.ts`）：
+- 叙事态：`narrativeEdges`，门控 `$chapterMode_{chapterId} == "narrative"`
+- 开放世界：地图一步边 ∩ `availableSceneIds`，门控 `== "open_world"`
+- 跨章：`transitions[]`，`linkActions.set.activeChapterId`
+
 **工具函数**：
-- `flattenScenes(fw)`：扁平化所有场景
-- `validateFramework(fw)`：校验链接 target 是否都存在
+- `flattenSceneEntries(fw)`：扁平化章内场景引用
+- `validateFramework(fw)`：校验池、图、跨章与地图可达性
+- `migrateFramework(fw)`：旧 `sceneEntries` → 新章节图
 
 ### 1.3 FrameworkStateActions（状态变更）
 

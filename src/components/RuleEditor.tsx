@@ -8,20 +8,27 @@ import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameRule} from '../schema/game-rule';
+import type {SceneRuleBinding} from '../schema/story-rules-bundle';
+import {getChapterAvailableSceneIds} from '../utils/chapter-scene';
 import type {RuleExecutionKind} from '../schema/rule-execution';
 import {formatJsonCompact} from '../utils/json-format';
 import {normalizeGameRules} from '../utils/normalize-game-rules';
+import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-story-rules';
 import {RULE_EXECUTION_KIND_OPTIONS} from '../utils/rule-usage';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {editorStyles as styles} from '../styles/editorStyles';
 
-async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
+async function saveRulesToPreset(fw: StoryFramework, gameId: string): Promise<{ ok: boolean; error?: string }> {
+  const payload = serializeStoryRulesBundle({
+    rules: fw.gameRules ?? [],
+    sceneBindings: fw.sceneBindings ?? [],
+  });
   if (import.meta.env.DEV) {
     try {
       const res = await fetch(getRulesFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(rules),
+        body: formatJsonCompact(payload),
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (res.ok && json.ok) return {ok: true};
@@ -30,7 +37,7 @@ async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: 
       return {ok: false, error: String(e)};
     }
   }
-  const blob = new Blob([formatJsonCompact(rules)], {type: 'application/json'});
+  const blob = new Blob([formatJsonCompact(payload)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -142,16 +149,28 @@ export function RuleEditor({
     fetch(getRulesFetchUrl(gameId))
       .then((res) => (res.ok ? res.json() : Promise.reject(res)))
       .then((data) => {
-        const list = Array.isArray(data) ? normalizeGameRules(data as GameRule[]) : [];
-        updateFw((d) => ({...d, gameRules: list}));
+        const bundle = parseStoryRulesFile(data);
+        updateFw((d) => ({
+          ...d,
+          gameRules: normalizeGameRules(bundle.rules),
+          sceneBindings: bundle.sceneBindings ?? [],
+        }));
       })
       .catch(() => {
       });
   }, [updateFw, gameId]);
 
   const rules = fw.gameRules ?? [];
+  const bindings = fw.sceneBindings ?? [];
   const setRules = (fn: (r: GameRule[]) => GameRule[]) =>
     updateFw((d) => ({...d, gameRules: fn(d.gameRules ?? [])}));
+  const setBindings = (fn: (b: SceneRuleBinding[]) => SceneRuleBinding[]) =>
+    updateFw((d) => ({...d, sceneBindings: fn(d.sceneBindings ?? [])}));
+
+  const saveBindings = async (next: SceneRuleBinding[]) => {
+    const result = await saveRulesToPreset({...fw, sceneBindings: next}, gameId);
+    if (!result.ok) alert(`保存失败: ${result.error}`);
+  };
 
   const [detailIndex, setDetailIndex] = useState<number | null>(null);
   const [editIndex, setEditIndex] = useState<number | null>(null);
@@ -174,7 +193,7 @@ export function RuleEditor({
   const confirmAddRule = async () => {
     const next = [...rules, newRule];
     setRules(() => next);
-    const result = await saveRulesToPreset(next, gameId);
+    const result = await saveRulesToPreset({...fw, gameRules: next}, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setAddModalOpen(false);
   };
@@ -185,13 +204,13 @@ export function RuleEditor({
   const removeRule = async (index: number) => {
     const next = rules.filter((_, i) => i !== index);
     setRules(() => next);
-    const result = await saveRulesToPreset(next, gameId);
+    const result = await saveRulesToPreset({...fw, gameRules: next}, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
   };
   const removeRuleWithAuth = (index: number) => checkAuthForSave(() => removeRule(index));
 
   const saveRules = async () => {
-    const result = await saveRulesToPreset(rules, gameId);
+    const result = await saveRulesToPreset(fw, gameId);
     if (!result.ok) alert(`保存失败: ${result.error}`);
     else setEditIndex(null);
   };
@@ -233,6 +252,110 @@ export function RuleEditor({
             </div>
           </div>
         ))}
+      </section>
+
+      <section style={{...styles.section, marginTop: 32}}>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
+          <h2 style={{...styles.title, fontSize: 16, margin: 0}}>场景规则绑定（sceneBindings）</h2>
+          <button
+            type="button"
+            style={styles.btn}
+            onClick={() =>
+              checkAuthForSave(() => {
+                const ch = fw.chapters[0];
+                const pool = ch ? getChapterAvailableSceneIds(ch) : [];
+                const next: SceneRuleBinding[] = [
+                  ...bindings,
+                  {chapterId: ch?.id ?? '', sceneId: pool[0] ?? '', ruleIds: []},
+                ];
+                setBindings(() => next);
+                void saveBindings(next);
+              })
+            }
+          >
+            + 绑定
+          </button>
+        </div>
+        <p style={{fontSize: 12, color: '#888', marginBottom: 12}}>
+          按章节×场景引用准入规则（写入 story-rules.json）。与场景自身的 ruleIds、conditions 按 and 合并。
+        </p>
+        {bindings.length === 0 && (
+          <p style={{color: '#888', fontSize: 14}}>暂无绑定。章节场景池中的准入规则应在此维护。</p>
+        )}
+        {bindings.map((b, bi) => {
+          const ch = fw.chapters.find((c) => c.id === b.chapterId);
+          const pool = ch ? getChapterAvailableSceneIds(ch) : [];
+          return (
+            <div key={`bind-${bi}`} style={styles.card}>
+              <div style={{...styles.cardHead, cursor: 'default'}}>
+                <div style={{display: 'flex', gap: 8, flex: 1, flexWrap: 'wrap', alignItems: 'center'}}>
+                  <select
+                    value={b.chapterId}
+                    onChange={(e) => {
+                      const next = bindings.map((x, i) =>
+                        i === bi ? {...x, chapterId: e.target.value, sceneId: ''} : x
+                      );
+                      setBindings(() => next);
+                      void saveBindings(next);
+                    }}
+                    style={{...styles.input, width: 160}}
+                  >
+                    <option value="">选择章节</option>
+                    {fw.chapters.map((c) => (
+                      <option key={c.id} value={c.id}>{c.title}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={b.sceneId}
+                    onChange={(e) => {
+                      const next = bindings.map((x, i) => (i === bi ? {...x, sceneId: e.target.value} : x));
+                      setBindings(() => next);
+                      void saveBindings(next);
+                    }}
+                    style={{...styles.input, width: 180}}
+                  >
+                    <option value="">选择场景</option>
+                    {pool.map((sid) => {
+                      const scene = (fw.scenes ?? []).find((s) => s.id === sid);
+                      return (
+                        <option key={sid} value={sid}>{scene?.name ?? sid}</option>
+                      );
+                    })}
+                  </select>
+                  <select
+                    multiple
+                    value={b.ruleIds ?? []}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+                      const next = bindings.map((x, i) => (i === bi ? {...x, ruleIds: selected} : x));
+                      setBindings(() => next);
+                      void saveBindings(next);
+                    }}
+                    style={{...styles.input, minWidth: 200, minHeight: 56}}
+                  >
+                    {rules.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  style={styles.btnIcon}
+                  title="删除"
+                  onClick={() =>
+                    checkAuthForSave(() => {
+                      const next = bindings.filter((_, i) => i !== bi);
+                      setBindings(() => next);
+                      void saveBindings(next);
+                    })
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </section>
 
       {detailIndex !== null && rules[detailIndex] && (

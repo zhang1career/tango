@@ -1,5 +1,5 @@
-import type {StoryFramework} from '@/schema/story-framework';
-import type {FrameworkChapter} from '@/schema/story-framework';
+import type {StoryFramework, FrameworkChapter} from '@/schema/story-framework';
+import {getChapterAvailableSceneIds} from '@/utils/chapter-scene';
 import type {GameScene, ScenePassageAiBlock} from '@/schema/game-scene';
 import type {StoryGenerationBundle, SceneChapterContext, TextPolicyBundle} from './types';
 import {
@@ -34,10 +34,9 @@ export function findChapterForScene(
 ): {chapter: FrameworkChapter; chapterIndex: number; sceneIndex: number} | null {
   for (let chi = 0; chi < (fw.chapters ?? []).length; chi++) {
     const ch = fw.chapters[chi];
-    const entries = ch.sceneEntries ?? [];
-    for (let si = 0; si < entries.length; si++) {
-      if (entries[si].sceneId === sceneId) return {chapter: ch, chapterIndex: chi, sceneIndex: si};
-    }
+    const pool = getChapterAvailableSceneIds(ch);
+    const si = pool.indexOf(sceneId);
+    if (si >= 0) return {chapter: ch, chapterIndex: chi, sceneIndex: si};
   }
   return null;
 }
@@ -67,10 +66,10 @@ export function buildGenerationContextPayload(
   const {fw, outline, foreshadowing, canon, policy} = bundle;
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
   const ch = fw.chapters[chapter.chapterIndex];
-  const entries = ch.sceneEntries ?? [];
-  const prevSummaries = entries.slice(0, chapter.sceneIndex).slice(-BUDGET.maxPreviousSceneSummaries).map((e) => {
-    const s = sceneMap.get(e.sceneId);
-    return {sceneId: e.sceneId, summary: s ? truncate(sceneSummary(s), 180) : ''};
+  const pool = getChapterAvailableSceneIds(ch);
+  const prevSummaries = pool.slice(0, chapter.sceneIndex).slice(-BUDGET.maxPreviousSceneSummaries).map((sid) => {
+    const s = sceneMap.get(sid);
+    return {sceneId: sid, summary: s ? truncate(sceneSummary(s), 180) : ''};
   });
 
   const blocks = getScenePassageBlocks(scene);
@@ -85,8 +84,8 @@ export function buildGenerationContextPayload(
   const canonScene = canon.scenes[scene.id];
 
   const chapterEventIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
+  for (const sid of pool) {
+    const s = sceneMap.get(sid);
     for (const id of s?.eventIds ?? []) chapterEventIds.add(id);
   }
   const chapterEvents = (fw.events ?? [])
@@ -95,8 +94,8 @@ export function buildGenerationContextPayload(
     .map((e) => ({id: e.id, name: e.name, description: e.description ? truncate(e.description, 160) : undefined}));
 
   const chapterCharIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
+  for (const sid of pool) {
+    const s = sceneMap.get(sid);
     for (const id of s?.characterIds ?? []) chapterCharIds.add(id);
   }
   const sceneCharIds = new Set((scene.characterIds ?? []).filter(Boolean));

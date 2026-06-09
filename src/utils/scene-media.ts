@@ -1,5 +1,6 @@
 import type {GameScene} from '../schema/game-scene';
 import type {FeaturesConfig} from '../schema/features';
+import {getFailureBranchConfig} from './failure-branch-features';
 
 /** 显式空值：undefined、null、纯空白 */
 export function isEmptyMediaValue(value: string | undefined | null): boolean {
@@ -14,29 +15,30 @@ export function isEmptySceneImageList(images: string[] | undefined): boolean {
 export const EMPTY_SCENE_BACKGROUND_MUSIC = '';
 export const EMPTY_SCENE_IMAGES: string[] = [''];
 
-export function sceneMediaDefaultsOnBranchFailureToggle(): Pick<GameScene, 'backgroundMusic' | 'images'> {
-  return {backgroundMusic: EMPTY_SCENE_BACKGROUND_MUSIC, images: [...EMPTY_SCENE_IMAGES]};
-}
-
 export function resolveSceneBackgroundMusic(
   scene: GameScene,
-  features?: FeaturesConfig
+  features?: FeaturesConfig,
+  options?: {useFailurePreset?: boolean}
 ): string | undefined {
   if (!isEmptyMediaValue(scene.backgroundMusic)) {
     return scene.backgroundMusic!.trim();
   }
-  if (scene.branchFailureEnding) {
-    const preset = features?.branchFailureEnding?.backgroundMusic;
+  if (options?.useFailurePreset) {
+    const preset = getFailureBranchConfig(features)?.backgroundMusic;
     if (!isEmptyMediaValue(preset)) return preset!.trim();
   }
   return undefined;
 }
 
-export function resolveSceneImage(scene: GameScene, features?: FeaturesConfig): string | undefined {
+export function resolveSceneImage(
+  scene: GameScene,
+  features?: FeaturesConfig,
+  options?: {useFailurePreset?: boolean}
+): string | undefined {
   const own = scene.images?.map((u) => u?.trim()).find((u) => u && !isEmptyMediaValue(u));
   if (own) return own;
-  if (scene.branchFailureEnding) {
-    const preset = features?.branchFailureEnding?.image;
+  if (options?.useFailurePreset) {
+    const preset = getFailureBranchConfig(features)?.image;
     if (!isEmptyMediaValue(preset)) return preset!.trim();
   }
   return undefined;
@@ -44,8 +46,9 @@ export function resolveSceneImage(scene: GameScene, features?: FeaturesConfig): 
 
 export function resolvedSceneImagesArray(
   scene: GameScene,
-  features?: FeaturesConfig
+  features?: FeaturesConfig,
+  options?: {useFailurePreset?: boolean}
 ): string[] | undefined {
-  const img = resolveSceneImage(scene, features);
+  const img = resolveSceneImage(scene, features, options);
   return img ? [img] : undefined;
 }

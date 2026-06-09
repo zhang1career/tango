@@ -3,7 +3,7 @@
  */
 
 import type {PassageLink, Story} from '@/types';
-import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
+import type {FrameworkChapter, StoryFramework} from '../schema/story-framework';
 import {toPassageId} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {
@@ -12,6 +12,7 @@ import {
   computeAllScenePassageLinks,
   computeScenePassageLinks,
 } from './scene-passage-links';
+import {getChapterAvailableSceneIds, getChapterSceneMeta} from './chapter-scene';
 import {listScenePassagePages} from './scene-passage-text';
 
 function hashString(input: string): string {
@@ -43,55 +44,47 @@ function normalizeLinkForCompare(link: PassageLink): string {
 }
 
 export function passageLinksEqual(expected: PassageLink[], actual: PassageLink[]): boolean {
-  const norm = (links: PassageLink[]) =>
-    links.map(normalizeLinkForCompare).sort().join('|');
+  const norm = (links: PassageLink[]) => links.map(normalizeLinkForCompare).sort().join('|');
   return norm(expected) === norm(actual);
 }
 
-export function sceneEntryKey(chapterIndex: number, sceneIndex: number): string {
-  return `${chapterIndex}:${sceneIndex}`;
+export function chapterSceneRefKey(chapterIndex: number, sceneId: string): string {
+  return `${chapterIndex}:${sceneId}`;
 }
 
-/** 路由指纹：哈希期望链接拓扑（与正文 compiledFingerprint 分离） */
-export function getSceneEntryRoutingFingerprint(
+export function getChapterSceneRoutingFingerprint(
   fw: StoryFramework,
   ch: FrameworkChapter,
-  sceneIndex: number,
+  chapterIndex: number,
+  sceneId: string,
   sceneMap: Map<string, GameScene>,
   plan?: ReturnType<typeof buildSceneRoutingPlan>
 ): string | null {
-  const entry = ch.sceneEntries[sceneIndex];
-  if (!entry) return null;
-  const scene = sceneMap.get(entry.sceneId);
+  const scene = sceneMap.get(sceneId);
   if (!scene) return null;
-
-  const chapterIndex = fw.chapters.indexOf(ch);
-  if (chapterIndex < 0) return null;
 
   try {
     const routingPlan = plan ?? buildSceneRoutingPlan(fw);
-    const links = computeScenePassageLinks(fw, chapterIndex, entry.sceneId, routingPlan);
+    const links = computeScenePassageLinks(fw, chapterIndex, sceneId, routingPlan);
     return hashString(
       JSON.stringify({
         chapter: {
           id: ch.id,
-          startMapNodeId: ch.startMapNodeId ?? '',
-          endMapNodeId: ch.endMapNodeId ?? '',
-          sceneEntryIds: (ch.sceneEntries ?? []).map((e) => e.sceneId),
+          availableSceneIds: getChapterAvailableSceneIds(ch),
+          narrativeGraph: ch.narrativeGraph ?? {},
+          narrativeEdges: ch.narrativeEdges ?? [],
+          startSceneId: ch.startSceneId ?? '',
+          transitions: ch.transitions ?? [],
         },
         scene: {
           id: scene.id,
           mapNodeId: scene.mapNodeId ?? '',
-          mainlineLinkDisplayText: scene.mainlineLinkDisplayText ?? '',
-          branchOptions: scene.branchOptions ?? [],
           conditions: scene.conditions ?? '',
           ruleIds: scene.ruleIds ?? [],
         },
-        entry: {
-          sceneId: entry.sceneId,
-          ruleIds: entry.ruleIds ?? [],
-          sceneIndex,
-        },
+        bindings: (fw.sceneBindings ?? []).filter(
+          (b) => b.chapterId === ch.id && b.sceneId === sceneId
+        ),
         links: links.map(normalizeLinkForCompare),
         maps: (fw.maps ?? []).map((m) => ({
           id: m.id,
@@ -111,9 +104,8 @@ export function getSceneEntryRoutingFingerprint(
 
 export interface RoutingStaleEntry {
   chapterIndex: number;
-  sceneIndex: number;
-  chapterTitle: string;
   sceneId: string;
+  chapterTitle: string;
   sceneName: string;
   expectedLinks: PassageLink[];
   actualLinks: PassageLink[];
@@ -121,7 +113,6 @@ export interface RoutingStaleEntry {
 
 export interface ScenePassageRef {
   chapterIndex: number;
-  sceneIndex: number;
   sceneId: string;
   paginationBaseId: string;
   lookupKeys: string[];
@@ -130,39 +121,22 @@ export interface ScenePassageRef {
 export function buildScenePassageRef(
   fw: StoryFramework,
   chapterIndex: number,
-  sceneIndex: number,
+  sceneId: string,
   lookupKeysForScene?: (chapterIndex: number, sceneId: string, pid: string) => string[]
 ): ScenePassageRef | null {
   const ch = fw.chapters[chapterIndex];
-  const entry = ch?.sceneEntries?.[sceneIndex];
-  if (!entry) return null;
-  const pid = toPassageId(chapterIndex, entry.sceneId);
-  const lookupKeys = lookupKeysForScene?.(chapterIndex, entry.sceneId, pid) ?? [pid];
-  return {
-    chapterIndex,
-    sceneIndex,
-    sceneId: entry.sceneId,
-    paginationBaseId: pid,
-    lookupKeys,
-  };
+  if (!ch || !getChapterAvailableSceneIds(ch).includes(sceneId)) return null;
+  const pid = toPassageId(chapterIndex, sceneId);
+  const lookupKeys = lookupKeysForScene?.(chapterIndex, sceneId, pid) ?? [pid];
+  return {chapterIndex, sceneId, paginationBaseId: pid, lookupKeys};
 }
 
-/** 读取 story.tw 中场景末页的实际链接 */
-export function getActualPassageLinksFromStory(
-  story: Story,
-  ref: ScenePassageRef
-): PassageLink[] {
-  const pages = listScenePassagePages(
-    story,
-    ref.sceneId,
-    ref.paginationBaseId,
-    ref.lookupKeys
-  );
+export function getActualPassageLinksFromStory(story: Story, ref: ScenePassageRef): PassageLink[] {
+  const pages = listScenePassagePages(story, ref.sceneId, ref.paginationBaseId, ref.lookupKeys);
   if (pages.length === 0) return [];
   return pages[pages.length - 1]?.links ?? [];
 }
 
-/** 检测路由与框架不一致的场景（可对比 story.tw 或 routingFingerprint） */
 export function collectRoutingStaleScenes(
   fw: StoryFramework,
   story?: Story,
@@ -179,35 +153,33 @@ export function collectRoutingStaleScenes(
   const stale: RoutingStaleEntry[] = [];
   for (let chi = 0; chi < fw.chapters.length; chi++) {
     const ch = fw.chapters[chi];
-    for (let si = 0; si < (ch.sceneEntries ?? []).length; si++) {
-      const entry = ch.sceneEntries[si];
-      const scene = sceneMap.get(entry.sceneId);
+    for (const sceneId of getChapterAvailableSceneIds(ch)) {
+      const scene = sceneMap.get(sceneId);
       if (!scene) continue;
 
-      const expectedLinks = computeScenePassageLinks(fw, chi, entry.sceneId, plan);
-      const routingFp = getSceneEntryRoutingFingerprint(fw, ch, si, sceneMap, plan);
+      const expectedLinks = computeScenePassageLinks(fw, chi, sceneId, plan);
+      const routingFp = getChapterSceneRoutingFingerprint(fw, ch, chi, sceneId, sceneMap, plan);
+      const storedFp = getChapterSceneMeta(ch, sceneId)?.routingFingerprint;
 
       if (story) {
-        const ref = buildScenePassageRef(fw, chi, si, lookupKeysForScene);
+        const ref = buildScenePassageRef(fw, chi, sceneId, lookupKeysForScene);
         if (!ref) continue;
         const actualLinks = getActualPassageLinksFromStory(story, ref);
         if (!passageLinksEqual(expectedLinks, actualLinks)) {
           stale.push({
             chapterIndex: chi,
-            sceneIndex: si,
+            sceneId,
             chapterTitle: ch.title || ch.id,
-            sceneId: entry.sceneId,
             sceneName: scene.name,
             expectedLinks,
             actualLinks,
           });
         }
-      } else if (routingFp && entry.routingFingerprint !== routingFp) {
+      } else if (routingFp && storedFp !== routingFp) {
         stale.push({
           chapterIndex: chi,
-          sceneIndex: si,
+          sceneId,
           chapterTitle: ch.title || ch.id,
-          sceneId: entry.sceneId,
           sceneName: scene.name,
           expectedLinks,
           actualLinks: [],
@@ -218,63 +190,13 @@ export function collectRoutingStaleScenes(
   return stale;
 }
 
-/** 章节结构变更时可能受影响的场景 id */
-export function collectRoutingAffectedSceneIds(
-  fw: StoryFramework,
-  changedChapterIndices: number[]
-): Set<string> {
-  let plan: ReturnType<typeof buildSceneRoutingPlan>;
-  try {
-    plan = buildSceneRoutingPlan(fw);
-  } catch {
-    return new Set();
-  }
-
-  const affected = new Set<string>();
-  const chapters = fw.chapters ?? [];
-
-  for (const chi of changedChapterIndices) {
-    const ch = chapters[chi];
-    if (!ch) continue;
-    const mainline = plan.chapterMainlineEntries.get(chi) ?? [];
-    for (const item of mainline) affected.add(item.scene.id);
-
-    const prevMainline = plan.chapterMainlineEntries.get(chi - 1) ?? [];
-    const prevLast = prevMainline[prevMainline.length - 1];
-    if (prevLast) affected.add(prevLast.scene.id);
-
-    const nextMainline = plan.chapterMainlineEntries.get(chi + 1) ?? [];
-    const nextFirst = nextMainline[0];
-    if (nextFirst) affected.add(nextFirst.scene.id);
-
-    for (const entry of ch.sceneEntries ?? []) {
-      const scene = (fw.scenes ?? []).find((s) => s.id === entry.sceneId);
-      if ((scene?.branchOptions ?? []).length) affected.add(entry.sceneId);
-      const owner = plan.branchOwnerByChapterScene.get(chapterSceneKey(chi, entry.sceneId));
-      if (owner) {
-        affected.add(entry.sceneId);
-        affected.add(owner.rootSceneId);
-      }
-    }
-  }
-
-  return affected;
-}
-
-/** 将期望链接写入 story.tw 对应场景末页（不改正文） */
 export function applyPassageLinksToStory(
   story: Story,
   ref: ScenePassageRef,
   links: PassageLink[]
 ): boolean {
-  const pages = listScenePassagePages(
-    story,
-    ref.sceneId,
-    ref.paginationBaseId,
-    ref.lookupKeys
-  );
+  const pages = listScenePassagePages(story, ref.sceneId, ref.paginationBaseId, ref.lookupKeys);
   if (pages.length === 0) return false;
-
   const lastPage = pages[pages.length - 1]!;
   const normalized = normalizePassageLinksForStory(links);
   story.passages.set(lastPage.id, {...lastPage, links: normalized});
@@ -282,11 +204,10 @@ export function applyPassageLinksToStory(
 }
 
 export interface SyncPassageLinksResult {
-  synced: Array<{chapterIndex: number; sceneIndex: number; sceneId: string; sceneName: string}>;
+  synced: Array<{chapterIndex: number; sceneId: string; sceneName: string}>;
   skipped: Array<{chapterIndex: number; sceneId: string; reason: string}>;
 }
 
-/** 同步指定场景（或全部）的 passage 链接到 story.tw */
 export function syncPassageLinksInStory(
   story: Story,
   fw: StoryFramework,
@@ -297,7 +218,6 @@ export function syncPassageLinksInStory(
 ): SyncPassageLinksResult {
   const sceneFilter = options.sceneIds ? new Set(options.sceneIds) : null;
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
-  const plan = buildSceneRoutingPlan(fw);
   const allLinks = computeAllScenePassageLinks(fw);
 
   const synced: SyncPassageLinksResult['synced'] = [];
@@ -305,46 +225,42 @@ export function syncPassageLinksInStory(
 
   for (let chi = 0; chi < fw.chapters.length; chi++) {
     const ch = fw.chapters[chi];
-    for (let si = 0; si < (ch.sceneEntries ?? []).length; si++) {
-      const entry = ch.sceneEntries[si];
-      if (sceneFilter && !sceneFilter.has(entry.sceneId)) continue;
+    for (const sceneId of getChapterAvailableSceneIds(ch)) {
+      if (sceneFilter && !sceneFilter.has(sceneId)) continue;
 
-      const ref = buildScenePassageRef(fw, chi, si, options.lookupKeysForScene);
+      const ref = buildScenePassageRef(fw, chi, sceneId, options.lookupKeysForScene);
       if (!ref) {
-        skipped.push({chapterIndex: chi, sceneId: entry.sceneId, reason: '无法解析 passage'});
+        skipped.push({chapterIndex: chi, sceneId, reason: '无法解析 passage'});
         continue;
       }
 
-      const key = chapterSceneKey(chi, entry.sceneId);
+      const key = chapterSceneKey(chi, sceneId);
       const expectedLinks = allLinks.get(key);
       if (!expectedLinks) {
-        skipped.push({chapterIndex: chi, sceneId: entry.sceneId, reason: '无期望链接'});
+        skipped.push({chapterIndex: chi, sceneId, reason: '无期望链接'});
         continue;
       }
 
       const ok = applyPassageLinksToStory(story, ref, expectedLinks);
       if (!ok) {
-        skipped.push({chapterIndex: chi, sceneId: entry.sceneId, reason: 'story.tw 中无对应 passage'});
+        skipped.push({chapterIndex: chi, sceneId, reason: 'story.tw 中无对应 passage'});
         continue;
       }
 
       synced.push({
         chapterIndex: chi,
-        sceneIndex: si,
-        sceneId: entry.sceneId,
-        sceneName: sceneMap.get(entry.sceneId)?.name ?? entry.sceneId,
+        sceneId,
+        sceneName: sceneMap.get(sceneId)?.name ?? sceneId,
       });
     }
   }
 
-  void plan;
   return {synced, skipped};
 }
 
-/** 同步后更新 story-fm 中各 entry 的 routingFingerprint */
 export function patchRoutingFingerprints(
   fw: StoryFramework,
-  synced: Array<{chapterIndex: number; sceneIndex: number}>
+  synced: Array<{chapterIndex: number; sceneId: string}>
 ): StoryFramework {
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
   let plan: ReturnType<typeof buildSceneRoutingPlan>;
@@ -354,41 +270,48 @@ export function patchRoutingFingerprints(
     return fw;
   }
 
-  const syncSet = new Set(synced.map((s) => sceneEntryKey(s.chapterIndex, s.sceneIndex)));
+  const syncSet = new Set(synced.map((s) => chapterSceneRefKey(s.chapterIndex, s.sceneId)));
   return {
     ...fw,
-    chapters: fw.chapters.map((ch, chi) => ({
-      ...ch,
-      sceneEntries: ch.sceneEntries.map((entry, si) => {
-        if (!syncSet.has(sceneEntryKey(chi, si))) return entry;
-        const fp = getSceneEntryRoutingFingerprint(fw, ch, si, sceneMap, plan);
-        return fp ? {...entry, routingFingerprint: fp} : entry;
-      }),
-    })),
+    chapters: fw.chapters.map((ch, chi) => {
+      let next = ch;
+      for (const sceneId of getChapterAvailableSceneIds(ch)) {
+        if (!syncSet.has(chapterSceneRefKey(chi, sceneId))) continue;
+        const fp = getChapterSceneRoutingFingerprint(fw, ch, chi, sceneId, sceneMap, plan);
+        if (!fp) continue;
+        const prev = next.sceneMeta?.[sceneId] ?? {};
+        next = {
+          ...next,
+          sceneMeta: {
+            ...(next.sceneMeta ?? {}),
+            [sceneId]: {...prev, routingFingerprint: fp},
+          },
+        };
+      }
+      return next;
+    }),
   };
 }
 
-export function findSceneEntryBySceneId(
+export function findChapterSceneRef(
   fw: StoryFramework,
   sceneId: string
-): {chapterIndex: number; sceneIndex: number} | null {
+): {chapterIndex: number; sceneId: string} | null {
   for (let chi = 0; chi < fw.chapters.length; chi++) {
-    const si = fw.chapters[chi].sceneEntries.findIndex((e) => e.sceneId === sceneId);
-    if (si >= 0) return {chapterIndex: chi, sceneIndex: si};
+    if (getChapterAvailableSceneIds(fw.chapters[chi]).includes(sceneId)) {
+      return {chapterIndex: chi, sceneId};
+    }
   }
   return null;
 }
 
-/** 判断某场景路由是否与 story.tw 不一致 */
 export function isSceneRoutingStale(
   fw: StoryFramework,
   story: Story,
   chapterIndex: number,
-  sceneIndex: number,
+  sceneId: string,
   lookupKeysForScene?: (chapterIndex: number, sceneId: string, pid: string) => string[]
 ): boolean {
   const stale = collectRoutingStaleScenes(fw, story, lookupKeysForScene);
-  return stale.some((s) => s.chapterIndex === chapterIndex && s.sceneIndex === sceneIndex);
+  return stale.some((s) => s.chapterIndex === chapterIndex && s.sceneId === sceneId);
 }
-
-export type {SceneEntry};

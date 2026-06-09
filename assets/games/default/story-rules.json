@@ -1,13 +1,47 @@
-[
-  {
-    "id": "rule_0001",
-    "name": "onlyOnce",
-    "judgeExpr": "!$entity.is_used",
-    "execution": {"kind": "builtin"},
-    "effects": [
-      {
-        "type": "entity.mark_used"
-      }
-    ]
-  }
-]
+{
+  "rules": [
+    {
+      "id": "rule_0001",
+      "name": "onlyOnce",
+      "judgeExpr": "!$entity.is_used",
+      "execution": {
+        "kind": "builtin"
+      },
+      "effects": [
+        {
+          "type": "entity.mark_used"
+        }
+      ]
+    }
+  ],
+  "sceneBindings": [
+    {
+      "chapterId": "ch0",
+      "sceneId": "scene_0001",
+      "ruleIds": [
+        "rule_0001"
+      ]
+    },
+    {
+      "chapterId": "ch0",
+      "sceneId": "scene_0002",
+      "ruleIds": [
+        "rule_0001"
+      ]
+    },
+    {
+      "chapterId": "ch0",
+      "sceneId": "scene_0003",
+      "ruleIds": [
+        "rule_0001"
+      ]
+    },
+    {
+      "chapterId": "ch0",
+      "sceneId": "scene_0004",
+      "ruleIds": [
+        "rule_0001"
+      ]
+    }
+  ]
+}

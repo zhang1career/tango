@@ -31,6 +31,7 @@ import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
+import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-story-rules';
 import {
   AI_WORD_COUNT_MAX,
   AI_WORD_COUNT_MIN,
@@ -47,7 +48,7 @@ import {
 import {SceneRoutingFields} from './SceneRoutingFields';
 import {SingleSelectField} from './ui/SingleSelectField';
 import {MultiSelectField} from './ui/MultiSelectField';
-import {resolveSceneBackgroundMusic, sceneMediaDefaultsOnBranchFailureToggle} from '../utils/scene-media';
+import {resolveSceneBackgroundMusic} from '../utils/scene-media';
 import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import type {FeaturesConfig} from '../schema/features';
 
@@ -154,13 +155,17 @@ async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok
   return {ok: true};
 }
 
-async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
+async function saveRulesToPreset(fw: StoryFramework, gameId: string): Promise<{ ok: boolean; error?: string }> {
+  const payload = serializeStoryRulesBundle({
+    rules: fw.gameRules ?? [],
+    sceneBindings: fw.sceneBindings ?? [],
+  });
   if (import.meta.env.DEV) {
     try {
       const res = await fetch(getRulesFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(rules),
+        body: formatJsonCompact(payload),
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (res.ok && json.ok) return {ok: true};
@@ -169,7 +174,7 @@ async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: 
       return {ok: false, error: String(e)};
     }
   }
-  const blob = new Blob([formatJsonCompact(rules)], {type: 'application/json'});
+  const blob = new Blob([formatJsonCompact(payload)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -942,80 +947,53 @@ function SceneFormContent({
         placeholder="滚动消息"
       />
 
+      <FieldRow label="失败支线" value={scene.isFailure ? '是' : '否'} editable={editable && !!onUpdate}>
+        <label style={{display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#e8e8e8'}}>
+          <input
+            type="checkbox"
+            checked={!!scene.isFailure}
+            onChange={(e) =>
+              onUpdate!((s) => ({
+                ...s,
+                isFailure: e.target.checked || undefined,
+                ...(!e.target.checked
+                  ? {failureEnding: undefined, branchEndingText: undefined}
+                  : {}),
+              }))
+            }
+          />
+          本场景为失败支线结局
+        </label>
+      </FieldRow>
+      {scene.isFailure ? (
+        <>
+          <FieldRow label="failureEnding" value={scene.failureEnding ?? ''} editable={editable && !!onUpdate}>
+            <input
+              value={scene.failureEnding ?? ''}
+              onChange={(e) => onUpdate!((s) => ({...s, failureEnding: e.target.value || undefined}))}
+              style={styles.input}
+              placeholder="失败结局描述（套入功能面板模板）"
+            />
+          </FieldRow>
+          <FieldRow label="branchEndingText" value={scene.branchEndingText ?? ''} editable={editable && !!onUpdate}>
+            <textarea
+              value={scene.branchEndingText ?? ''}
+              onChange={(e) => onUpdate!((s) => ({...s, branchEndingText: e.target.value || undefined}))}
+              style={{...styles.input, minHeight: 64}}
+              placeholder="可选，覆盖末端附加文案"
+            />
+          </FieldRow>
+        </>
+      ) : null}
+
       {fw ? (
         <SceneRoutingFields
           fw={fw}
           scene={scene}
-          editable={editable && !!onUpdate}
-          onUpdate={onUpdate}
           routingStale={!!routingStaleEntry}
           expectedLinks={routingStaleEntry?.expectedLinks}
-          actualLinks={routingStaleEntry?.actualLinks}
-          onSyncRouting={onSyncSceneRouting}
-          syncingRouting={syncingSceneRouting}
         />
       ) : null}
-
-      <SingleSelectField
-        label="支线失败结局"
-        options={[
-          {id: 'yes', name: '是'},
-          {id: 'no', name: '否'},
-        ]}
-        value={scene.branchFailureEnding ? 'yes' : 'no'}
-        allowEmpty={false}
-        hint="选「是」且 BGM/配图为空时，汇编与运行将回落「功能」页的统一失败结局预设。"
-        readOnly={!editable || !onUpdate}
-        onChange={
-          onUpdate
-            ? (id) => {
-                const yes = id === 'yes';
-                onUpdate((s) => ({
-                  ...s,
-                  branchFailureEnding: yes,
-                  ...sceneMediaDefaultsOnBranchFailureToggle(),
-                }));
-              }
-            : undefined
-        }
-      />
-      {scene.branchFailureEnding ? (
-        <FieldRow
-          label="失败结局说明"
-          value={scene.branchFailureEndingText ?? ''}
-          editable={editable && !!onUpdate}
-        >
-          <input
-            value={scene.branchFailureEndingText ?? ''}
-            onChange={(e) =>
-              onUpdate!((s) => ({
-                ...s,
-                branchFailureEndingText: e.target.value || undefined,
-              }))
-            }
-            style={styles.input}
-            placeholder="汇编模板占位符 {{failureEnding}}"
-          />
-        </FieldRow>
-      ) : null}
-
-      <FieldRow
-        label="主线出口文案"
-        value={scene.mainlineLinkDisplayText ?? ''}
-        editable={editable && !!onUpdate}
-      >
-        <input
-          value={scene.mainlineLinkDisplayText ?? ''}
-          onChange={(e) =>
-            onUpdate!((s) => ({
-              ...s,
-              mainlineLinkDisplayText: e.target.value.trim() || undefined,
-            }))
-          }
-          style={styles.input}
-          placeholder="同章有后续主线且配置了 branchOptions 时必填，如：誓行严禁"
-        />
-      </FieldRow>
 
       <MediaUrlField
         label="开场动画"
@@ -1075,12 +1053,18 @@ async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFrame
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        const parsed = key === 'metadata'
-          ? (data?.characterAttributes ? {characterAttributes: data.characterAttributes} : null)
-          : (Array.isArray(data) ? data : null);
-        if (parsed) {
-          const value = key === 'gameRules' ? normalizeGameRules(parsed as GameRule[]) : parsed;
-          updateFw((d) => ({...d, [key]: value}));
+        if (key === 'gameRules') {
+          const bundle = parseStoryRulesFile(data);
+          updateFw((d) => ({
+            ...d,
+            gameRules: normalizeGameRules(bundle.rules),
+            sceneBindings: bundle.sceneBindings ?? [],
+          }));
+        } else {
+          const parsed = key === 'metadata'
+            ? (data?.characterAttributes ? {characterAttributes: data.characterAttributes} : null)
+            : (Array.isArray(data) ? data : null);
+          if (parsed) updateFw((d) => ({...d, [key]: parsed}));
         }
       }
     } catch {
@@ -1170,10 +1154,15 @@ export function SceneEditor({
 
   useEffect(() => {
     fetch(getRulesFetchUrl(gameId))
-      .then((res) => (res.ok ? res.json() : []))
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        const list = Array.isArray(data) ? normalizeGameRules(data as GameRule[]) : [];
-        if (list.length) updateFw((d) => ({...d, gameRules: list}));
+        if (!data) return;
+        const bundle = parseStoryRulesFile(data);
+        updateFw((d) => ({
+          ...d,
+          gameRules: normalizeGameRules(bundle.rules),
+          sceneBindings: bundle.sceneBindings ?? [],
+        }));
       })
       .catch(() => {});
   }, [updateFw, gameId]);
@@ -1279,7 +1268,7 @@ export function SceneEditor({
     });
 
   const saveRules = async () => {
-    const result = await saveRulesToPreset(fw.gameRules ?? [], gameId);
+    const result = await saveRulesToPreset(fw, gameId);
     if (!result.ok) alert(`保存规则失败: ${result.error}`);
   };
 

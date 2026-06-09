@@ -109,9 +109,12 @@ export function NarrativeEngineEditor() {
       title: ch.title,
       theme: ch.theme,
       narrativeGoal: ch.theme ? `推进主题：${ch.theme}` : '',
-      beats: (ch.sceneEntries ?? []).map((e) => ({
-        sceneId: e.sceneId,
-        summary: `场景 ${e.sceneId}`,
+      beats: (
+        ch.availableSceneIds ??
+        (ch.sceneEntries ?? []).map((e) => e.sceneId)
+      ).map((sid) => ({
+        sceneId: sid,
+        summary: `场景 ${sid}`,
       })),
     }));
     setOutline({...outline, chapters});
