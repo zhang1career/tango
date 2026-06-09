@@ -362,7 +362,7 @@ export default defineConfig(({ mode }) => {
                 }
                 if (resource === 'story-outline') {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ version: '1', rollingHorizonChapters: 5, chapters: [] }));
+                  res.end(JSON.stringify({ version: '1', rollingHorizonChapters: 5, archivedChapterIds: [], chapters: [] }));
                   return;
                 }
                 if (resource === 'story-foreshadowing') {

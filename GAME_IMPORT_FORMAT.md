@@ -344,6 +344,46 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 - **旁白与描写优先**：默认输出以叙述者视角的旁白 + 描写性文字为主；不在正文中堆砌背景百科。
 - **对白宜少**：完整问答、可反复触发的角色台词应写入 `story-characters.json > behaviorLibrary`（玩家通过人物弹窗阅读）。passage 正文**仅保留**推进本场叙事所必需的少量引语（通常 0–2 轮，每轮一问一答）。
 
+#### 叙事标注用语（项目约定与通用对照）
+
+下列标签常见于 `summary` / `emotion` / `constraints`，或 `story-outline.json` 的 `beats[].intent`（旧稿）。**Tango 不校验这些前缀**，但会原样进入叙事引擎生成上下文；新稿建议沿用同一套写法以利 AI 理解。
+
+| 项目用语 | 通用/行业概念 | 典型位置 | 含义与写法 |
+|----------|---------------|----------|------------|
+| **序幕** | **序幕**（prologue）、**框叙事**（frame narrative） | 序章/开篇场景标题、`summary` 前缀 | 在主线开始前用一场高浓度戏确立全篇主题与气压。全书仅少数场景；章节/场景命名可用「××序幕」（如 `序章·潮声序幕`）。 |
+| **闪回序幕** | **闪回序幕** / in medias res 开场 | `intent` / `summary` 前缀，常以 `闪回序幕：` 开头 | **先呈现时间线后段的高潮抉择，再倒叙**进入正文起点。与「序幕」区别：必须写明时间跳转；例：`闪回序幕：虎门价值抉择……；推进：誓行严禁后倒叙——`。**勿**再使用已废弃的「书框」。 |
+| **定场** | **建场** / **定场戏**（establishing beat） | `summary` 或 `intent` 首段，常以 `定场：` 开头 | 交代时地、氛围、局面与体感，建立本场起点气压。**先定场，再推进**。 |
+| **推进** | **情节推进** / **戏剧推进**（plot beat） | 同场后续 AI 块，或 `intent` 中段，常以 `推进：` 开头 | 本场要完成的因果、情绪后果或悬念，把叙事往前推一步。 |
+| **收束** | **收束节拍** / **场内尾声**（scene coda） | 同场末块或 `intent` 末段，常以 `收束：` 开头 | 本场落点、余波或过渡；长线场景可在末块收束情绪，避免悬而不决。 |
+| **曲线：…** | **张力档位** / **情绪强度标记**（dramatic intensity tag） | `emotion`、`constraints` | 标注本块在全书**戏剧强度曲线**上的位置，如 `曲线：序章·峰`、`曲线：经世·中`、`曲线：全剧峰`。写法为项目编码，**非**行业统一格式，但语义等同「这一场该写多紧」。 |
+| **曲线：支线** | **失败支线**的情绪寄存 | 支线场景 AI 块 | 与 `narrativeEdges[]` 中 `isBranch` 失败支线配套：宜短促、白描、突出因果，勿写成主线高潮。 |
+| **dramaticArc** | **章级戏剧弧线**（chapter arc） | `story-outline.json` 章条目（素材字段，非引擎必填） | 章的起止张力走向，如 `低→中`、`全剧峰`、`高·负向谷`。与块级 `曲线：…` 配合，粒度更粗。 |
+| **簇**（如禁烟簇、战罚簇） | **情节簇** / **戏剧段落**（story cluster） | `曲线：` 或大纲命名 | 将多章多场景归为同一戏剧段落，便于统一加压或落谷。 |
+| **定调** | **史料定调** / **leading raw** | `passageBlocks[0]`（`type: "raw"`） | 本场首块史料或引文，**原样展示**；后接 AI 块不得复述其中台词与事实。见下文「`raw` 与 `ai` 分工」。 |
+| **白描** | **白描**（中国文学常用语） | `style`、`constraints` | 以具象画面与动作承载情绪，少用议论与抒情滥调；为本项目推荐文风，非 Tango 独有术语。 |
+
+**单场景多 AI 块推荐节奏**（与上表对应）：
+
+```text
+定场：……        ← 第 1 个 ai 块（或 intent 首段）
+推进：……        ← 中间 ai 块
+推进：……        ← 可选
+收束：……        ← 末块（可选）
+```
+
+**序幕 vs 闪回序幕（选用规则）**
+
+| 选用 | 条件 |
+|------|------|
+| **序幕** | 开篇定调、框定主题；命名（章/场景/心迹标题）；不一定写明倒叙 |
+| **闪回序幕** | `summary` / `intent` 前缀；本场位于后段时间线，正文随后**倒叙**至更早主线 |
+
+**其他不宜当作行业通识的写法**
+
+- `leading raw`：引擎/文档用语，指 passage 首块 `raw`；对作者可说「史料定调块」。
+- `intent`（大纲节拍）：旧式 `story-outline` 字段名，语义等同滚动大纲中的**场景任务**正文；新稿写入 `beats[].summary` 即可。
+- `CONTENT_BIBLE`、`曲线簇` 等：若出现在 `story-fm.json` 备注，属该项目世界观/强度总表，**非** Tango  schema 字段。
+
 #### `raw` 与 `ai` 分工（避免重复扩写）
 
 - `type: "raw"` 的 `text` 会原样展示；若其中已含史料摘录、殿议台词、诏书原句等，**同一信息不得**在相邻 `ai` 块中复述、摘抄或同义改写。
@@ -415,7 +455,7 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 
 | 文件 | 导入 zip | 说明 |
 |------|----------|------|
-| `story-outline.json` | 可选 | 滚动大纲：`chapters[].narrativeGoal`、`beats[]`，与 `story-fm` 章节 id 对齐 |
+| `story-outline.json` | 可选 | 滚动大纲：与 `story-fm` 1:1 同步；`progressAnchorChapterId` + `rollingHorizonChapters` 定义详细维护窗口；`chapters[].narrativeGoal`、`beats[]`（场景任务，UI 称「场景任务」） |
 | `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`（`planned` / `planted` / `resolved`） |
 | `story-canon.json` | 可选 | 叙事状态快照：`scenes[sceneId].facts` / `characterStates` 等 |
 | `story-generation-traces.json` | **不得** | DEV 本地生成轨迹，由编辑器追加，**不要**放入上游 zip |

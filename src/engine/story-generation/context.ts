@@ -9,6 +9,7 @@ import {
   resolveAiBlockCharacterIds,
 } from '@/utils/passage-blocks';
 import {buildSceneRawContextForAiBlock} from './raw-context';
+import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
 
 const BUDGET = {
   maxChapterEvents: 8,
@@ -79,7 +80,12 @@ export function buildGenerationContextPayload(
     if (b.type === 'ai' && b.generatedText?.trim()) priorGenerated.push(truncate(b.generatedText, 200));
   }
 
-  const outlineChapter = outline.chapters.find((c) => c.chapterId === chapter.chapterId);
+  const rollingOutline = buildRollingOutlineGenerationContext(
+    fw,
+    outline,
+    scene.id,
+    chapter.chapterId
+  );
   const openThreads = foreshadowing.threads.filter((t) => t.status !== 'resolved').slice(0, 12);
   const canonScene = canon.scenes[scene.id];
 
@@ -134,7 +140,7 @@ export function buildGenerationContextPayload(
         ? scene.stateActions.give
         : [scene.stateActions.give]
       : undefined,
-    outlineChapter,
+    rollingOutline,
     openForeshadowing: openThreads,
     canonForScene: canonScene,
     priorGeneratedInScene: priorGenerated.length ? priorGenerated : undefined,

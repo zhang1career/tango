@@ -36,7 +36,7 @@ async function runPlanPhase(input: GenerateBlockInput): Promise<{plan: string; p
     input.passageBlockIndex
   );
   const system = `你是叙事引擎的「规划师」。根据真相层与块级规格，输出 JSON：
-{"beats":["本块要完成的 2-4 个微观节拍"],"mustHonor":["必须遵守的约束摘要"],"risks":["可能违背的 continuity 风险"]}
+{"beats":["本块要完成的 2-4 个微观步骤"],"mustHonor":["必须遵守的约束摘要"],"risks":["可能违背的 continuity 风险"]}
 只输出 JSON。`;
   const user = `场景 ${input.scene.id} / 块 ${input.aiBlockIndex + 1}
 
