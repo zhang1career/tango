@@ -9,6 +9,8 @@ import {edgeIsBranch} from './branch-model';
 export interface ChapterSceneMeta {
   compiledFingerprint?: string;
   routingFingerprint?: string;
+  /** story.tw 合并正文指纹（汇编或手工编辑后更新） */
+  compiledTextFingerprint?: string;
 }
 
 export function chapterSceneKey(chapterIndex: number, sceneId: string): string {

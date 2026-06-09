@@ -41,7 +41,12 @@
           "displayText": "继续"
         }
       ],
-      "transitions": []
+      "transitions": [],
+      "sceneMeta": {
+        "scene_0001": {
+          "compiledTextFingerprint": "bd5ae132"
+        }
+      }
     }
   ],
   "initialState": {

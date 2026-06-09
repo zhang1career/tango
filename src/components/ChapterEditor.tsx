@@ -21,13 +21,9 @@ import {preloadFrameworkListData} from '../services/framework-list-data';
 import {fromPersistedFramework, migrateFramework, toPersistedFramework} from '../schema/story-framework';
 import {formatJsonCompact} from '../utils/json-format';
 import {
-  collectRoutingStaleScenes,
-} from '../utils/scene-routing-sync';
-import {
   loadStoryFromGame,
   lookupKeysForSceneEntry,
   saveStoryTw,
-  syncRoutingLinksForGame,
 } from '../services/scene-routing-sync-service';
 import {parseTwee} from '@/engine';
 import {getAIGCApiKey} from '@/config';
@@ -35,8 +31,15 @@ import {useAuth} from '../context/AuthContext';
 import {ChapterGraphCanvas} from './ChapterGraphCanvas';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {compileChapterScene} from '../services/chapter-scene-compile';
+import {saveScenePassageManualEdit} from '../services/scene-passage-edit';
 import {collectStaleCompiledScenes} from '../utils/chapter-compile-helpers';
+import {
+  collectManuallyEditedPassageTargets,
+  compileOverwriteConfirmMessage,
+  readScenePassageFullText,
+} from '../utils/compiled-text-fingerprint';
 import {getChapterSceneMeta} from '../utils/chapter-scene';
+import {stripRawPassageQuoteMarkup} from '../utils/raw-passage-quote-markup';
 import {semanticColors} from '../theme/semantic-colors';
 import {listBtnIcon, listGrids, listStyles} from '../styles/listStyles';
 import {
@@ -49,6 +52,26 @@ import {
 } from './ui/ListPrimitives';
 
 const COMPILE_STALE_HINT = '正文待汇编：场景 passageBlocks 已变更，尚未写入 story.tw';
+
+function EditPassageIcon({style, size = 18}: {style?: React.CSSProperties; size?: number}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
 
 function CompileHammerIcon({
   style,
@@ -148,6 +171,13 @@ const styles: Record<string, React.CSSProperties> = {
   hint: {fontSize: 12, color: '#888', marginBottom: 12},
   compileIconFresh: {color: '#e8e8e8'},
   compileIconStale: {color: semanticColors.warning.fg},
+  textarea: {
+    minHeight: 320,
+    whiteSpace: 'pre-wrap',
+    lineHeight: 1.55,
+    fontFamily: 'inherit',
+    resize: 'vertical',
+  },
 };
 
 export function ChapterEditor({
@@ -164,9 +194,13 @@ export function ChapterEditor({
   const {checkAuthForSave} = useAuth();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [parsedStory, setParsedStory] = useState<ReturnType<typeof parseTwee> | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [compiling, setCompiling] = useState(false);
   const [compileProgress, setCompileProgress] = useState<{current: number; total: number; scene?: string} | null>(null);
+  const [passageEdit, setPassageEdit] = useState<{
+    chapterIndex: number;
+    sceneId: string;
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     void preloadFrameworkListData(updateFw, gameId);
@@ -180,15 +214,6 @@ export function ChapterEditor({
     (chi: number, sid: string) => lookupKeysForSceneEntry(fw, chi, sid),
     [fw]
   );
-
-  const routingStale = useMemo(() => {
-    if (!parsedStory) return [];
-    try {
-      return collectRoutingStaleScenes(fw, parsedStory, lookupKeys);
-    } catch {
-      return [];
-    }
-  }, [fw, parsedStory, lookupKeys]);
 
   const validation = useMemo(() => validateFramework(fw), [fw]);
 
@@ -205,14 +230,23 @@ export function ChapterEditor({
     return map;
   }, [staleScenes, fw.chapters]);
 
-  const saveFm = async () => {
+  const saveFm = async (data: StoryFramework = fw) => {
     const res = await fetch(getStoryFmFetchUrl(gameId), {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: formatJsonCompact(toPersistedFramework(fw)),
+      body: formatJsonCompact(toPersistedFramework(data)),
     });
-    const data = (await res.json()) as {ok?: boolean; error?: string};
-    if (!res.ok || !data.ok) throw new Error(data.error || '保存失败');
+    const body = (await res.json()) as {ok?: boolean; error?: string};
+    if (!res.ok || !body.ok) throw new Error(body.error || '保存失败');
+  };
+
+  const confirmCompileOverwrite = (
+    story: NonNullable<typeof parsedStory>,
+    targets: Array<{chapterIndex: number; sceneId: string}>
+  ): boolean => {
+    const edited = collectManuallyEditedPassageTargets(fw, story, targets, lookupKeys);
+    if (edited.length === 0) return true;
+    return window.confirm(compileOverwriteConfirmMessage(edited.map((e) => e.sceneName)));
   };
 
   const handleSave = async () => {
@@ -234,12 +268,13 @@ export function ChapterEditor({
       addNotification('error', '无法读取 story.tw');
       return;
     }
+    if (!confirmCompileOverwrite(story, [{chapterIndex, sceneId}])) return;
     setCompiling(true);
     try {
       const result = await compileChapterScene(fw, story, chapterIndex, sceneId, gameId);
       updateFw(() => result.fw);
       await saveStoryTw(gameId, result.story);
-      await saveFm();
+      await saveFm(result.fw);
       setParsedStory(result.story);
       addNotification('info', `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}`);
     } catch (e) {
@@ -263,6 +298,11 @@ export function ChapterEditor({
       addNotification('error', '无法读取 story.tw');
       return;
     }
+    const batchTargets = staleScenes.flatMap((s) => {
+      const chi = fw.chapters.findIndex((c) => c.title === s.chapterTitle || c.id === s.chapterTitle);
+      return chi < 0 ? [] : [{chapterIndex: chi, sceneId: s.sceneId}];
+    });
+    if (!confirmCompileOverwrite(story, batchTargets)) return;
     setCompiling(true);
     let nextFw = fw;
     const failures: string[] = [];
@@ -282,7 +322,7 @@ export function ChapterEditor({
       }
       updateFw(() => nextFw);
       await saveStoryTw(gameId, story);
-      await saveFm();
+      await saveFm(nextFw);
       setParsedStory(story);
       if (failures.length) {
         addNotification('error', `汇编完成，${failures.length} 个失败：${failures.slice(0, 3).join('；')}`);
@@ -295,29 +335,6 @@ export function ChapterEditor({
     }
   };
 
-  const handleSyncRouting = async () => {
-    if (routingStale.length === 0) {
-      addNotification('info', '路由已与框架一致');
-      return;
-    }
-    setSyncing(true);
-    try {
-      const result = await syncRoutingLinksForGame(
-        gameId,
-        fw,
-        routingStale.map((s) => s.sceneId)
-      );
-      updateFw(() => result.fw);
-      await saveFm();
-      setParsedStory(result.story);
-      addNotification('info', `已同步 ${result.syncedCount} 个场景链接`);
-    } catch (e) {
-      addNotification('error', (e as Error).message);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const updateChapter = (chi: number, fn: (c: FrameworkChapter) => FrameworkChapter) => {
     updateFw((d) => ({
       ...d,
@@ -326,6 +343,60 @@ export function ChapterEditor({
   };
 
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
+
+  const canEditScenePassage = (chapterIndex: number, sceneId: string): boolean => {
+    const ch = fw.chapters[chapterIndex];
+    if (!ch) return false;
+    if (getChapterSceneMeta(ch, sceneId)?.compiledTextFingerprint) return true;
+    if (!parsedStory) return false;
+    return !!readScenePassageFullText(
+      parsedStory,
+      sceneId,
+      chapterIndex,
+      lookupKeys(chapterIndex, sceneId)
+    ).trim();
+  };
+
+  const openPassageEdit = async (chapterIndex: number, sceneId: string) => {
+    const story = parsedStory ?? (await loadStoryFromGame(gameId));
+    if (!story) {
+      addNotification('error', '无法读取 story.tw');
+      return;
+    }
+    setPassageEdit({
+      chapterIndex,
+      sceneId,
+      text: stripRawPassageQuoteMarkup(
+        readScenePassageFullText(story, sceneId, chapterIndex, lookupKeys(chapterIndex, sceneId))
+      ),
+    });
+  };
+
+  const handleSavePassageEdit = async () => {
+    if (!passageEdit) return;
+    const story = parsedStory ?? (await loadStoryFromGame(gameId));
+    if (!story) {
+      addNotification('error', '无法读取 story.tw');
+      return;
+    }
+    try {
+      const result = saveScenePassageManualEdit(
+        fw,
+        story,
+        passageEdit.chapterIndex,
+        passageEdit.sceneId,
+        passageEdit.text
+      );
+      updateFw(() => result.fw);
+      await saveStoryTw(gameId, result.story);
+      await saveFm(result.fw);
+      setParsedStory(result.story);
+      setPassageEdit(null);
+      addNotification('info', `已保存 ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId} 正文`);
+    } catch (e) {
+      addNotification('error', (e as Error).message);
+    }
+  };
 
   return (
     <div style={styles.container}>
@@ -354,9 +425,6 @@ export function ChapterEditor({
                 <span style={styles.compileIconFresh}>汇编</span>
               </>
             )}
-          </button>
-          <button type="button" style={styles.btn} onClick={() => void handleSyncRouting()} disabled={syncing}>
-            {syncing ? '同步中…' : `同步路由${routingStale.length ? ` (${routingStale.length})` : ''}`}
           </button>
           <button type="button" style={styles.btn} onClick={() => void handleSave()}>
             保存
@@ -399,8 +467,28 @@ export function ChapterEditor({
 
       <p style={styles.hint}>
         叙事态：在叙事图中拖拽节点、拖线连边，选中边可编辑属性。开放世界态：场景 + 地图一步连通（见各场景 mapNodeId）。
-        双击节点可跳转「场景」页。汇编将 passageBlocks 写入 story.tw。
+        双击节点可跳转「场景」页。汇编将 passageBlocks 写入 story.tw；铅笔图标可编辑 story.tw 成稿。
       </p>
+
+      {passageEdit && (
+        <DetailEditModal
+          title={`编辑正文 · ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId}`}
+          open
+          onClose={() => setPassageEdit(null)}
+          editable
+          onSave={() => checkAuthForSave(() => void handleSavePassageEdit())}
+        >
+          <p style={{fontSize: 12, color: '#888', margin: '0 0 8px'}}>
+            编辑合并后的全文；保存后将按配置重新分页写入 story.tw。
+          </p>
+          <textarea
+            style={{...styles.input, ...styles.textarea}}
+            value={passageEdit.text}
+            onChange={(e) => setPassageEdit((prev) => (prev ? {...prev, text: e.target.value} : prev))}
+            rows={16}
+          />
+        </DetailEditModal>
+      )}
 
       {fw.chapters.map((ch, chi) => {
         const open = expanded.has(ch.id);
@@ -421,16 +509,11 @@ export function ChapterEditor({
               <span>
                 {open ? '▼' : '▶'} {ch.title}
               </span>
-              <button
-                type="button"
-                style={{...styles.btn, padding: '2px 8px'}}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  updateFw((d) => ({...d, chapters: d.chapters.filter((_, i) => i !== chi)}));
-                }}
-              >
-                删除
-              </button>
+              <ListDeleteButton
+                stopPropagation
+                confirmMessage={`确认删除章节「${ch.title}」？`}
+                onClick={() => updateFw((d) => ({...d, chapters: d.chapters.filter((_, i) => i !== chi)}))}
+              />
             </div>
             {open && (
               <div style={styles.cardBody}>
@@ -472,7 +555,9 @@ export function ChapterEditor({
                   staleByChapter={staleByChapter}
                   compiling={compiling}
                   updateChapter={updateChapter}
+                  canEditPassage={(sid) => canEditScenePassage(chi, sid)}
                   onCompileScene={(sid) => checkAuthForSave(() => void handleCompileScene(chi, sid))}
+                  onEditPassage={(sid) => checkAuthForSave(() => void openPassageEdit(chi, sid))}
                 />
 
                 <div style={{marginBottom: 24}}>
@@ -518,7 +603,9 @@ function ChapterSceneList({
   staleByChapter,
   compiling,
   updateChapter,
+  canEditPassage,
   onCompileScene,
+  onEditPassage,
 }: {
   chi: number;
   ch: FrameworkChapter;
@@ -528,7 +615,9 @@ function ChapterSceneList({
   staleByChapter: Map<string, Set<string>>;
   compiling: boolean;
   updateChapter: (chi: number, fn: (c: FrameworkChapter) => FrameworkChapter) => void;
+  canEditPassage: (sceneId: string) => boolean;
   onCompileScene: (sceneId: string) => void;
+  onEditPassage: (sceneId: string) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const available = scenes.filter((s) => !pool.includes(s.id));
@@ -629,6 +718,19 @@ function ChapterSceneList({
                       stale={!!isStale}
                       style={isStale ? styles.compileIconStale : styles.compileIconFresh}
                     />
+                  </button>
+                  <button
+                    type="button"
+                    style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+                    disabled={compiling || !canEditPassage(sid)}
+                    onClick={() => onEditPassage(sid)}
+                    title={
+                      canEditPassage(sid)
+                        ? '编辑 story.tw 成稿正文'
+                        : '请先汇编，或确保 story.tw 中已有该场景正文'
+                    }
+                  >
+                    <EditPassageIcon style={styles.compileIconFresh} />
                   </button>
                   <ListDeleteButton
                     title="移出"

@@ -77,7 +77,7 @@ export function SceneRoutingFields({
         </div>
       ) : null}
       <p style={{marginTop: 8, fontSize: 12, color: '#888'}}>
-        路由在「章节」页维护；变更后请在「章节」或「剧情」页同步路由链接。
+        路由在「章节」页维护；变更后请在「剧情」页同步路由链接。
       </p>
     </div>
   );

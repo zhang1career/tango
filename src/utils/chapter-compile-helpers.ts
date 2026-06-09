@@ -8,6 +8,8 @@ import type {GameScene} from '../schema/game-scene';
 import {getChapterAvailableSceneIds, getChapterSceneMeta, patchChapterSceneMeta} from './chapter-scene';
 import {getChapterSceneRoutingFingerprint} from './scene-routing-sync';
 import {getScenePassageBlocks} from './passage-blocks';
+import type {Story} from '@/types';
+import {hashScenePassageFullText, readScenePassageFullText} from './compiled-text-fingerprint';
 
 function hashString(input: string): string {
   let hash = 2166136261;
@@ -96,7 +98,11 @@ export function patchSceneCompileMeta(
   fw: StoryFramework,
   chapterIndex: number,
   sceneId: string,
-  patch: {compiledFingerprint?: string; routingFingerprint?: string}
+  patch: {
+    compiledFingerprint?: string;
+    routingFingerprint?: string;
+    compiledTextFingerprint?: string;
+  }
 ): StoryFramework {
   return {
     ...fw,
@@ -133,16 +139,22 @@ export function collectStaleCompiledScenes(fw: StoryFramework): Array<{
 export function patchCompiledAndRoutingFingerprints(
   fw: StoryFramework,
   chapterIndex: number,
-  sceneId: string
+  sceneId: string,
+  story?: Story,
+  lookupKeys: string[] = []
 ): StoryFramework {
   const ch = fw.chapters[chapterIndex];
   if (!ch) return fw;
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
   const compiledFp = getSceneCompileFingerprint(fw, ch, chapterIndex, sceneId, sceneMap);
   const routingFp = getChapterSceneRoutingFingerprint(fw, ch, chapterIndex, sceneId, sceneMap);
+  const compiledTextFingerprint = story
+    ? hashScenePassageFullText(readScenePassageFullText(story, sceneId, chapterIndex, lookupKeys))
+    : undefined;
   return patchSceneCompileMeta(fw, chapterIndex, sceneId, {
     compiledFingerprint: compiledFp ?? undefined,
     routingFingerprint: routingFp ?? undefined,
+    compiledTextFingerprint,
   });
 }
 

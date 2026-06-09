@@ -33,6 +33,7 @@ import {
   NarrativeEdgeActionsContext,
 } from './NarrativeBezierEdge';
 import {narrativeEdgeStroke, sceneModePalette, semanticColors} from '../theme/semantic-colors';
+import {ListDeleteButton} from './ui/ListPrimitives';
 
 const GRID_GAP = 140;
 const NODE_WIDTH = 88;
@@ -333,21 +334,21 @@ function EdgePropsPanel({
     color: '#e8e8e8',
     fontSize: 13,
   };
-  const btnStyle: React.CSSProperties = {
-    padding: '6px 12px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 12,
-  };
-
   const sceneLabel = (id: string) => sceneMap.get(id)?.name ?? id;
 
   return (
     <div style={{background: '#1e1e32', borderRadius: 8, padding: 14, border: '1px solid #444', width: 280}}>
-      <div style={{fontSize: 13, color: semanticColors.mainline.stroke, marginBottom: 12}}>编辑叙事边</div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 12,
+        }}
+      >
+        <div style={{fontSize: 13, color: semanticColors.mainline.stroke}}>编辑叙事边</div>
+        <ListDeleteButton title="删除边" confirmMessage="确认删除该叙事边？" onClick={onDelete} />
+      </div>
       <div style={{display: 'flex', gap: 8, marginBottom: 10}}>
         <div style={{flex: 1}}>
           <label style={{fontSize: 12, color: '#888'}}>从</label>
@@ -414,9 +415,6 @@ function EdgePropsPanel({
           章节只定义结构；是否失败结局请在目标场景的「失败支线」中配置。
         </p>
       </div>
-      <button type="button" onClick={onDelete} style={{...btnStyle, color: '#e57373'}}>
-        删除边
-      </button>
     </div>
   );
 }
