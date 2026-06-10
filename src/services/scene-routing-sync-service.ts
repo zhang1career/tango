@@ -3,7 +3,7 @@
  */
 
 import {getGameContentUrl} from '@/config';
-import {frameworkToStory, parseTwee, serializeStorySugarcube} from '@/engine';
+import {frameworkToStory, parseTwee, serializeStorySugarcube, syncStoryTitleFromFramework} from '@/engine';
 import type {StoryFramework} from '@/schema/story-framework';
 import {toPassageId} from '@/schema/story-framework';
 import {
@@ -62,11 +62,33 @@ export async function syncRoutingLinksForGame(
   syncedCount: number;
   skippedCount: number;
 }> {
-  const story = await loadStoryFromGame(gameId);
+  return persistFrameworkRoutingToStory(gameId, fw, {sceneIds});
+}
+
+/** 将章节结构（叙事图、跨章过渡、叙事入口等）同步到 story.tw */
+export async function persistFrameworkRoutingToStory(
+  gameId: string,
+  fw: StoryFramework,
+  options: {
+    story?: ReturnType<typeof parseTwee> | null;
+    sceneIds?: string[];
+    syncStartPassage?: boolean;
+  } = {}
+): Promise<{
+  fw: StoryFramework;
+  story: ReturnType<typeof parseTwee>;
+  syncedCount: number;
+  skippedCount: number;
+}> {
+  const story = options.story ?? (await loadStoryFromGame(gameId));
   if (!story) throw new Error('无法读取 story.tw');
 
+  if (options.syncStartPassage !== false) {
+    syncStoryTitleFromFramework(story, fw);
+  }
+
   const result = syncPassageLinksInStory(story, fw, {
-    sceneIds,
+    sceneIds: options.sceneIds,
     lookupKeysForScene: (chi, sid) => lookupKeysForSceneEntry(fw, chi, sid),
   });
   const nextFw = patchRoutingFingerprints(fw, result.synced);

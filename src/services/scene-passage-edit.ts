@@ -2,8 +2,7 @@ import {getPassagePageCharsMax, getPassagePageCharsMin} from '@/config';
 import {frameworkToStory, parseTwee, syncStoryTitleFromFramework} from '@/engine';
 import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
-import {patchSceneCompileMeta, scenePassagePid} from '../utils/chapter-compile-helpers';
-import {hashScenePassageFullText, readScenePassageFullText} from '../utils/compiled-text-fingerprint';
+import {patchCompiledAndRoutingFingerprints, scenePassagePid} from '../utils/chapter-compile-helpers';
 import {
   applySegmentsToScenePassageBlocks,
   renderPassageBlockSegments,
@@ -71,9 +70,12 @@ export function saveScenePassageManualEdit(
   story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
   syncStoryTitleFromFramework(story, fwWithScene);
 
-  const compiledTextFingerprint = hashScenePassageFullText(
-    readScenePassageFullText(story, sceneId, chapterIndex, lookupKeys)
+  const nextFw = patchCompiledAndRoutingFingerprints(
+    fwWithScene,
+    chapterIndex,
+    sceneId,
+    story,
+    lookupKeys
   );
-  const nextFw = patchSceneCompileMeta(fwWithScene, chapterIndex, sceneId, {compiledTextFingerprint});
   return {fw: nextFw, story};
 }

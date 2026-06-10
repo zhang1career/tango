@@ -23,6 +23,7 @@ import {formatJsonCompact} from '../utils/json-format';
 import {
   loadStoryFromGame,
   lookupKeysForSceneEntry,
+  persistFrameworkRoutingToStory,
   saveStoryTw,
 } from '../services/scene-routing-sync-service';
 import {parseTwee} from '@/engine';
@@ -251,8 +252,24 @@ export function ChapterEditor({
 
   const handleSave = async () => {
     try {
-      await saveFm();
-      addNotification('info', '章节已保存');
+      const story = parsedStory ?? (await loadStoryFromGame(gameId));
+      if (!story) {
+        await saveFm();
+        addNotification('info', '章节已保存（无 story.tw，跳过路由同步）');
+        return;
+      }
+      const syncResult = await persistFrameworkRoutingToStory(gameId, fw, {story});
+      updateFw(() => syncResult.fw);
+      await saveFm(syncResult.fw);
+      setParsedStory(syncResult.story);
+      const skippedHint =
+        syncResult.skippedCount > 0 ? `（${syncResult.skippedCount} 个场景尚无 passage，已跳过）` : '';
+      addNotification(
+        'info',
+        syncResult.syncedCount > 0
+          ? `章节已保存；已同步 ${syncResult.syncedCount} 个场景的路由链接${skippedHint}`
+          : `章节已保存${skippedHint || '；story.tw 路由已是最新'}`
+      );
     } catch (e) {
       addNotification('error', (e as Error).message);
     }
@@ -446,7 +463,7 @@ export function ChapterEditor({
               </>
             )}
           </button>
-          <button type="button" style={styles.btn} onClick={() => void handleSave()}>
+          <button type="button" style={styles.btn} onClick={() => checkAuthForSave(() => void handleSave())}>
             保存
           </button>
           <ListAddButton
@@ -487,7 +504,7 @@ export function ChapterEditor({
 
       <p style={styles.hint}>
         叙事态：在叙事图中拖拽节点、拖线连边，选中边可编辑属性。开放世界态：场景 + 地图一步连通（见各场景 mapNodeId）。
-        双击节点可跳转「场景」页。汇编将 passageBlocks 写入 story.tw；铅笔图标可编辑 story.tw 成稿。
+        双击节点可跳转「场景」页。保存会将叙事图、跨章过渡、叙事入口等路由写入 story.tw；汇编将 passageBlocks 写入 story.tw；铅笔图标可编辑 story.tw 成稿。
       </p>
 
       {passageEdit && (
@@ -600,7 +617,7 @@ export function ChapterEditor({
                   </select>
                   {chi === 0 && ch.startSceneId ? (
                     <p style={{fontSize: 12, color: '#888', margin: '4px 0 0'}}>
-                      「游戏」页首屏由第一章叙事入口决定；保存章节并汇编后会写入 story.tw 的 start。
+                      「游戏」页首屏由第一章叙事入口决定；保存章节后会写入 story.tw 的 start。
                     </p>
                   ) : null}
                 </div>
