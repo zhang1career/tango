@@ -10,7 +10,27 @@ import {getGenerationAuditMode, getGenerationAuditRetries} from '@/config';
 import {chatCompletion, previewText, requireAigcConfig} from './llm';
 import type {GenerateBlockInput, GenerateBlockResult, StoryGenerationBundle} from './types';
 import {collectPrecedingRawTextsAtBlockIndex} from './raw-context';
+import {resolveAiBlockCharacterIds} from '@/utils/passage-blocks';
 import {stripAiTextOverlappingRaw} from '@/utils/strip-ai-raw-overlap';
+
+function buildCanonCharacterIdGuide(input: GenerateBlockInput): string {
+  const nameById = new Map(
+    (input.bundle.fw.characters ?? []).map((c) => [c.id, c.name ?? c.id])
+  );
+  const sceneIds = new Set([
+    ...(input.scene.characterIds ?? []),
+    ...resolveAiBlockCharacterIds(input.aiBlock, input.scene),
+  ]);
+  const sceneLines = [...sceneIds].map((id) => `${id}：${nameById.get(id) ?? '（未命名）'}`);
+  const allLines = (input.bundle.fw.characters ?? []).map((c) => `${c.id}：${c.name ?? c.id}`);
+  return [
+    '本场相关人物 id：',
+    ...(sceneLines.length ? sceneLines : ['（无绑定角色）']),
+    '',
+    'story-fm 全部人物 id（characterStates 的键必须从中选取）：',
+    ...(allLines.length ? allLines : ['（无注册角色）']),
+  ].join('\n');
+}
 
 const WRITE_SYSTEM_BASE = `你是文字冒险游戏编剧。遵守块级规格与真相层约束，完成有限演义扩写。
 - behaviorLibrary 是对话互动素材，不要嵌入 passage 正文。
@@ -140,9 +160,17 @@ async function settleCanon(
   canon: StoryCanon
 ): Promise<StoryCanon> {
   const system = `你是图书管理员。根据本场新增正文，更新场景状态快照。输出 JSON：
-{"facts":["客观事实"],"openQuestions":["未解问题"],"characterStates":{"人物id":{"emotion":"…","knows":["…"]}}}`;
+{"summary":"1-3句本场结局的客观陈述","facts":["可核验事实"],"openQuestions":["未解问题"],"characterStates":{"人物id":{"location":"…","emotion":"…","knows":["该角色已知事实"]}}}
+规则：
+- summary：浓缩本场发生了什么、决定了什么，供后续场次快速接续
+- facts：仅收录客观可核验事实（事件、决定、道具得失、关系变化、时空落点）；禁止氛围描写、心理修辞、感官铺陈、文学复述
+- openQuestions：本场结束时仍未解答的叙事问题
+- characterStates：仅列本场出场或状态有变的角色；knows 只写该角色确知的信息
+- characterStates 的键必须使用 story-fm 人物 id（见用户消息中的 id 对照表），禁止使用中文名、尊称（如「林大人」）或「主角」等泛称`;
   const user = `场景 ${input.scene.id} 新正文：
 ${generatedText}
+
+${buildCanonCharacterIdGuide(input)}
 
 已有 canon：
 ${JSON.stringify(canon.scenes[input.scene.id] ?? {}, null, 2)}`;
@@ -154,6 +182,7 @@ ${JSON.stringify(canon.scenes[input.scene.id] ?? {}, null, 2)}`;
     {temperature: 0.1}
   );
   const parsed = parseJsonFromModel<{
+    summary?: string;
     facts?: string[];
     openQuestions?: string[];
     characterStates?: StoryCanon['scenes'][string]['characterStates'];
@@ -165,6 +194,7 @@ ${JSON.stringify(canon.scenes[input.scene.id] ?? {}, null, 2)}`;
       ...canon.scenes,
       [input.scene.id]: {
         lastUpdatedAt: new Date().toISOString(),
+        summary: parsed?.summary?.trim() || undefined,
         facts: parsed?.facts,
         openQuestions: parsed?.openQuestions,
         characterStates: parsed?.characterStates,

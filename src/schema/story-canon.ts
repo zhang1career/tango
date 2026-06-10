@@ -13,8 +13,10 @@ export interface CanonCharacterState {
 
 export interface CanonSceneState {
   lastUpdatedAt?: string;
+  /** 本场结局的浓缩陈述，供后续场次快速接续 */
+  summary?: string;
   characterStates?: Record<string, CanonCharacterState>;
-  /** 本场结束后仍为真的客观事实 */
+  /** 本场结束后仍可核验的客观事实（事件、决定、道具、关系、时空落点） */
   facts?: string[];
   openQuestions?: string[];
 }
@@ -52,6 +54,7 @@ export function normalizeStoryCanon(raw: unknown): StoryCanon {
       }
       scenes[sid] = {
         lastUpdatedAt: typeof v.lastUpdatedAt === 'string' ? v.lastUpdatedAt : undefined,
+        summary: typeof v.summary === 'string' && v.summary.trim() ? v.summary.trim() : undefined,
         characterStates: Object.keys(characterStates).length ? characterStates : undefined,
         facts: Array.isArray(v.facts) ? v.facts.map(String) : undefined,
         openQuestions: Array.isArray(v.openQuestions) ? v.openQuestions.map(String) : undefined,

@@ -17,7 +17,7 @@ import {
 } from '../utils/scene-media';
 import {edgeIsBranch, sceneFailureEndingText, sceneIsFailure} from '../utils/branch-model';
 import {getFailureBranchConfig} from '../utils/failure-branch-features';
-import {inferChapterEndSceneIds, isNarrativeGraph} from '../utils/chapter-scene';
+import {getChapterAvailableSceneIds, inferChapterEndSceneIds, isNarrativeGraph} from '../utils/chapter-scene';
 import {ACTIVE_CHAPTER_VAR, chapterModeFromRouting, chapterModeVar} from '../utils/chapter-runtime-vars';
 
 function escapeHtml(text: string): string {
@@ -200,7 +200,26 @@ export function frameworkToStory(fw: StoryFramework): Story {
   };
 }
 
+/** 游戏起始 passage：第一章「叙事入口」对应场景的名称（与 story.tw :: 标题一致） */
+export function resolveGameStartPassageId(fw: StoryFramework): string {
+  const firstCh = fw.chapters?.[0];
+  if (!firstCh) return 'Start';
+  const startSceneId = firstCh.startSceneId ?? getChapterAvailableSceneIds(firstCh)[0];
+  if (!startSceneId) return 'Start';
+  const scene = (fw.scenes ?? []).find((s) => s.id === startSceneId);
+  if (scene?.name?.trim()) return scene.name.trim();
+  return toPassageId(0, startSceneId);
+}
+
+/** 将 story-fm 中的标题、游戏入口、首章运行时变量同步到已解析的 story.tw */
 export function syncStoryTitleFromFramework(story: Story, fw: StoryFramework): void {
   const title = fw.title?.trim();
   if (title) story.title = title;
+
+  story.startPassageId = resolveGameStartPassageId(fw);
+
+  const template = frameworkToStory(fw);
+  if (template.metadata) {
+    story.metadata = {...(story.metadata ?? {}), ...template.metadata};
+  }
 }

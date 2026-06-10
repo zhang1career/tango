@@ -12,6 +12,7 @@ import {
 } from '@/services/scene-routing-sync-service';
 import {collectRoutingStaleScenes} from '../utils/scene-routing-sync';
 import {toPersistedFramework} from '../schema/story-framework';
+import {loadFrameworkWithListData, mergeRuntimeFrameworkListData} from '../services/framework-list-data';
 import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
@@ -30,7 +31,8 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
 import {EntityFlatList} from './ui/EntityFlatList';
-import {ListAddButton} from './ui/ListPrimitives';
+import {ListAddButton, ListDeleteButton, ListOpsCell} from './ui/ListPrimitives';
+import {listBtnIcon} from '../styles/listStyles';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
 import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-story-rules';
@@ -70,17 +72,59 @@ const collapsibleStyles: Record<string, React.CSSProperties> = {
   body: {paddingTop: 8},
 };
 
+function SaveIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+}
+
+function GenerateHammerIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9" />
+      <path d="m18 15 4-4" />
+      <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756l-.455.453" />
+    </svg>
+  );
+}
+
 function CollapsibleSection({
   title,
   expanded,
   onToggle,
-  rightAction,
+  headActions,
   children,
 }: {
   title: string;
   expanded: boolean;
   onToggle: () => void;
-  rightAction?: React.ReactNode;
+  headActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -90,13 +134,24 @@ function CollapsibleSection({
         onClick={onToggle}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && onToggle()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
       >
-        <span style={collapsibleStyles.title}>{title}</span>
-        <span style={{display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0}}>
-          {rightAction && <span onClick={(e) => e.stopPropagation()}>{rightAction}</span>}
-          <span>{expanded ? '▼' : '▶'}</span>
+        <span style={{display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0}}>
+          <span style={{flexShrink: 0}}>{expanded ? '▼' : '▶'}</span>
+          <span style={collapsibleStyles.title}>{title}</span>
         </span>
+        {headActions ? (
+          <ListOpsCell>
+            <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
+              {headActions}
+            </span>
+          </ListOpsCell>
+        ) : null}
       </div>
       {expanded && <div style={collapsibleStyles.body}>{children}</div>}
     </div>
@@ -231,22 +286,16 @@ function AiBlockFields({
   block,
   aiIndex,
   editable,
-  generating,
   sceneCharacterIds,
   characterOptions,
   onUpdate,
-  onGenerate,
-  onSave,
 }: {
   block: ScenePassageAiBlock;
   aiIndex: number;
   editable: boolean;
-  generating: boolean;
   sceneCharacterIds: string[];
   characterOptions: Array<{id: string; name: string}>;
   onUpdate?: (fn: (b: ScenePassageAiBlock) => ScenePassageAiBlock) => void;
-  onGenerate?: () => void;
-  onSave?: () => void | Promise<void>;
 }) {
   const patch = (p: Partial<ScenePassageAiBlock>) =>
     onUpdate?.((b) => ({...b, ...p}));
@@ -370,43 +419,14 @@ function AiBlockFields({
         />
       </FieldRow>
       <div style={styles.row}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            marginBottom: 6,
-          }}
-        >
-          <label style={{...styles.label, marginBottom: 0}}>generatedText</label>
-          {editable && (onGenerate || onSave) && (
-            <div style={{display: 'flex', gap: 8, flexShrink: 0}}>
-              {onGenerate && (
-                <button
-                  type="button"
-                  style={{...styles.btnSmall, opacity: generating ? 0.6 : 1}}
-                  disabled={generating || !block.summary?.trim()}
-                  onClick={onGenerate}
-                >
-                  {generating ? '生成中…' : '生成内容'}
-                </button>
-              )}
-              {onSave && (
-                <button type="button" style={styles.btnSmall} onClick={() => void onSave()}>
-                  保存
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        <label style={styles.label}>generatedText</label>
         {editable && onUpdate ? (
           <textarea
             value={block.generatedText ?? ''}
             onChange={(e) => patch({generatedText: e.target.value || undefined})}
             rows={8}
             style={{...styles.input, ...styles.textarea, minHeight: 160, whiteSpace: 'pre-wrap', lineHeight: 1.55}}
-            placeholder="（未生成，可手动编辑或点击「生成内容」；对白宜每句单独一行）"
+            placeholder="（未生成，可手动编辑或点击标题栏锤子图标生成；对白宜每句单独一行）"
           />
         ) : block.generatedText ? (
           <textarea
@@ -569,20 +589,42 @@ function SceneFormContent({
           title={aiBlockCollapseTitle(block, aiIndex)}
           expanded={expandedAiBlocks.has(aiIndex)}
           onToggle={() => toggleAiBlock(aiIndex)}
-          rightAction={
+          headActions={
             editable && onUpdate ? (
-              <button
-                type="button"
-                style={{
-                  ...styles.btnIcon,
-                  ...(aiBlocks.length <= 1 ? {opacity: 0.45, cursor: 'not-allowed'} : {}),
-                }}
-                disabled={aiBlocks.length <= 1}
-                title={aiBlocks.length <= 1 ? '至少保留一个 AI 块' : '删除此 AI 块'}
-                onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
-              >
-                ×
-              </button>
+              <>
+                <button
+                  type="button"
+                  style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+                  disabled={generatingAiIndex === aiIndex || !block.summary?.trim()}
+                  title={
+                    generatingAiIndex === aiIndex
+                      ? '生成中…'
+                      : !block.summary?.trim()
+                        ? '请先填写 summary'
+                        : '生成内容'
+                  }
+                  onClick={() => void handleGenerateBlock(aiIndex)}
+                >
+                  <GenerateHammerIcon />
+                </button>
+                {onSaveScene ? (
+                  <button
+                    type="button"
+                    style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+                    title="保存场景"
+                    onClick={() => void onSaveScene()}
+                  >
+                    <SaveIcon />
+                  </button>
+                ) : null}
+                <ListDeleteButton
+                  title="删除此 AI 块"
+                  confirmMessage={`确认删除「${aiBlockCollapseTitle(block, aiIndex)}」？`}
+                  disabled={aiBlocks.length <= 1}
+                  stopPropagation
+                  onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
+                />
+              </>
             ) : undefined
           }
         >
@@ -590,12 +632,9 @@ function SceneFormContent({
             block={block}
             aiIndex={aiIndex}
             editable={editable}
-            generating={generatingAiIndex === aiIndex}
             sceneCharacterIds={scene.characterIds ?? []}
             characterOptions={characterIds}
             onUpdate={onUpdate ? (fn) => onUpdate((s) => upsertAiBlock(s, aiIndex, fn)) : undefined}
-            onGenerate={() => void handleGenerateBlock(aiIndex)}
-            onSave={editable && onSaveScene ? () => onSaveScene() : undefined}
           />
         </CollapsibleSection>
       ))}
@@ -1125,8 +1164,12 @@ export function SceneEditor({
     async (sceneId: string) => {
       setSyncingSceneRoutingId(sceneId);
       try {
-        const result = await syncRoutingLinksForGame(gameId, fw, [sceneId]);
-        updateFw(() => result.fw);
+        const loaded = await loadFrameworkWithListData(gameId);
+        if (!loaded) throw new Error('无法加载 story-fm，已取消路由同步以免覆盖章节数据');
+        const fwForSync = mergeRuntimeFrameworkListData(loaded, fw);
+        const result = await syncRoutingLinksForGame(gameId, fwForSync, [sceneId]);
+        const nextFw = mergeRuntimeFrameworkListData(result.fw, fw);
+        updateFw(() => nextFw);
         await persistFrameworkRouting(result.fw);
         await reloadParsedStory();
       } finally {

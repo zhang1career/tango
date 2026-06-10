@@ -11,6 +11,7 @@ import {
 import {buildSceneRawContextForAiBlock} from './raw-context';
 import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
 import {openForeshadowingThreads} from '@/schema/story-foreshadowing';
+import {buildPriorCanonInjection} from './prior-canon';
 
 const BUDGET = {
   maxChapterEvents: 8,
@@ -89,6 +90,7 @@ export function buildGenerationContextPayload(
   );
   const openThreads = openForeshadowingThreads(foreshadowing.threads);
   const canonScene = canon.scenes[scene.id];
+  const priorCanon = buildPriorCanonInjection(fw, canon, chapter.chapterIndex, chapter.sceneIndex);
 
   const chapterEventIds = new Set<string>();
   for (const sid of pool) {
@@ -144,6 +146,7 @@ export function buildGenerationContextPayload(
     rollingOutline,
     openForeshadowing: openThreads,
     canonForScene: canonScene,
+    priorCanon,
     priorGeneratedInScene: priorGenerated.length ? priorGenerated : undefined,
     priorGeneratedWarning:
       priorGenerated.length < passageBlockIndex - 1

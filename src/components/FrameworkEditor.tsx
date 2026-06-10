@@ -31,6 +31,7 @@ import {useAuth} from '@/context/AuthContext';
 import {frameworkToStory, parseTwee, syncStoryTitleFromFramework} from '@/engine';
 
 import {EDIT_MODAL_MAX_WIDTH} from '../styles/editorStyles';
+import {modalTitleStyle, pageTitleStyle} from '@/styles/appTheme';
 import {semanticColors} from '../theme/semantic-colors';
 import {formatJsonCompact} from '../utils/json-format';
 import {
@@ -881,7 +882,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: 16,
     borderBottom: '1px solid #333',
   },
-  title: {fontSize: 20, fontWeight: 600, margin: 0},
+  title: pageTitleStyle,
   actions: {display: 'flex', gap: 10},
   btn: {
     padding: '8px 16px',
@@ -943,7 +944,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: {fontSize: 18, fontWeight: 600, margin: 0},
+  modalTitle: modalTitleStyle,
   modalClose: {
     background: 'none',
     border: 'none',

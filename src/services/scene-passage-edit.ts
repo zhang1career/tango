@@ -4,7 +4,11 @@ import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {patchSceneCompileMeta, scenePassagePid} from '../utils/chapter-compile-helpers';
 import {hashScenePassageFullText, readScenePassageFullText} from '../utils/compiled-text-fingerprint';
-import {restoreRawPassageQuoteMarkup} from '../utils/raw-passage-quote-markup';
+import {
+  applySegmentsToScenePassageBlocks,
+  renderPassageBlockSegments,
+  type PassageBlockSegment,
+} from '../utils/passage-block-segments';
 import {applyScenePassageFullText} from '../utils/scene-passage-text';
 import {lookupKeysForSceneEntry} from './scene-routing-sync-service';
 import {sceneIsFailure} from '../utils/branch-model';
@@ -31,27 +35,32 @@ export function saveScenePassageManualEdit(
   story: ReturnType<typeof parseTwee>,
   chapterIndex: number,
   sceneId: string,
-  fullText: string
+  segments: PassageBlockSegment[]
 ): {fw: StoryFramework; story: ReturnType<typeof parseTwee>} {
   const scene = (fw.scenes ?? []).find((s) => s.id === sceneId);
   const ch = fw.chapters[chapterIndex];
   if (!scene || !ch) throw new Error(`未找到场景 ${sceneId}`);
 
+  const patchedScene = applySegmentsToScenePassageBlocks(scene, segments);
   const pid = scenePassagePid(fw, chapterIndex, sceneId);
-  const fullStory = frameworkToStory(fw);
+  const fwWithScene = {
+    ...fw,
+    scenes: (fw.scenes ?? []).map((s) => (s.id === sceneId ? patchedScene : s)),
+  };
+  const fullStory = frameworkToStory(fwWithScene);
   const template = fullStory.passages.get(pid);
   if (!template) throw new Error(`未找到 passage 模板: ${pid}`);
 
-  const meta = {...sceneAuthoritativeMetadata(scene, fw), ...(template.metadata ?? {})};
-  const lookupKeys = lookupKeysForSceneEntry(fw, chapterIndex, sceneId);
-  const storedText = restoreRawPassageQuoteMarkup(fullText, scene);
+  const meta = {...sceneAuthoritativeMetadata(patchedScene, fwWithScene), ...(template.metadata ?? {})};
+  const lookupKeys = lookupKeysForSceneEntry(fwWithScene, chapterIndex, sceneId);
+  const storedText = renderPassageBlockSegments(segments);
   applyScenePassageFullText(story, {
     sceneId,
     paginationBaseId: pid,
     lookupKeys,
     rootPassage: {
       ...template,
-      name: template.name ?? scene.name ?? pid,
+      name: template.name ?? patchedScene.name ?? pid,
       metadata: Object.keys(meta).length ? meta : undefined,
     },
     fullText: storedText,
@@ -60,11 +69,11 @@ export function saveScenePassageManualEdit(
   });
 
   story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
-  syncStoryTitleFromFramework(story, fw);
+  syncStoryTitleFromFramework(story, fwWithScene);
 
   const compiledTextFingerprint = hashScenePassageFullText(
     readScenePassageFullText(story, sceneId, chapterIndex, lookupKeys)
   );
-  const nextFw = patchSceneCompileMeta(fw, chapterIndex, sceneId, {compiledTextFingerprint});
+  const nextFw = patchSceneCompileMeta(fwWithScene, chapterIndex, sceneId, {compiledTextFingerprint});
   return {fw: nextFw, story};
 }

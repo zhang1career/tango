@@ -16,7 +16,7 @@ import {
 import {validateFramework} from '../schema/story-framework';
 import {useGameId} from '../context/GameIdContext';
 import {useNotification} from '../context/NotificationContext';
-import {getStoryFmFetchUrl} from '@/config';
+import {getScenesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {preloadFrameworkListData} from '../services/framework-list-data';
 import {fromPersistedFramework, migrateFramework, toPersistedFramework} from '../schema/story-framework';
 import {formatJsonCompact} from '../utils/json-format';
@@ -39,7 +39,7 @@ import {
   readScenePassageFullText,
 } from '../utils/compiled-text-fingerprint';
 import {getChapterSceneMeta} from '../utils/chapter-scene';
-import {stripRawPassageQuoteMarkup} from '../utils/raw-passage-quote-markup';
+import {passageBlocksToEditSegments, type PassageBlockSegment} from '../utils/passage-block-segments';
 import {semanticColors} from '../theme/semantic-colors';
 import {listBtnIcon, listGrids, listStyles} from '../styles/listStyles';
 import {
@@ -199,7 +199,7 @@ export function ChapterEditor({
   const [passageEdit, setPassageEdit] = useState<{
     chapterIndex: number;
     sceneId: string;
-    text: string;
+    segments: PassageBlockSegment[];
   } | null>(null);
 
   useEffect(() => {
@@ -363,12 +363,21 @@ export function ChapterEditor({
       addNotification('error', '无法读取 story.tw');
       return;
     }
+    const scene = sceneMap.get(sceneId);
+    if (!scene) {
+      addNotification('error', `未找到场景 ${sceneId}`);
+      return;
+    }
+    const fullText = readScenePassageFullText(
+      story,
+      sceneId,
+      chapterIndex,
+      lookupKeys(chapterIndex, sceneId)
+    );
     setPassageEdit({
       chapterIndex,
       sceneId,
-      text: stripRawPassageQuoteMarkup(
-        readScenePassageFullText(story, sceneId, chapterIndex, lookupKeys(chapterIndex, sceneId))
-      ),
+      segments: passageBlocksToEditSegments(fullText, scene),
     });
   };
 
@@ -385,11 +394,22 @@ export function ChapterEditor({
         story,
         passageEdit.chapterIndex,
         passageEdit.sceneId,
-        passageEdit.text
+        passageEdit.segments
       );
       updateFw(() => result.fw);
       await saveStoryTw(gameId, result.story);
       await saveFm(result.fw);
+      if (result.fw.scenes?.length) {
+        const scenesRes = await fetch(getScenesFetchUrl(gameId), {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: formatJsonCompact(result.fw.scenes),
+        });
+        const scenesBody = (await scenesRes.json()) as {ok?: boolean; error?: string};
+        if (!scenesRes.ok || !scenesBody.ok) {
+          throw new Error(scenesBody.error || '保存 story-scenes.json 失败');
+        }
+      }
       setParsedStory(result.story);
       setPassageEdit(null);
       addNotification('info', `已保存 ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId} 正文`);
@@ -479,14 +499,46 @@ export function ChapterEditor({
           onSave={() => checkAuthForSave(() => void handleSavePassageEdit())}
         >
           <p style={{fontSize: 12, color: '#888', margin: '0 0 8px'}}>
-            编辑合并后的全文；保存后将按配置重新分页写入 story.tw。
+            按 passageBlocks 分段展示：RAW 为史料/定调，AI 为生成正文。保存后将按配置重新分页写入 story.tw。
           </p>
-          <textarea
-            style={{...styles.input, ...styles.textarea}}
-            value={passageEdit.text}
-            onChange={(e) => setPassageEdit((prev) => (prev ? {...prev, text: e.target.value} : prev))}
-            rows={16}
-          />
+          {passageEdit.segments.map((seg, segIndex) => (
+            <div key={`${seg.blockIndex}-${seg.type}-${segIndex}`} style={{marginBottom: 12}}>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  marginBottom: 4,
+                  color: seg.type === 'raw' ? '#d4a574' : '#90caf9',
+                }}
+              >
+                {seg.label}
+              </label>
+              <textarea
+                style={{
+                  ...styles.input,
+                  ...styles.textarea,
+                  ...(seg.type === 'raw'
+                    ? {borderLeft: '3px solid #d4a574', backgroundColor: 'rgba(212, 165, 116, 0.06)'}
+                    : {borderLeft: '3px solid #90caf9', backgroundColor: 'rgba(144, 202, 249, 0.06)'}),
+                }}
+                value={seg.text}
+                onChange={(e) =>
+                  setPassageEdit((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          segments: prev.segments.map((s, i) =>
+                            i === segIndex ? {...s, text: e.target.value} : s
+                          ),
+                        }
+                      : prev
+                  )
+                }
+                rows={seg.type === 'raw' ? 5 : 8}
+              />
+            </div>
+          ))}
         </DetailEditModal>
       )}
 
@@ -526,7 +578,9 @@ export function ChapterEditor({
                   />
                 </div>
                 <div style={styles.row}>
-                  <label style={styles.sectionTitle}>叙事入口</label>
+                  <label style={styles.sectionTitle}>
+                    叙事入口{chi === 0 ? '（游戏起始场景）' : ''}
+                  </label>
                   <select
                     style={styles.input}
                     value={ch.startSceneId ?? ''}
@@ -544,6 +598,11 @@ export function ChapterEditor({
                       </option>
                     ))}
                   </select>
+                  {chi === 0 && ch.startSceneId ? (
+                    <p style={{fontSize: 12, color: '#888', margin: '4px 0 0'}}>
+                      「游戏」页首屏由第一章叙事入口决定；保存章节并汇编后会写入 story.tw 的 start。
+                    </p>
+                  ) : null}
                 </div>
 
                 <ChapterSceneList

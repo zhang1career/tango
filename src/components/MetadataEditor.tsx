@@ -14,9 +14,10 @@ import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {ListAddButton, ListSectionHead} from './ui/ListPrimitives';
+import {APP_COLORS, pageTitleStyle} from '@/styles/appTheme';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
+  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: APP_COLORS.text},
   header: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -25,7 +26,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: 16,
     borderBottom: '1px solid #333',
   },
-  title: {fontSize: 20, fontWeight: 600, margin: 0},
+  title: pageTitleStyle,
   btn: {
     padding: '8px 16px',
     backgroundColor: '#2d2d44',
@@ -245,7 +246,7 @@ export function MetadataEditor({
 
       <section>
         <ListSectionHead
-          title={<h2 style={{fontSize: 16, margin: 0}}>人物属性</h2>}
+          title={<h2 style={{...pageTitleStyle, fontSize: 16}}>人物属性</h2>}
           addTitle="添加人物属性"
           onAdd={openAddModal}
         />

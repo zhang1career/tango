@@ -116,3 +116,22 @@ export async function preloadFrameworkListData(
     updateFw((d) => ({...d, ...merged}));
   }
 }
+
+/** 将内存中的列表数据（场景、地图等）合并到已落盘的 story-fm 骨架上 */
+export function mergeRuntimeFrameworkListData(
+  base: StoryFramework,
+  runtime: StoryFramework
+): StoryFramework {
+  return {
+    ...base,
+    scenes: runtime.scenes ?? base.scenes,
+    characters: runtime.characters ?? base.characters,
+    maps: runtime.maps ?? base.maps,
+    events: runtime.events ?? base.events,
+    items: runtime.items ?? base.items,
+    metadata: runtime.metadata ?? base.metadata,
+    gameRules: runtime.gameRules ?? base.gameRules,
+    sceneBindings: runtime.sceneBindings ?? base.sceneBindings,
+    features: runtime.features ?? base.features,
+  };
+}

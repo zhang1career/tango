@@ -148,8 +148,8 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (mode === 'timeline' || mode === 'chapters') loadStoryFm(gameId);
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps -- load on timeline/chapters enter only
+    if (mode === 'timeline' || mode === 'chapters' || mode === 'scenes') loadStoryFm(gameId);
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps -- load story-fm when editor needs chapter graph
 
   const fetchContent = useCallback(
     (path?: string) => fetchContentForGame(gameId, path),

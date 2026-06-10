@@ -3,15 +3,18 @@
  */
 
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {createPortal} from 'react-dom';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
-import {getScenesFetchUrl, getStoryFmFetchUrl} from '@/config';
+import {getCharactersFetchUrl, getScenesFetchUrl, getStoryFmFetchUrl} from '@/config';
+import type {GameCharacter} from '@/schema/game-character';
 import type {GameScene} from '@/schema/game-scene';
 import type {StoryFramework} from '@/schema/story-framework';
 import {fromPersistedFramework, migrateFramework} from '@/schema/story-framework';
 import {
   EMPTY_STORY_CANON,
   normalizeStoryCanon,
+  type CanonCharacterState,
   type CanonSceneState,
   type StoryCanon,
 } from '@/schema/story-canon';
@@ -54,6 +57,9 @@ import {
   ListTableHeader,
   ListTableRow,
 } from './ui/ListPrimitives';
+import {DetailEditModal} from './ui/DetailEditModal';
+import {IdNameSelect} from './ui/IdNameSelect';
+import {buildIdNameDict, resolveIdName, type IdNameDict} from '@/utils/id-name-dict';
 import {ConfirmModal} from './ui/ConfirmModal';
 import {
   applyProgressAnchor,
@@ -331,6 +337,7 @@ export function NarrativeEngineEditor() {
   const [canon, setCanon] = useState<StoryCanon>(EMPTY_STORY_CANON);
   const [traces, setTraces] = useState<StoryGenerationTraces>(EMPTY_GENERATION_TRACES);
   const [scenes, setScenes] = useState<GameScene[]>([]);
+  const [characters, setCharacters] = useState<GameCharacter[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [foreshadowOpenState, setForeshadowOpenState] = useState<Record<string, boolean>>({});
@@ -340,20 +347,24 @@ export function NarrativeEngineEditor() {
     (sceneId: string) => sceneMap.get(sceneId)?.name ?? sceneId,
     [sceneMap]
   );
+  const characterDict = useMemo(() => buildIdNameDict(characters), [characters]);
 
   const reload = useCallback(async () => {
     setError(null);
-    const [f, o, fs, c, t, scenesRes] = await Promise.all([
+    const [f, o, fs, c, t, scenesRes, charsRes] = await Promise.all([
       loadFw(gameId),
       fetchStoryOutline(gameId),
       fetchStoryForeshadowing(gameId),
       fetchStoryCanon(gameId),
       fetchGenerationTraces(gameId),
       fetch(getScenesFetchUrl(gameId)),
+      fetch(getCharactersFetchUrl(gameId)),
     ]);
     const loadedScenes = scenesRes.ok ? ((await scenesRes.json()) as GameScene[]) : [];
+    const loadedChars = charsRes.ok ? ((await charsRes.json()) as GameCharacter[]) : [];
     setFw(f);
     setScenes(Array.isArray(loadedScenes) ? loadedScenes : []);
+    setCharacters(Array.isArray(loadedChars) ? loadedChars : []);
     setOutline(f ? ensureOutlineWithFm(o, f, loadedScenes) : o);
     setForeshadowing(fs);
     setCanon(c);
@@ -739,7 +750,12 @@ export function NarrativeEngineEditor() {
       )}
 
       {tab === 'canon' && (
-        <CanonTabEditor canon={canon} scenes={scenes} onCanonChange={setCanon} />
+        <CanonTabEditor
+          canon={canon}
+          scenes={scenes}
+          characterDict={characterDict}
+          onCanonChange={setCanon}
+        />
       )}
 
       {tab === 'traces' && <TracesTabEditor traces={traces} scenes={scenes} />}
@@ -931,7 +947,7 @@ function OutlineTabEditor({
           <div style={cardBody}>
             {zone === 'archived' && canonCount > 0 && (
               <p style={{...hintText, color: '#7dd3a8', marginTop: 0}}>
-                Canon 已记录本章 {canonCount} 个场景快照；归档后生成依赖 Canon，不再注入场景任务。
+                Canon 已记录本章 {canonCount} 个场景状态快照；归档后生成依赖 Canon，不再注入场景任务。
               </p>
             )}
             {fmCh?.theme ? (
@@ -1233,12 +1249,16 @@ function truncateLine(text: string, max: number): string {
 function CanonTabEditor({
   canon,
   scenes,
+  characterDict,
   onCanonChange,
 }: {
   canon: StoryCanon;
   scenes: GameScene[];
+  characterDict: IdNameDict;
   onCanonChange: React.Dispatch<React.SetStateAction<StoryCanon>>;
 }) {
+  const [sceneOpenState, setSceneOpenState] = useState<Record<string, boolean>>({});
+
   return (
     <div>
       <div style={styles.row}>
@@ -1251,40 +1271,222 @@ function CanonTabEditor({
         />
       </div>
       <ListSectionHead
-        title={<span style={sectionTitle}>场景快照</span>}
-        addTitle="添加场景快照"
+        title={<span style={sectionTitle}>场景状态快照</span>}
+        addTitle="添加场景状态快照"
         onAdd={() => {
           const id = prompt('场景 id');
           if (!id?.trim()) return;
+          const sceneId = id.trim();
           onCanonChange((c) => ({
             ...c,
-            scenes: {...c.scenes, [id.trim()]: {lastUpdatedAt: new Date().toISOString()}},
+            scenes: {...c.scenes, [sceneId]: {lastUpdatedAt: new Date().toISOString()}},
           }));
+          setSceneOpenState((prev) => ({...prev, [sceneId]: true}));
         }}
       />
       {Object.keys(canon.scenes).length === 0 && (
-        <p style={{color: '#888', fontSize: 12, margin: '0 0 8px'}}>暂无场景快照，点击 + 添加。</p>
+        <p style={{color: '#888', fontSize: 12, margin: '0 0 8px'}}>暂无场景状态快照，点击 + 添加。</p>
       )}
-      {Object.entries(canon.scenes).map(([sceneId, st]) => (
+      {Object.entries(canon.scenes).map(([sceneId, st]) => {
+        const open = sceneOpenState[sceneId] ?? false;
+        const toggleOpen = () =>
+          setSceneOpenState((prev) => ({...prev, [sceneId]: !open}));
+
+        return (
         <CanonSceneEditor
           key={sceneId}
           displayName={sceneDisplayName(scenes, sceneId)}
+          characterDict={characterDict}
           state={st}
-          onChange={(next) =>
-            onCanonChange((c) => ({
-              ...c,
-              scenes: {...c.scenes, [sceneId]: next},
-            }))
-          }
-          onRemove={() =>
-            onCanonChange((c) => {
-              const nextScenes = {...c.scenes};
-              delete nextScenes[sceneId];
-              return {...c, scenes: nextScenes};
-            })
-          }
-        />
-      ))}
+          open={open}
+          onToggleOpen={toggleOpen}
+            onChange={(next) =>
+              onCanonChange((c) => ({
+                ...c,
+                scenes: {...c.scenes, [sceneId]: next},
+              }))
+            }
+            onRemove={() =>
+              onCanonChange((c) => {
+                const nextScenes = {...c.scenes};
+                delete nextScenes[sceneId];
+                return {...c, scenes: nextScenes};
+              })
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function CanonCharacterStatesEditor({
+  characterStates,
+  characterDict,
+  onChange,
+}: {
+  characterStates: Record<string, CanonCharacterState>;
+  characterDict: IdNameDict;
+  onChange: (next: Record<string, CanonCharacterState>) => void;
+}) {
+  const [charOpenState, setCharOpenState] = useState<Record<string, boolean>>({});
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [pickCharId, setPickCharId] = useState('');
+  const entries = Object.entries(characterStates);
+  const availableDict = useMemo(() => {
+    const next: IdNameDict = {};
+    for (const [id, name] of Object.entries(characterDict)) {
+      if (!characterStates[id]) next[id] = name;
+    }
+    return next;
+  }, [characterDict, characterStates]);
+  const canAddCharacter = Object.keys(availableDict).length > 0;
+
+  const openAddModal = () => {
+    setPickCharId('');
+    setAddModalOpen(true);
+  };
+
+  const closeAddModal = () => {
+    setAddModalOpen(false);
+    setPickCharId('');
+  };
+
+  const confirmAddCharacter = () => {
+    if (!pickCharId || characterStates[pickCharId]) return;
+    onChange({...characterStates, [pickCharId]: {}});
+    setCharOpenState((prev) => ({...prev, [pickCharId]: true}));
+    closeAddModal();
+  };
+
+  return (
+    <div style={{marginTop: 8}}>
+      <ListSectionHead
+        title={<span style={{...sectionTitle, fontSize: 13}}>角色状态</span>}
+        addTitle="添加角色"
+        onAdd={openAddModal}
+      />
+      {entries.length === 0 && (
+        <p style={{color: '#888', fontSize: 12, margin: '0 0 8px'}}>暂无角色状态记录。</p>
+      )}
+      {entries.map(([charId, cs]) => {
+        const open = charOpenState[charId] ?? false;
+        const charName = resolveIdName(characterDict, charId);
+        const toggleOpen = () =>
+          setCharOpenState((prev) => ({...prev, [charId]: !open}));
+
+        return (
+        <div key={charId} style={{...card, marginBottom: 8, borderColor: '#2a2a2a'}}>
+          <div
+            style={cardHead}
+            onClick={toggleOpen}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleOpen();
+              }
+            }}
+          >
+            <span style={{fontSize: 13}}>
+              {open ? '▼' : '▶'} {charName}
+            </span>
+            <ListOpsCell>
+              <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
+                <ListDeleteButton
+                  title="删除角色状态"
+                  confirmMessage={`确认删除角色「${charName}」的状态？`}
+                  onClick={() => {
+                    const next = {...characterStates};
+                    delete next[charId];
+                    onChange(next);
+                  }}
+                />
+              </span>
+            </ListOpsCell>
+          </div>
+          {open ? (
+          <div style={{...cardBody, paddingTop: 8}}>
+            <div style={styles.row}>
+              <label style={styles.label}>location</label>
+              <input
+                value={cs.location ?? ''}
+                onChange={(e) =>
+                  onChange({
+                    ...characterStates,
+                    [charId]: {...cs, location: e.target.value.trim() || undefined},
+                  })
+                }
+                style={{...styles.input, width: '100%'}}
+                placeholder="角色落点（可选）"
+              />
+            </div>
+            <div style={styles.row}>
+              <label style={styles.label}>emotion</label>
+              <input
+                value={cs.emotion ?? ''}
+                onChange={(e) =>
+                  onChange({
+                    ...characterStates,
+                    [charId]: {...cs, emotion: e.target.value.trim() || undefined},
+                  })
+                }
+                style={{...styles.input, width: '100%'}}
+                placeholder="情绪（可选）"
+              />
+            </div>
+            <div style={styles.row}>
+              <label style={styles.label}>knows</label>
+              <textarea
+                value={(cs.knows ?? []).join('\n')}
+                onChange={(e) =>
+                  onChange({
+                    ...characterStates,
+                    [charId]: {
+                      ...cs,
+                      knows: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean),
+                    },
+                  })
+                }
+                style={{...styles.input, ...styles.textarea, minHeight: 40, width: '100%'}}
+                placeholder="该角色已知事实（每行一条）"
+              />
+            </div>
+          </div>
+          ) : null}
+        </div>
+        );
+      })}
+      {addModalOpen &&
+        createPortal(
+          <DetailEditModal
+            title="添加角色"
+            open
+            onClose={closeAddModal}
+            editable={canAddCharacter}
+            onSave={canAddCharacter ? confirmAddCharacter : undefined}
+          >
+            {canAddCharacter ? (
+              <div style={styles.row}>
+                <label style={styles.label}>角色</label>
+                <IdNameSelect
+                  dict={availableDict}
+                  value={pickCharId}
+                  onChange={setPickCharId}
+                  allowEmpty
+                  placeholder="选择角色"
+                  style={{...styles.input, width: '100%'}}
+                />
+              </div>
+            ) : (
+              <p style={{color: '#888', fontSize: 13, margin: 0}}>
+                无可添加的角色（本场已全部纳入，或 story-characters 中无人物数据）。
+              </p>
+            )}
+          </DetailEditModal>,
+          document.body
+        )}
     </div>
   );
 }
@@ -1313,30 +1515,66 @@ function TracesTabEditor({traces, scenes}: {traces: StoryGenerationTraces; scene
 
 function CanonSceneEditor({
   displayName,
+  characterDict,
   state,
+  open,
+  onToggleOpen,
   onChange,
   onRemove,
 }: {
   displayName: string;
+  characterDict: IdNameDict;
   state: CanonSceneState;
+  open: boolean;
+  onToggleOpen: () => void;
   onChange: (s: CanonSceneState) => void;
   onRemove: () => void;
 }) {
   return (
     <div style={card}>
-      <div style={cardHead}>
-        <span>{displayName}</span>
+      <div
+        style={cardHead}
+        onClick={onToggleOpen}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggleOpen();
+          }
+        }}
+      >
+        <span>
+          {open ? '▼' : '▶'} {displayName}
+        </span>
         <ListOpsCell>
-          <ListDeleteButton
-            title="删除场景快照"
-            confirmMessage={`确认删除场景快照「${displayName}」？`}
-            onClick={onRemove}
-          />
+          <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
+            <ListDeleteButton
+              title="删除场景状态快照"
+              confirmMessage={`确认删除场景状态快照「${displayName}」？`}
+              onClick={onRemove}
+            />
+          </span>
         </ListOpsCell>
       </div>
+      {open ? (
       <div style={cardBody}>
         <div style={styles.row}>
-          <label style={styles.label}>facts（每行一条）</label>
+          <label style={styles.label}>summary</label>
+          <textarea
+            value={state.summary ?? ''}
+            onChange={(e) =>
+              onChange({
+                ...state,
+                summary: e.target.value.trim() || undefined,
+              })
+            }
+            style={{...styles.input, ...styles.textarea, minHeight: 48, width: '100%'}}
+            placeholder="本场结局浓缩陈述（1–3 句）"
+          />
+        </div>
+        <div style={styles.row}>
+          <label style={styles.label}>确立事实</label>
           <textarea
             value={(state.facts ?? []).join('\n')}
             onChange={(e) =>
@@ -1346,11 +1584,11 @@ function CanonSceneEditor({
               })
             }
             style={{...styles.input, ...styles.textarea, minHeight: 48, width: '100%'}}
-            placeholder="facts（每行一条）"
+            placeholder="确立事实（每行一条，可核验的客观事实）"
           />
         </div>
         <div style={styles.row}>
-          <label style={styles.label}>openQuestions</label>
+          <label style={styles.label}>未解问题</label>
           <textarea
             value={(state.openQuestions ?? []).join('\n')}
             onChange={(e) =>
@@ -1360,10 +1598,21 @@ function CanonSceneEditor({
               })
             }
             style={{...styles.input, ...styles.textarea, minHeight: 40, width: '100%'}}
-            placeholder="openQuestions"
+            placeholder="未解问题（每行一条）"
           />
         </div>
+        <CanonCharacterStatesEditor
+          characterStates={state.characterStates ?? {}}
+          characterDict={characterDict}
+          onChange={(characterStates) =>
+            onChange({
+              ...state,
+              characterStates: Object.keys(characterStates).length ? characterStates : undefined,
+            })
+          }
+        />
       </div>
+      ) : null}
     </div>
   );
 }
