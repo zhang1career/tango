@@ -83,6 +83,45 @@ export async function runGenerateAiBlock(
   return {scene: updatedScene, traceId};
 }
 
+function patchSceneInFramework(fw: StoryFramework, scene: GameScene): StoryFramework {
+  return {
+    ...fw,
+    scenes: (fw.scenes ?? []).map((s) => (s.id === scene.id ? scene : s)),
+  };
+}
+
+/** 汇编前补齐缺失的 AI 块 generatedText（按 passageBlocks 顺序逐块生成） */
+export async function ensureSceneAiBlocksGenerated(
+  gameId: string,
+  fw: StoryFramework,
+  scene: GameScene
+): Promise<{fw: StoryFramework; scene: GameScene; generatedCount: number}> {
+  let currentScene = scene;
+  let currentFw = fw;
+  let generatedCount = 0;
+
+  for (let passageBlockIndex = 0; ; passageBlockIndex++) {
+    const blocks = getScenePassageBlocks(currentScene);
+    if (passageBlockIndex >= blocks.length) break;
+    const block = blocks[passageBlockIndex];
+    if (block.type !== 'ai' || block.generatedText?.trim()) continue;
+    if (!block.summary?.trim()) {
+      throw new Error('AI 块缺少 summary，无法自动生成正文（请在「场景」页填写后再汇编）');
+    }
+    const {scene: nextScene} = await runGenerateAiBlock(
+      gameId,
+      currentFw,
+      currentScene,
+      passageBlockIndex
+    );
+    currentScene = nextScene;
+    currentFw = patchSceneInFramework(currentFw, currentScene);
+    generatedCount++;
+  }
+
+  return {fw: currentFw, scene: currentScene, generatedCount};
+}
+
 export async function runAssembleScene(
   gameId: string,
   scene: GameScene,

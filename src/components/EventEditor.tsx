@@ -2,8 +2,8 @@
  * 事件编辑界面
  */
 
-import React, {useEffect, useState} from 'react';
-import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl} from '@/config';
+import React, {useEffect, useMemo, useState} from 'react';
+import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl, getScenesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
@@ -11,6 +11,7 @@ import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameRule} from '../schema/game-rule';
+import type {GameScene} from '../schema/game-scene';
 import {formatJsonCompact} from '../utils/json-format';
 import {assignBehaviorIds} from '../utils/behavior-ids';
 import {DetailEditModal} from './ui/DetailEditModal';
@@ -115,6 +116,7 @@ type EventFormProps = {
   editable: boolean;
   characters: GameCharacter[];
   gameRules: GameRule[];
+  linkedScenes?: GameScene[];
   onUpdate?: (fn: (e: GameEvent) => GameEvent) => void;
 };
 
@@ -379,12 +381,27 @@ function BehaviorSequenceEditor({
   );
 }
 
-function EventFormContent({evt, editable, characters, gameRules, onUpdate}: EventFormProps) {
+function EventFormContent({evt, editable, characters, gameRules, linkedScenes, onUpdate}: EventFormProps) {
   if (!editable || !onUpdate) {
     return (
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
+        <div style={{margin: '0 0 12px'}}>
+          <strong>关联场景：</strong>
+          {!linkedScenes?.length ? (
+            <span style={{color: '#888'}}> 无</span>
+          ) : (
+            <ul style={{listStyle: 'none', padding: '6px 0 0', margin: 0}}>
+              {linkedScenes.map((scene) => (
+                <li key={scene.id} style={{marginBottom: 4, color: '#d0d0d0'}}>
+                  {scene.name}
+                  <span style={{marginLeft: 8, fontSize: 12, color: '#888'}}>{scene.id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {evt.description && (
           <p style={{margin: '0 0 8px'}}><strong>描述：</strong>{evt.description}</p>
         )}
@@ -510,6 +527,7 @@ async function saveEventsToPreset(events: unknown, gameId: string): Promise<{ ok
 async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
   const apis: Array<{url: string; key: keyof StoryFramework}> = [
     {url: getEventsFetchUrl(gameId), key: 'events'},
+    {url: getScenesFetchUrl(gameId), key: 'scenes'},
     {url: getCharactersFetchUrl(gameId), key: 'characters'},
     {url: getRulesFetchUrl(gameId), key: 'gameRules'},
   ];
@@ -588,6 +606,19 @@ export function EventEditor({fw, updateFw}: {
 
   const characters = fw.characters ?? [];
   const gameRules = fw.gameRules ?? [];
+  const scenes = fw.scenes ?? [];
+
+  const linkedScenesForEvent = useMemo(() => {
+    const map = new Map<string, GameScene[]>();
+    for (const scene of scenes) {
+      for (const eventId of scene.eventIds ?? []) {
+        const list = map.get(eventId) ?? [];
+        list.push(scene);
+        map.set(eventId, list);
+      }
+    }
+    return map;
+  }, [scenes]);
 
   return (
     <div style={styles.container}>
@@ -621,6 +652,7 @@ export function EventEditor({fw, updateFw}: {
             editable={false}
             characters={characters}
             gameRules={gameRules}
+            linkedScenes={linkedScenesForEvent.get(events[detailIndex].id)}
           />
         </DetailEditModal>
       )}

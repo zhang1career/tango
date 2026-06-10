@@ -46,3 +46,13 @@ select option {
   background-color: var(--app-surface-raised);
   color: var(--app-text);
 }
+
+@keyframes tango-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tango-inline-spinner {
+  animation: tango-spin 0.75s linear infinite;
+}

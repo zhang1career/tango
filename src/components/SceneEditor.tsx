@@ -5,6 +5,7 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {runGenerateAiBlock} from '@/services/scene-block-generation';
+import {saveStoryScenes} from '@/services/story-scenes-persist';
 import {
   loadStoryFromGame,
   lookupKeysForSceneEntry,
@@ -28,6 +29,7 @@ import {defaultSceneImageSavePath} from '@/config/media-paths';
 import {BgmSynthesisField} from './ui/BgmSynthesisField';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
+import {InlineSpinner} from './ui/InlineSpinner';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
 import {EntityFlatList} from './ui/EntityFlatList';
@@ -188,28 +190,7 @@ function FieldRow({
 }
 
 async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
-  if (import.meta.env.DEV) {
-    try {
-      const res = await fetch(getScenesFetchUrl(gameId), {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(scenes),
-      });
-      const json = (await res.json()) as { ok?: boolean; error?: string };
-      if (res.ok && json.ok) return {ok: true};
-      return {ok: false, error: json.error || `HTTP ${res.status}`};
-    } catch (e) {
-      return {ok: false, error: String(e)};
-    }
-  }
-  const blob = new Blob([formatJsonCompact(scenes)], {type: 'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'story-scenes.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  return {ok: true};
+  return saveStoryScenes(gameId, scenes);
 }
 
 async function saveRulesToPreset(fw: StoryFramework, gameId: string): Promise<{ ok: boolean; error?: string }> {
@@ -605,7 +586,7 @@ function SceneFormContent({
                   }
                   onClick={() => void handleGenerateBlock(aiIndex)}
                 >
-                  <GenerateHammerIcon />
+                  {generatingAiIndex === aiIndex ? <InlineSpinner /> : <GenerateHammerIcon />}
                 </button>
                 {onSaveScene ? (
                   <button
@@ -1126,9 +1107,13 @@ async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFrame
 export function SceneEditor({
                               fw,
                               updateFw,
+                              initialSceneId,
+                              onInitialSceneConsumed,
                             }: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
+  initialSceneId?: string | null;
+  onInitialSceneConsumed?: () => void;
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
@@ -1239,6 +1224,7 @@ export function SceneEditor({
     name: e.name,
     backgroundMusic: e.backgroundMusic,
   }));
+  const eventNameMap = useMemo(() => new Map(eventIds.map((e) => [e.id, e.name])), [eventIds]);
   const gameRules = useMemo(() => normalizeGameRules(fw.gameRules ?? []), [fw.gameRules]);
   const ruleIds = gameRules.map((r) => ({id: r.id, name: r.name}));
 
@@ -1250,6 +1236,14 @@ export function SceneEditor({
     name: '新场景',
     passageBlocks: defaultPassageBlocks(),
   }));
+
+  useEffect(() => {
+    if (!initialSceneId) return;
+    const index = scenes.findIndex((s) => s.id === initialSceneId);
+    if (index < 0) return;
+    setEditIndex(index);
+    onInitialSceneConsumed?.();
+  }, [initialSceneId, scenes, onInitialSceneConsumed]);
 
   const openAddModal = () => {
     setNewScene({id: `scene_${Date.now()}`, name: '新场景', passageBlocks: defaultPassageBlocks()});
@@ -1346,6 +1340,12 @@ export function SceneEditor({
           getKey={(ci) => `scene-${ci}`}
           getPrimary={(ci) => scenes[ci]!.name}
           getMeta={(ci) => scenes[ci]!.id}
+          extraColumnLabel="事件"
+          getExtra={(ci) =>
+            (scenes[ci]!.eventIds ?? [])
+              .map((id) => eventNameMap.get(id) ?? id)
+              .join('、')
+          }
           onOpen={setDetailIndex}
           onEdit={setEditIndex}
           onDelete={removeSceneWithAuth}

@@ -220,6 +220,7 @@ function AppBody({
   setPendingSceneId,
 }: AppBodyProps) {
   const {user, returnTo, clearReturnTo, login} = useAuth();
+  const clearPendingSceneId = useCallback(() => setPendingSceneId(null), [setPendingSceneId]);
   const [audioMuted, setAudioMuted] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('tango.audioMuted') === '1';
@@ -397,7 +398,12 @@ function AppBody({
           }}
         />
       ) : mode === 'scenes' ? (
-        <SceneEditor fw={fw} updateFw={updateFw}/>
+        <SceneEditor
+          fw={fw}
+          updateFw={updateFw}
+          initialSceneId={pendingSceneId}
+          onInitialSceneConsumed={clearPendingSceneId}
+        />
       ) : mode === 'map' ? (
         <MapEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'events' ? (

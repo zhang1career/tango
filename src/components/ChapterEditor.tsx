@@ -51,6 +51,7 @@ import {
   ListTableHeader,
   ListTableRow,
 } from './ui/ListPrimitives';
+import {InlineSpinner} from './ui/InlineSpinner';
 
 const COMPILE_STALE_HINT = '正文待汇编：场景 passageBlocks 已变更，尚未写入 story.tw';
 
@@ -195,7 +196,7 @@ export function ChapterEditor({
   const {checkAuthForSave} = useAuth();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [parsedStory, setParsedStory] = useState<ReturnType<typeof parseTwee> | null>(null);
-  const [compiling, setCompiling] = useState(false);
+  const [compilingTarget, setCompilingTarget] = useState<string | 'batch' | null>(null);
   const [compileProgress, setCompileProgress] = useState<{current: number; total: number; scene?: string} | null>(null);
   const [passageEdit, setPassageEdit] = useState<{
     chapterIndex: number;
@@ -286,18 +287,23 @@ export function ChapterEditor({
       return;
     }
     if (!confirmCompileOverwrite(story, [{chapterIndex, sceneId}])) return;
-    setCompiling(true);
+    setCompilingTarget(sceneId);
     try {
       const result = await compileChapterScene(fw, story, chapterIndex, sceneId, gameId);
       updateFw(() => result.fw);
       await saveStoryTw(gameId, result.story);
       await saveFm(result.fw);
       setParsedStory(result.story);
-      addNotification('info', `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}`);
+      addNotification(
+        'info',
+        result.generatedCount > 0
+          ? `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}（已自动生成 ${result.generatedCount} 个 AI 块正文）`
+          : `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}`
+      );
     } catch (e) {
       addNotification('error', (e as Error).message);
     } finally {
-      setCompiling(false);
+      setCompilingTarget(null);
     }
   };
 
@@ -320,7 +326,7 @@ export function ChapterEditor({
       return chi < 0 ? [] : [{chapterIndex: chi, sceneId: s.sceneId}];
     });
     if (!confirmCompileOverwrite(story, batchTargets)) return;
-    setCompiling(true);
+    setCompilingTarget('batch');
     let nextFw = fw;
     const failures: string[] = [];
     try {
@@ -347,7 +353,7 @@ export function ChapterEditor({
         addNotification('info', `已汇编 ${staleScenes.length} 个待更新场景`);
       }
     } finally {
-      setCompiling(false);
+      setCompilingTarget(null);
       setCompileProgress(null);
     }
   };
@@ -445,10 +451,13 @@ export function ChapterEditor({
             style={{...styles.btn, display: 'inline-flex', alignItems: 'center', gap: 4}}
             title={staleScenes.length > 0 ? COMPILE_STALE_HINT : '全部场景汇编已是最新'}
             onClick={() => checkAuthForSave(() => void handleCompileAllStale())}
-            disabled={compiling || staleScenes.length === 0}
+            disabled={compilingTarget !== null || staleScenes.length === 0}
           >
-            {compiling ? (
-              '汇编中…'
+            {compilingTarget === 'batch' ? (
+              <>
+                <InlineSpinner style={styles.compileIconFresh} />
+                <span style={styles.compileIconFresh}>汇编中…</span>
+              </>
             ) : staleScenes.length > 0 ? (
               <>
                 <CompileHammerIcon style={styles.compileIconStale} stale />
@@ -629,7 +638,7 @@ export function ChapterEditor({
                   scenes={fw.scenes ?? []}
                   sceneMap={sceneMap}
                   staleByChapter={staleByChapter}
-                  compiling={compiling}
+                  compilingTarget={compilingTarget}
                   updateChapter={updateChapter}
                   canEditPassage={(sid) => canEditScenePassage(chi, sid)}
                   onCompileScene={(sid) => checkAuthForSave(() => void handleCompileScene(chi, sid))}
@@ -677,7 +686,7 @@ function ChapterSceneList({
   scenes,
   sceneMap,
   staleByChapter,
-  compiling,
+  compilingTarget,
   updateChapter,
   canEditPassage,
   onCompileScene,
@@ -689,7 +698,7 @@ function ChapterSceneList({
   scenes: import('../schema/game-scene').GameScene[];
   sceneMap: Map<string, import('../schema/game-scene').GameScene>;
   staleByChapter: Map<string, Set<string>>;
-  compiling: boolean;
+  compilingTarget: string | 'batch' | null;
   updateChapter: (chi: number, fn: (c: FrameworkChapter) => FrameworkChapter) => void;
   canEditPassage: (sceneId: string) => boolean;
   onCompileScene: (sceneId: string) => void;
@@ -780,25 +789,33 @@ function ChapterSceneList({
                       alignItems: 'center',
                       ...(isStale ? {padding: '4px 8px'} : {}),
                     }}
-                    disabled={compiling}
+                    disabled={compilingTarget !== null}
                     onClick={() => onCompileScene(sid)}
                     title={
-                      isStale
-                        ? COMPILE_STALE_HINT
-                        : hasCompiled
-                          ? '汇编：将 passageBlocks 写入 story.tw'
-                          : '汇编：首次将 passageBlocks 写入 story.tw'
+                      compilingTarget === sid
+                        ? '汇编中…'
+                        : isStale
+                          ? COMPILE_STALE_HINT
+                          : hasCompiled
+                            ? '汇编：将 passageBlocks 写入 story.tw'
+                            : '汇编：首次将 passageBlocks 写入 story.tw'
                     }
                   >
-                    <CompileHammerIcon
-                      stale={!!isStale}
-                      style={isStale ? styles.compileIconStale : styles.compileIconFresh}
-                    />
+                    {compilingTarget === sid ? (
+                      <InlineSpinner
+                        style={isStale ? styles.compileIconStale : styles.compileIconFresh}
+                      />
+                    ) : (
+                      <CompileHammerIcon
+                        stale={!!isStale}
+                        style={isStale ? styles.compileIconStale : styles.compileIconFresh}
+                      />
+                    )}
                   </button>
                   <button
                     type="button"
                     style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
-                    disabled={compiling || !canEditPassage(sid)}
+                    disabled={compilingTarget !== null || !canEditPassage(sid)}
                     onClick={() => onEditPassage(sid)}
                     title={
                       canEditPassage(sid)
