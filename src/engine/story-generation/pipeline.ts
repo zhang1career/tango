@@ -1,6 +1,9 @@
 import type {GenerationTracePhase} from '@/schema/story-generation-traces';
 import type {StoryCanon} from '@/schema/story-canon';
-import type {StoryForeshadowing} from '@/schema/story-foreshadowing';
+import {
+  foreshadowAnchorHit,
+  type StoryForeshadowing,
+} from '@/schema/story-foreshadowing';
 import {STORY_CANON_VERSION} from '@/schema/story-canon';
 import {buildGenerationContextPayload} from './context';
 import {getGenerationAuditMode, getGenerationAuditRetries} from '@/config';
@@ -180,7 +183,7 @@ function markForeshadowingPlanted(
   if (!anchors?.length) return foreshadowing;
   const threads = foreshadowing.threads.map((t) => {
     if (t.status !== 'planned') return t;
-    const hit = anchors.some((a) => a.includes(t.title) || t.title.includes(a));
+    const hit = foreshadowAnchorHit(t, anchors);
     if (!hit) return t;
     return {
       ...t,

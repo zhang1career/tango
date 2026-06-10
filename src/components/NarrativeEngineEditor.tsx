@@ -17,7 +17,10 @@ import {
 } from '@/schema/story-canon';
 import {
   EMPTY_STORY_FORESHADOWING,
+  FORESHADOW_STATUS_OPTIONS,
+  foreshadowStatusLabel,
   normalizeStoryForeshadowing,
+  type ForeshadowPlantRef,
   type ForeshadowThread,
   type StoryForeshadowing,
 } from '@/schema/story-foreshadowing';
@@ -173,6 +176,151 @@ async function loadFw(gameId: string): Promise<StoryFramework | null> {
   return fromPersistedFramework(parsed);
 }
 
+function formatAnchorsInput(anchors: string[] | undefined): string {
+  return anchors?.join(', ') ?? '';
+}
+
+function parseAnchorsInput(value: string): string[] | undefined {
+  const items = value
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+function parseBlockIndexInput(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function mergePlantRef(
+  prev: ForeshadowPlantRef | undefined,
+  key: 'sceneId' | 'blockIndex',
+  value: string
+): ForeshadowPlantRef | undefined {
+  if (key === 'sceneId') {
+    const sceneId = value.trim();
+    if (!sceneId) return undefined;
+    return prev?.blockIndex === undefined ? {sceneId} : {sceneId, blockIndex: prev.blockIndex};
+  }
+  const sceneId = prev?.sceneId?.trim();
+  if (!sceneId) return undefined;
+  const blockIndex = parseBlockIndexInput(value);
+  return blockIndex === undefined ? {sceneId} : {sceneId, blockIndex};
+}
+
+const PAYOFF_TARGET_SEP = /[、,，]/;
+
+function parsePayoffTargetParts(value: string | undefined): string[] {
+  if (!value?.trim()) return [];
+  return value.split(PAYOFF_TARGET_SEP).map((s) => s.trim()).filter(Boolean);
+}
+
+function isSceneIdToken(part: string, sceneIdSet: Set<string>): boolean {
+  return sceneIdSet.has(part) || /^scene_/.test(part);
+}
+
+function splitPayoffTarget(
+  value: string | undefined,
+  sceneIdSet: Set<string>
+): {sceneIds: string[]; other: string[]} {
+  const sceneIds: string[] = [];
+  const other: string[] = [];
+  for (const part of parsePayoffTargetParts(value)) {
+    if (isSceneIdToken(part, sceneIdSet)) sceneIds.push(part);
+    else other.push(part);
+  }
+  return {sceneIds, other};
+}
+
+function joinPayoffTarget(sceneIds: string[], other: string[]): string | undefined {
+  const parts = [...sceneIds, ...other];
+  return parts.length ? parts.join('、') : undefined;
+}
+
+function sortedSceneIds(scenes: GameScene[], extraIds: string[] = []): string[] {
+  const known = new Set(scenes.map((s) => s.id));
+  const extras = extraIds.filter((id) => id && !known.has(id));
+  return [...extras, ...scenes.map((s) => s.id)].sort((a, b) => a.localeCompare(b));
+}
+
+function SceneIdSelect({
+  value,
+  onChange,
+  scenes,
+  sceneLabel,
+  allowEmpty = true,
+  placeholder = '选择场景',
+}: {
+  value: string | undefined;
+  onChange: (sceneId: string | undefined) => void;
+  scenes: GameScene[];
+  sceneLabel: (sceneId: string) => string;
+  allowEmpty?: boolean;
+  placeholder?: string;
+}) {
+  const ids = useMemo(() => sortedSceneIds(scenes, value ? [value] : []), [scenes, value]);
+  return (
+    <select
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      style={styles.input}
+    >
+      {allowEmpty && !value ? <option value="">{placeholder}</option> : null}
+      {ids.map((sid) => (
+        <option key={sid} value={sid}>
+          {sceneLabel(sid)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function PayoffTargetSceneSelect({
+  value,
+  onChange,
+  scenes,
+  sceneLabel,
+}: {
+  value: string | undefined;
+  onChange: (value: string | undefined) => void;
+  scenes: GameScene[];
+  sceneLabel: (sceneId: string) => string;
+}) {
+  const sceneIdSet = useMemo(() => new Set(scenes.map((s) => s.id)), [scenes]);
+  const {sceneIds, other} = useMemo(
+    () => splitPayoffTarget(value, sceneIdSet),
+    [value, sceneIdSet]
+  );
+  const ids = useMemo(() => sortedSceneIds(scenes, sceneIds), [scenes, sceneIds]);
+
+  return (
+    <div>
+      <select
+        multiple
+        value={sceneIds}
+        onChange={(e) => {
+          const selected = Array.from(e.target.selectedOptions, (o) => o.value);
+          onChange(joinPayoffTarget(selected, other));
+        }}
+        style={{...styles.input, minHeight: 88}}
+      >
+        {ids.map((sid) => (
+          <option key={sid} value={sid}>
+            {sceneLabel(sid)}
+          </option>
+        ))}
+      </select>
+      <p style={{...hintText, margin: '4px 0 0'}}>
+        按住 Ctrl（Mac：⌘）多选。
+        {other.length ? ` 另含文字说明：${other.join('、')}` : ''}
+      </p>
+    </div>
+  );
+}
+
 export function NarrativeEngineEditor() {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
@@ -185,6 +333,13 @@ export function NarrativeEngineEditor() {
   const [scenes, setScenes] = useState<GameScene[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [foreshadowOpenState, setForeshadowOpenState] = useState<Record<string, boolean>>({});
+
+  const sceneMap = useMemo(() => new Map(scenes.map((s) => [s.id, s])), [scenes]);
+  const sceneLabel = useCallback(
+    (sceneId: string) => sceneMap.get(sceneId)?.name ?? sceneId,
+    [sceneMap]
+  );
 
   const reload = useCallback(async () => {
     setError(null);
@@ -300,7 +455,7 @@ export function NarrativeEngineEditor() {
               setForeshadowing((f) => ({
                 threads: [
                   ...f.threads,
-                  {id: `fs_${Date.now()}`, title: '新伏笔', status: 'planned'},
+                  {id: `fs_${Date.now()}`, title: '新伏笔', status: 'planned', priority: 2},
                 ],
               }))
             }
@@ -308,29 +463,50 @@ export function NarrativeEngineEditor() {
           {(foreshadowing.threads ?? []).length === 0 && (
             <p style={{color: '#888', fontSize: 12, margin: '0 0 8px'}}>暂无伏笔，点击 + 添加。</p>
           )}
-          {(foreshadowing.threads ?? []).map((th, ti) => (
-            <div key={th.id || ti} style={card}>
-              <div style={cardHead}>
+          {(foreshadowing.threads ?? []).map((th, ti) => {
+            const threadKey = th.id || String(ti);
+            const open = foreshadowOpenState[threadKey] ?? false;
+            const displayTitle = th.title.trim() || '未命名伏笔';
+            const toggleOpen = () =>
+              setForeshadowOpenState((prev) => ({...prev, [threadKey]: !open}));
+
+            return (
+            <div key={threadKey} style={card}>
+              <div
+                style={cardHead}
+                onClick={toggleOpen}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleOpen();
+                  }
+                }}
+              >
                 <span>
-                  {th.title || th.id || '未命名伏笔'}
+                  {open ? '▼' : '▶'} {displayTitle}
                   {th.status ? (
                     <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                      {th.status}
+                      {foreshadowStatusLabel(th.status)}
                     </span>
                   ) : null}
                 </span>
                 <ListOpsCell>
+                  <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
                   <ListDeleteButton
                     title="删除伏笔"
-                    confirmMessage={`确认删除伏笔「${th.title || th.id}」？`}
+                    confirmMessage={`确认删除伏笔「${displayTitle}」？`}
                     onClick={() =>
                       setForeshadowing((f) => ({
                         threads: f.threads.filter((_, i) => i !== ti),
                       }))
                     }
                   />
+                  </span>
                 </ListOpsCell>
               </div>
+              {open ? (
               <div style={cardBody}>
                 <div style={styles.row}>
                   <label style={styles.label}>id</label>
@@ -371,28 +547,176 @@ export function NarrativeEngineEditor() {
                     }
                     style={styles.input}
                   >
-                    <option value="planned">planned</option>
-                    <option value="planted">planted</option>
-                    <option value="resolved">resolved</option>
+                    {FORESHADOW_STATUS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div style={styles.row}>
-                  <label style={styles.label}>payoffTarget</label>
-                  <input
-                    value={th.payoffTarget ?? ''}
+                  <label style={styles.label}>优先级</label>
+                  <select
+                    value={th.priority ?? 2}
                     onChange={(e) =>
                       setForeshadowing((f) => ({
                         threads: f.threads.map((t, i) =>
-                          i === ti ? {...t, payoffTarget: e.target.value || undefined} : t
+                          i === ti ? {...t, priority: Number(e.target.value)} : t
                         ),
                       }))
                     }
                     style={styles.input}
-                    placeholder="payoffTarget"
+                  >
+                    <option value={1}>1（高）</option>
+                    <option value={2}>2（中）</option>
+                    <option value={3}>3（低）</option>
+                  </select>
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>埋设要点</label>
+                  <textarea
+                    value={th.setup ?? ''}
+                    onChange={(e) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti ? {...t, setup: e.target.value || undefined} : t
+                        ),
+                      }))
+                    }
+                    style={{...styles.input, ...styles.textarea, minHeight: 48}}
+                    placeholder="读者应注意到什么、用什么意象或道具"
                   />
                 </div>
                 <div style={styles.row}>
-                  <label style={styles.label}>notes</label>
+                  <label style={styles.label}>回收要点</label>
+                  <textarea
+                    value={th.payoff ?? ''}
+                    onChange={(e) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti ? {...t, payoff: e.target.value || undefined} : t
+                        ),
+                      }))
+                    }
+                    style={{...styles.input, ...styles.textarea, minHeight: 48}}
+                    placeholder="回收时须兑现什么信息或情绪"
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>触发词</label>
+                  <input
+                    value={formatAnchorsInput(th.anchors)}
+                    onChange={(e) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti ? {...t, anchors: parseAnchorsInput(e.target.value)} : t
+                        ),
+                      }))
+                    }
+                    style={styles.input}
+                    placeholder="逗号分隔；用于生成块锚点匹配与自动埋设"
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>埋设场景</label>
+                  <SceneIdSelect
+                    value={th.plantedIn?.sceneId}
+                    scenes={scenes}
+                    sceneLabel={sceneLabel}
+                    onChange={(sceneId) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti
+                            ? {...t, plantedIn: mergePlantRef(t.plantedIn, 'sceneId', sceneId ?? '')}
+                            : t
+                        ),
+                      }))
+                    }
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>埋设块序</label>
+                  <input
+                    value={th.plantedIn?.blockIndex ?? ''}
+                    onChange={(e) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti
+                            ? {...t, plantedIn: mergePlantRef(t.plantedIn, 'blockIndex', e.target.value)}
+                            : t
+                        ),
+                      }))
+                    }
+                    style={styles.input}
+                    placeholder="可选，passage block 序号"
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>回收截止</label>
+                  <SceneIdSelect
+                    value={th.payoffBy}
+                    scenes={scenes}
+                    sceneLabel={sceneLabel}
+                    onChange={(sceneId) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti ? {...t, payoffBy: sceneId} : t
+                        ),
+                      }))
+                    }
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>回收目标</label>
+                  <PayoffTargetSceneSelect
+                    value={th.payoffTarget}
+                    scenes={scenes}
+                    sceneLabel={sceneLabel}
+                    onChange={(payoffTarget) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti ? {...t, payoffTarget} : t
+                        ),
+                      }))
+                    }
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>回收场景</label>
+                  <SceneIdSelect
+                    value={th.resolvedIn?.sceneId}
+                    scenes={scenes}
+                    sceneLabel={sceneLabel}
+                    onChange={(sceneId) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti
+                            ? {...t, resolvedIn: mergePlantRef(t.resolvedIn, 'sceneId', sceneId ?? '')}
+                            : t
+                        ),
+                      }))
+                    }
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>回收块序</label>
+                  <input
+                    value={th.resolvedIn?.blockIndex ?? ''}
+                    onChange={(e) =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) =>
+                          i === ti
+                            ? {...t, resolvedIn: mergePlantRef(t.resolvedIn, 'blockIndex', e.target.value)}
+                            : t
+                        ),
+                      }))
+                    }
+                    style={styles.input}
+                    placeholder="可选，passage block 序号"
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.label}>备注</label>
                   <textarea
                     value={th.notes ?? ''}
                     onChange={(e) =>
@@ -403,11 +727,14 @@ export function NarrativeEngineEditor() {
                       }))
                     }
                     style={{...styles.input, ...styles.textarea, minHeight: 40}}
+                    placeholder="维护者备注（可选）"
                   />
                 </div>
               </div>
+              ) : null}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

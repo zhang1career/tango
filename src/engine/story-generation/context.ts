@@ -10,6 +10,7 @@ import {
 } from '@/utils/passage-blocks';
 import {buildSceneRawContextForAiBlock} from './raw-context';
 import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
+import {openForeshadowingThreads} from '@/schema/story-foreshadowing';
 
 const BUDGET = {
   maxChapterEvents: 8,
@@ -86,7 +87,7 @@ export function buildGenerationContextPayload(
     scene.id,
     chapter.chapterId
   );
-  const openThreads = foreshadowing.threads.filter((t) => t.status !== 'resolved').slice(0, 12);
+  const openThreads = openForeshadowingThreads(foreshadowing.threads);
   const canonScene = canon.scenes[scene.id];
 
   const chapterEventIds = new Set<string>();

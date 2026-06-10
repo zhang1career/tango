@@ -456,9 +456,61 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 | 文件 | 导入 zip | 说明 |
 |------|----------|------|
 | `story-outline.json` | 可选 | 滚动大纲：与 `story-fm` 1:1 同步；`progressAnchorChapterId` + `rollingHorizonChapters` 定义详细维护窗口；`chapters[].narrativeGoal`、`beats[]`（场景任务，UI 称「场景任务」） |
-| `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`（`planned` / `planted` / `resolved`） |
+| `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`；见下文字段说明 |
 | `story-canon.json` | 可选 | 叙事状态快照：`scenes[sceneId].facts` / `characterStates` 等 |
 | `story-generation-traces.json` | **不得** | DEV 本地生成轨迹，由编辑器追加，**不要**放入上游 zip |
+
+#### `story-foreshadowing.json`（伏笔池）
+
+顶层结构：`{ "threads": [ … ] }`。每条伏笔描述一条可追踪的叙事线索（埋设 → 回收）。
+
+**`threads[]` 字段**
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | 是 | 稳定标识，如 `thread_family_precept` |
+| `title` | 是 | 人读标题；列表展示用，亦作无 `anchors` 时的自动埋设回退匹配 |
+| `status` | 是 | 生命周期：`planned`（待埋设）/ `planted`（已埋设）/ `resolved`（已回收） |
+| `setup` | 否 | 埋设要点：读者应注意到什么、用什么意象或道具 |
+| `payoff` | 否 | 回收要点：须兑现什么信息或情绪 |
+| `plantedIn` | 否 | 实际埋设位置，见下表 `ForeshadowPlantRef` |
+| `resolvedIn` | 否 | 实际回收位置，结构同 `plantedIn` |
+| `anchors` | 否 | 字符串数组；生成块 `anchors` 与之模糊匹配时，可将 `planned` 自动标为 `planted` |
+| `priority` | 否 | 整数 `1`（高）– `3`（低）；未设视为 `2`。未回收伏笔注入生成 context 时按升序优先（最多 12 条） |
+| `payoffBy` | 否 | 须于此场景前完成回收，填 `scene id`（如 `scene_1090`） |
+| `payoffTarget` | 否 | 预期回收说明或目标场景 id；可写多个场景，供作者备忘 |
+| `notes` | 否 | 维护者备注（可选） |
+
+**`plantedIn` / `resolvedIn`（`ForeshadowPlantRef`）**
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `sceneId` | 是 | 场景 id |
+| `blockIndex` | 否 | passage block 序号（0 起）；省略表示仅精确到场景 |
+
+**生成与编辑器行为**
+
+- DEV 叙事生成将 `status !== 'resolved'` 的伏笔（经 `priority` 排序后取前 12 条）注入 `openForeshadowing` context。
+- 生成完成后，若 AI 块的 `anchors` 与某条 `planned` 伏笔的 `anchors[]`（或回退为 `title`）命中，则自动写入 `plantedIn` 并将 `status` 改为 `planted`。
+- 编辑器「叙事引擎 → 伏笔池」可查看/编辑上述全部字段；`status` 与 `plantedIn` / `resolvedIn` 亦可手工维护。
+
+**示例（单条）**
+
+```json
+{
+  "id": "thread_family_precept",
+  "title": "父训十无益",
+  "status": "resolved",
+  "setup": "寒门夜雨府君考问「十无益」，开局持 family_precept。",
+  "payoff": "东归与林公祠收束，与左营司巷序幕互文。",
+  "plantedIn": {"sceneId": "scene_1000"},
+  "resolvedIn": {"sceneId": "scene_1150"},
+  "anchors": ["十无益", "父训", "family_precept"],
+  "priority": 1,
+  "payoffBy": "scene_1150",
+  "payoffTarget": "scene_1120、scene_1150"
+}
+```
 
 `story-journal.json`（心迹）**不参与**叙事生成 context，避免汇总剧透。
 
