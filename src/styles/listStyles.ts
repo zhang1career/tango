@@ -51,6 +51,7 @@ export const listStyles = {
 export const listGrids = {
   nameOps: {gridTemplateColumns: '1fr 4.5rem'},
   nameExtraOps: {gridTemplateColumns: '1fr 1fr 4.5rem'},
+  nameTwoExtraOps: {gridTemplateColumns: '1fr 1fr 1fr 4.5rem'},
   scenePool: {gridTemplateColumns: '1fr 7rem 4.5rem'},
   transition: {gridTemplateColumns: '1fr 1fr 1fr 4.5rem'},
   binding: {gridTemplateColumns: '9rem 11rem 1fr 4.5rem'},

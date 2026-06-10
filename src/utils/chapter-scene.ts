@@ -84,6 +84,17 @@ export function getSceneBindings(
   return bindings?.find((b) => b.chapterId === chapterId && b.sceneId === sceneId)?.ruleIds ?? [];
 }
 
+/** 场景所属章节标题（按 chapters 顺序；可能多章共用同一场景） */
+export function getChapterTitlesForScene(fw: StoryFramework, sceneId: string): string[] {
+  const titles: string[] = [];
+  for (const ch of fw.chapters ?? []) {
+    if (getChapterAvailableSceneIds(ch).includes(sceneId)) {
+      titles.push(ch.title || ch.id);
+    }
+  }
+  return titles;
+}
+
 export function findChapterSceneIndices(
   fw: StoryFramework,
   sceneId: string

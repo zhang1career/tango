@@ -8,6 +8,18 @@ import {
   ListTableRow,
 } from './ListPrimitives';
 
+type EntityFlatListExtraColumn = {
+  label: string;
+  getValue: (index: number) => string | undefined;
+};
+
+function gridForExtraColumns(count: number): React.CSSProperties {
+  if (count === 0) return listGrids.nameOps;
+  if (count === 1) return listGrids.nameExtraOps;
+  if (count === 2) return listGrids.nameTwoExtraOps;
+  return {gridTemplateColumns: `1fr ${'1fr '.repeat(count)}4.5rem`};
+}
+
 export function EntityFlatList({
   count,
   emptyHint,
@@ -16,6 +28,7 @@ export function EntityFlatList({
   getMeta,
   extraColumnLabel,
   getExtra,
+  extraColumns,
   onOpen,
   onEdit,
   onDelete,
@@ -25,8 +38,11 @@ export function EntityFlatList({
   getKey: (index: number) => string;
   getPrimary: (index: number) => string;
   getMeta?: (index: number) => string | undefined;
+  /** @deprecated 使用 extraColumns */
   extraColumnLabel?: string;
+  /** @deprecated 使用 extraColumns */
   getExtra?: (index: number) => string | undefined;
+  extraColumns?: EntityFlatListExtraColumn[];
   onOpen: (index: number) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
@@ -35,13 +51,18 @@ export function EntityFlatList({
     return emptyHint ? <p style={{color: '#888', fontSize: 14, margin: 0}}>{emptyHint}</p> : null;
   }
 
-  const grid = extraColumnLabel ? listGrids.nameExtraOps : listGrids.nameOps;
+  const columns: EntityFlatListExtraColumn[] =
+    extraColumns ??
+    (extraColumnLabel && getExtra ? [{label: extraColumnLabel, getValue: getExtra}] : []);
+  const grid = gridForExtraColumns(columns.length);
 
   return (
     <div>
       <ListTableHeader grid={grid}>
         <span>名称</span>
-        {extraColumnLabel ? <span>{extraColumnLabel}</span> : null}
+        {columns.map((col) => (
+          <span key={col.label}>{col.label}</span>
+        ))}
         <span style={listStyles.cellOps}>操作</span>
       </ListTableHeader>
       {Array.from({length: count}, (_, i) => (
@@ -50,11 +71,14 @@ export function EntityFlatList({
             {getPrimary(i)}
             {getMeta?.(i) ? <span style={listStyles.nameMeta}>{getMeta(i)}</span> : null}
           </span>
-          {getExtra ? (
-            <span style={listStyles.cellMuted} title={getExtra(i)}>
-              {getExtra(i) || '—'}
-            </span>
-          ) : null}
+          {columns.map((col) => {
+            const value = col.getValue(i);
+            return (
+              <span key={col.label} style={listStyles.cellMuted} title={value}>
+                {value || '—'}
+              </span>
+            );
+          })}
           <ListOpsCell>
             <ListEditButton onClick={() => onEdit(i)} />
             <ListDeleteButton onClick={() => onDelete(i)} />

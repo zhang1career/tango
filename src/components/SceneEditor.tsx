@@ -12,6 +12,7 @@ import {
   syncRoutingLinksForGame,
 } from '@/services/scene-routing-sync-service';
 import {collectRoutingStaleScenes} from '../utils/scene-routing-sync';
+import {getChapterAvailableSceneIds} from '../utils/chapter-scene';
 import {toPersistedFramework} from '../schema/story-framework';
 import {loadFrameworkWithListData, mergeRuntimeFrameworkListData} from '../services/framework-list-data';
 import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
@@ -1150,6 +1151,18 @@ export function SceneEditor({
     backgroundMusic: e.backgroundMusic,
   }));
   const eventNameMap = useMemo(() => new Map(eventIds.map((e) => [e.id, e.name])), [eventIds]);
+  const sceneChapterTitles = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const ch of fw.chapters ?? []) {
+      const title = ch.title || ch.id;
+      for (const sid of getChapterAvailableSceneIds(ch)) {
+        const list = map.get(sid) ?? [];
+        list.push(title);
+        map.set(sid, list);
+      }
+    }
+    return map;
+  }, [fw.chapters]);
   const gameRules = useMemo(() => normalizeGameRules(fw.gameRules ?? []), [fw.gameRules]);
   const ruleIds = gameRules.map((r) => ({id: r.id, name: r.name}));
 
@@ -1265,12 +1278,19 @@ export function SceneEditor({
           getKey={(ci) => `scene-${ci}`}
           getPrimary={(ci) => scenes[ci]!.name}
           getMeta={(ci) => scenes[ci]!.id}
-          extraColumnLabel="事件"
-          getExtra={(ci) =>
-            (scenes[ci]!.eventIds ?? [])
-              .map((id) => eventNameMap.get(id) ?? id)
-              .join('、')
-          }
+          extraColumns={[
+            {
+              label: '章节',
+              getValue: (ci) => (sceneChapterTitles.get(scenes[ci]!.id) ?? []).join('，'),
+            },
+            {
+              label: '事件',
+              getValue: (ci) =>
+                (scenes[ci]!.eventIds ?? [])
+                  .map((id) => eventNameMap.get(id) ?? id)
+                  .join('、'),
+            },
+          ]}
           onOpen={setDetailIndex}
           onEdit={setEditIndex}
           onDelete={removeSceneWithAuth}
