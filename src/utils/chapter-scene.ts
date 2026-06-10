@@ -37,7 +37,7 @@ export function isNarrativeRouting(ch: FrameworkChapter, sceneId: string): boole
 }
 
 /**
- * 推断章末场景：无叙事出边；或仅有支线出边且为本章叙事入口（支线枢纽）。
+ * 推断章末场景：无叙事出边；或仅有支线出边（含叙事入口支线枢纽与主线末端仅挂支线）。
  */
 export function inferChapterEndSceneIds(ch: FrameworkChapter): string[] {
   const pool = getChapterAvailableSceneIds(ch);
@@ -56,11 +56,24 @@ export function inferChapterEndSceneIds(ch: FrameworkChapter): string[] {
       ends.push(sid);
       continue;
     }
-    if (sid === ch.startSceneId && out.every((e) => edgeIsBranch(e))) {
-      ends.push(sid);
-    }
+    const hasMainOut = out.some((e) => !edgeIsBranch(e));
+    if (!hasMainOut) ends.push(sid);
   }
   return ends;
+}
+
+/** 跨章过渡默认起跳场景：优先主线末端（有主线入边、无主线出边的章末场景） */
+export function pickDefaultChapterEndSceneId(ch: FrameworkChapter, endSceneIds: string[]): string {
+  if (endSceneIds.length === 0) return '';
+  if (endSceneIds.length === 1) return endSceneIds[0]!;
+  const pool = new Set(getChapterAvailableSceneIds(ch));
+  const mainIncoming = new Set<string>();
+  for (const e of ch.narrativeEdges ?? []) {
+    if (!edgeIsBranch(e) && pool.has(e.toSceneId)) mainIncoming.add(e.toSceneId);
+  }
+  const mainlineEnds = endSceneIds.filter((id) => mainIncoming.has(id));
+  if (mainlineEnds.length > 0) return mainlineEnds[mainlineEnds.length - 1]!;
+  return endSceneIds[endSceneIds.length - 1]!;
 }
 
 export function getSceneBindings(

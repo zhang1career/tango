@@ -65,23 +65,28 @@ export async function fetchFrameworkListData(gameId: string): Promise<Partial<St
     'gameRules',
     'features',
   ];
-  for (let i = 0; i < apis.length; i++) {
-    const {url, parse} = apis[i];
-    const key = keys[i];
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const parsed = parse(data);
-      if (key === 'gameRules' && parsed && typeof parsed === 'object' && 'rules' in (parsed as object)) {
-        const bundle = parsed as ReturnType<typeof parseStoryRulesFile>;
-        merged.gameRules = bundle.rules;
-        merged.sceneBindings = bundle.sceneBindings ?? [];
-      } else if (parsed !== undefined && parsed !== null) {
-        (merged as Record<string, unknown>)[key as string] = parsed;
+  const results = await Promise.all(
+    apis.map(async ({url, parse}, i) => {
+      const key = keys[i];
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return {key, parsed: parse(data)};
+      } catch {
+        return null;
       }
-    } catch {
-      // ignore
+    })
+  );
+  for (const row of results) {
+    if (!row) continue;
+    const {key, parsed} = row;
+    if (key === 'gameRules' && parsed && typeof parsed === 'object' && 'rules' in (parsed as object)) {
+      const bundle = parsed as ReturnType<typeof parseStoryRulesFile>;
+      merged.gameRules = bundle.rules;
+      merged.sceneBindings = bundle.sceneBindings ?? [];
+    } else if (parsed !== undefined && parsed !== null) {
+      (merged as Record<string, unknown>)[key as string] = parsed;
     }
   }
   return merged;

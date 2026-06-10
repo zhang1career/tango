@@ -12,12 +12,12 @@ import {
   getChapterAvailableSceneIds,
   inferChapterEndSceneIds,
   isNarrativeGraph,
+  pickDefaultChapterEndSceneId,
 } from '../utils/chapter-scene';
-import {validateFramework} from '../schema/story-framework';
+import {repairFrameworkTransitions, validateFramework} from '../schema/story-framework';
 import {useGameId} from '../context/GameIdContext';
 import {useNotification} from '../context/NotificationContext';
 import {getScenesFetchUrl, getStoryFmFetchUrl} from '@/config';
-import {preloadFrameworkListData} from '../services/framework-list-data';
 import {fromPersistedFramework, migrateFramework, toPersistedFramework} from '../schema/story-framework';
 import {formatJsonCompact} from '../utils/json-format';
 import {
@@ -205,12 +205,8 @@ export function ChapterEditor({
   } | null>(null);
 
   useEffect(() => {
-    void preloadFrameworkListData(updateFw, gameId);
-  }, [gameId, updateFw]);
-
-  useEffect(() => {
     void loadStoryFromGame(gameId).then(setParsedStory);
-  }, [gameId, fw]);
+  }, [gameId]);
 
   const lookupKeys = useCallback(
     (chi: number, sid: string) => lookupKeysForSceneEntry(fw, chi, sid),
@@ -253,13 +249,27 @@ export function ChapterEditor({
 
   const handleSave = async () => {
     try {
+      let dataToSave = fw;
+      const preValidation = validateFramework(dataToSave);
+      if (!preValidation.valid) {
+        const repaired = repairFrameworkTransitions(dataToSave);
+        const postValidation = validateFramework(repaired);
+        if (!postValidation.valid) {
+          addNotification('error', preValidation.errors.join('；'));
+          return;
+        }
+        dataToSave = repaired;
+        updateFw(() => repaired);
+        addNotification('info', '已自动将跨章过渡起跳场景修正为当前章末场景');
+      }
+
       const story = parsedStory ?? (await loadStoryFromGame(gameId));
       if (!story) {
-        await saveFm();
+        await saveFm(dataToSave);
         addNotification('info', '章节已保存（无 story.tw，跳过路由同步）');
         return;
       }
-      const syncResult = await persistFrameworkRoutingToStory(gameId, fw, {story});
+      const syncResult = await persistFrameworkRoutingToStory(gameId, dataToSave, {story});
       updateFw(() => syncResult.fw);
       await saveFm(syncResult.fw);
       setParsedStory(syncResult.story);
@@ -876,24 +886,87 @@ function TransitionsEditor({
   const transitions = ch.transitions ?? [];
   const patch = (next: ChapterTransition[]) =>
     updateChapter(chi, (c) => ({...c, transitions: next}));
+  const targetChapters = chapters.filter((c) => c.id !== ch.id);
+  const defaultToChapterId = chapters[chi + 1]?.id ?? targetChapters[0]?.id ?? '';
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [draftFrom, setDraftFrom] = useState('');
+  const [draftTo, setDraftTo] = useState(defaultToChapterId);
+  const [draftText, setDraftText] = useState('下一章');
+
+  const openAdd = () => {
+    setDraftFrom(pickDefaultChapterEndSceneId(ch, endScenes));
+    setDraftTo(defaultToChapterId);
+    setDraftText('下一章');
+    setAddOpen(true);
+  };
+
+  const confirmAdd = () => {
+    if (!draftFrom || !draftTo) return;
+    patch([
+      ...transitions,
+      {fromSceneId: draftFrom, toChapterId: draftTo, displayText: draftText},
+    ]);
+    setAddOpen(false);
+  };
 
   return (
     <div style={{marginTop: 20}}>
       <ListSectionHead
         title={<span style={{...styles.sectionTitle, marginBottom: 0}}>跨章过渡</span>}
-        addTitle={endScenes.length === 0 ? '当前无章末场景，请检查叙事图' : '添加过渡'}
-        addDisabled={endScenes.length === 0}
-        onAdd={() =>
-          patch([
-            ...transitions,
-            {
-              fromSceneId: endScenes[0] ?? '',
-              toChapterId: chapters[chi + 1]?.id ?? '',
-              displayText: '下一章',
-            },
-          ])
-        }
+        addTitle="添加过渡"
+        onAdd={openAdd}
       />
+      <DetailEditModal
+        title="添加跨章过渡"
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        editable={endScenes.length > 0 && targetChapters.length > 0}
+        onSave={confirmAdd}
+      >
+        {endScenes.length === 0 ? (
+          <p style={{fontSize: 13, color: '#e8e8e8', margin: 0, lineHeight: 1.55}}>
+            当前无法推断章末场景。请检查叙事图：章末场景须<strong>无主线出边</strong>（仅有支线出边亦可，例如主线末端挂可选支线）。
+          </p>
+        ) : targetChapters.length === 0 ? (
+          <p style={{fontSize: 13, color: '#e8e8e8', margin: 0, lineHeight: 1.55}}>
+            尚无其他章节可作为跳转目标，请先添加后续章节。
+          </p>
+        ) : (
+          <>
+            <label style={styles.label}>起跳场景（章末）</label>
+            <select
+              style={{...styles.input, marginBottom: 12}}
+              value={draftFrom}
+              onChange={(e) => setDraftFrom(e.target.value)}
+            >
+              {endScenes.map((id) => (
+                <option key={id} value={id}>
+                  {sceneMap.get(id)?.name ?? id}
+                </option>
+              ))}
+            </select>
+            <label style={styles.label}>目标章</label>
+            <select
+              style={{...styles.input, marginBottom: 12}}
+              value={draftTo}
+              onChange={(e) => setDraftTo(e.target.value)}
+            >
+              {targetChapters.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+            <label style={styles.label}>链接文案</label>
+            <input
+              style={styles.input}
+              value={draftText}
+              onChange={(e) => setDraftText(e.target.value)}
+            />
+          </>
+        )}
+      </DetailEditModal>
       <p style={{fontSize: 12, color: '#888', margin: '0 0 8px'}}>
         起跳场景为程序根据叙事图推断的章末场景
         {endScenes.length > 0

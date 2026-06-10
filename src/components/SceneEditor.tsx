@@ -3,7 +3,7 @@
  */
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl} from '@/config';
+import {getAIGCApiKey, getScenesFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {runGenerateAiBlock} from '@/services/scene-block-generation';
 import {saveStoryScenes} from '@/services/story-scenes-persist';
 import {
@@ -37,7 +37,7 @@ import {ListAddButton, ListDeleteButton, ListOpsCell} from './ui/ListPrimitives'
 import {listBtnIcon} from '../styles/listStyles';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
-import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-story-rules';
+import {serializeStoryRulesBundle} from '../utils/parse-story-rules';
 import {
   AI_WORD_COUNT_MAX,
   AI_WORD_COUNT_MIN,
@@ -55,8 +55,6 @@ import {SceneRoutingFields} from './SceneRoutingFields';
 import {SingleSelectField} from './ui/SingleSelectField';
 import {MultiSelectField} from './ui/MultiSelectField';
 import {resolveSceneBackgroundMusic} from '../utils/scene-media';
-import {normalizeFeaturesConfig} from '../utils/normalize-features';
-import type {FeaturesConfig} from '../schema/features';
 
 const collapsibleStyles: Record<string, React.CSSProperties> = {
   section: {marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6},
@@ -1061,49 +1059,6 @@ function SceneFormContent({
   );
 }
 
-async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
-  const apis: Array<{ url: string; key: keyof StoryFramework }> = [
-    {url: getMapsFetchUrl(gameId), key: 'maps'},
-    {url: getCharactersFetchUrl(gameId), key: 'characters'},
-    {url: getEventsFetchUrl(gameId), key: 'events'},
-    {url: getItemsFetchUrl(gameId), key: 'items'},
-    {url: getMetadataFetchUrl(gameId), key: 'metadata'},
-    {url: getRulesFetchUrl(gameId), key: 'gameRules'},
-  ];
-  for (const {url, key} of apis) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (key === 'gameRules') {
-          const bundle = parseStoryRulesFile(data);
-          updateFw((d) => ({
-            ...d,
-            gameRules: normalizeGameRules(bundle.rules),
-            sceneBindings: bundle.sceneBindings ?? [],
-          }));
-        } else {
-          const parsed = key === 'metadata'
-            ? (data?.characterAttributes ? {characterAttributes: data.characterAttributes} : null)
-            : (Array.isArray(data) ? data : null);
-          if (parsed) updateFw((d) => ({...d, [key]: parsed}));
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-  try {
-    const res = await fetch(getFeaturesFetchUrl(gameId));
-    if (res.ok) {
-      const data = (await res.json()) as FeaturesConfig;
-      updateFw((d) => ({...d, features: normalizeFeaturesConfig(data)}));
-    }
-  } catch {
-    // ignore
-  }
-}
-
 export function SceneEditor({
                               fw,
                               updateFw,
@@ -1130,7 +1085,7 @@ export function SceneEditor({
 
   useEffect(() => {
     void reloadParsedStory();
-  }, [reloadParsedStory, fw]);
+  }, [reloadParsedStory]);
 
   const persistFrameworkRouting = useCallback(
     async (nextFw: StoryFramework) => {
@@ -1177,36 +1132,6 @@ export function SceneEditor({
     },
     [fw, parsedStory]
   );
-
-  useEffect(() => {
-    preloadForScenes(updateFw, gameId);
-  }, [updateFw, gameId]);
-
-  useEffect(() => {
-    fetch(getRulesFetchUrl(gameId))
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data) return;
-        const bundle = parseStoryRulesFile(data);
-        updateFw((d) => ({
-          ...d,
-          gameRules: normalizeGameRules(bundle.rules),
-          sceneBindings: bundle.sceneBindings ?? [],
-        }));
-      })
-      .catch(() => {});
-  }, [updateFw, gameId]);
-
-  useEffect(() => {
-    fetch(getScenesFetchUrl(gameId))
-      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
-      .then((data) => {
-        const list = Array.isArray(data) ? data : [];
-        updateFw((d) => ({...d, scenes: list as GameScene[]}));
-      })
-      .catch(() => {
-      });
-  }, [updateFw, gameId]);
 
   const scenes = fw.scenes ?? [];
   const setScenes = (fn: (s: GameScene[]) => GameScene[]) =>

@@ -34,10 +34,21 @@ export function lookupKeysForSceneEntry(
   return keys;
 }
 
+const parsedStoryCache = new Map<string, ReturnType<typeof parseTwee>>();
+
+export function invalidateParsedStoryCache(gameId?: string): void {
+  if (gameId) parsedStoryCache.delete(gameId);
+  else parsedStoryCache.clear();
+}
+
 export async function loadStoryFromGame(gameId: string): Promise<ReturnType<typeof parseTwee> | null> {
+  const cached = parsedStoryCache.get(gameId);
+  if (cached) return cached;
   const res = await fetch(getGameContentUrl(gameId));
   if (!res.ok) return null;
-  return parseTwee(await res.text());
+  const parsed = parseTwee(await res.text());
+  parsedStoryCache.set(gameId, parsed);
+  return parsed;
 }
 
 export async function saveStoryTw(gameId: string, story: ReturnType<typeof parseTwee>): Promise<void> {
@@ -50,6 +61,7 @@ export async function saveStoryTw(gameId: string, story: ReturnType<typeof parse
     const err = await res.json().catch(() => ({error: res.statusText}));
     throw new Error((err as {error?: string}).error ?? '保存 story.tw 失败');
   }
+  parsedStoryCache.set(gameId, story);
 }
 
 export async function syncRoutingLinksForGame(
@@ -93,6 +105,7 @@ export async function persistFrameworkRoutingToStory(
   });
   const nextFw = patchRoutingFingerprints(fw, result.synced);
   await saveStoryTw(gameId, story);
+  parsedStoryCache.set(gameId, story);
   return {
     fw: nextFw,
     story,

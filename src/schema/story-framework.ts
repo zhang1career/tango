@@ -14,6 +14,7 @@ import type {SceneRuleBinding} from './story-rules-bundle';
 import {
   getChapterAvailableSceneIds,
   inferChapterEndSceneIds,
+  pickDefaultChapterEndSceneId,
   type ChapterSceneMeta,
 } from '../utils/chapter-scene';
 import {migrateChapterFromLegacy} from '../utils/chapter-migration';
@@ -146,8 +147,37 @@ export function migrateFramework(parsed: StoryFramework): void {
     migrateChapterEndSceneIds(legacy);
   }
   migrateChapterTransitions(chapters);
+  repairChapterTransitionFromScenes(chapters);
   parsed.chapters = chapters;
   migrateFrameworkBranchModel(parsed);
+}
+
+/** 叙事图延伸后，将跨章起跳场景自动对齐到当前推断的章末场景 */
+export function repairChapterTransitionFromScenes(chapters: FrameworkChapter[]): boolean {
+  let changed = false;
+  for (const ch of chapters) {
+    const transitions = ch.transitions;
+    if (!transitions?.length) continue;
+    const endSceneIds = inferChapterEndSceneIds(ch);
+    if (endSceneIds.length === 0) continue;
+    const defaultEnd = pickDefaultChapterEndSceneId(ch, endSceneIds);
+    for (const tr of transitions) {
+      if (!endSceneIds.includes(tr.fromSceneId) && tr.fromSceneId !== defaultEnd) {
+        tr.fromSceneId = defaultEnd;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+export function repairFrameworkTransitions(fw: StoryFramework): StoryFramework {
+  const chapters = (fw.chapters ?? []).map((ch) => ({
+    ...ch,
+    transitions: ch.transitions?.map((tr) => ({...tr})),
+  }));
+  repairChapterTransitionFromScenes(chapters);
+  return {...fw, chapters};
 }
 
 function migrateChapterEndSceneIds(ch: FrameworkChapter): void {
