@@ -4,22 +4,9 @@
 
 import React from 'react';
 import type {GameItem} from '@/schema/game-item.ts';
+import {editorStyles as styles} from '@/styles/editorStyles';
 
-const styles: Record<string, React.CSSProperties> = {
-  section: {marginTop: 16},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    width: '100%',
-    padding: 8,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 13,
-  },
-};
-
-const readOnlyValue: React.CSSProperties = {fontSize: 13, color: '#e8e8e8'};
+const readOnlyValue: React.CSSProperties = styles.readOnlyValue ?? {fontSize: 13, color: '#e8e8e8'};
 
 export function InventoryValuesCard({
                                       items,

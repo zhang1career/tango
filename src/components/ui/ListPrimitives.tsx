@@ -18,6 +18,58 @@ export function ListAddButton({
   );
 }
 
+function listIconBtnStyle(disabled?: boolean): React.CSSProperties {
+  return {
+    ...listBtnIcon,
+    display: 'flex',
+    alignItems: 'center',
+    opacity: disabled ? 0.35 : 1,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+  };
+}
+
+function PlantIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="M12 22v-8" />
+      <path d="M8 14h8" />
+      <path d="M12 6V2" />
+      <path d="M7 6c0-2.8 2.2-5 5-5s5 2.2 5 5" />
+    </svg>
+  );
+}
+
+function ClearIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
 function DeleteIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
   return (
     <svg
@@ -38,6 +90,79 @@ function DeleteIcon({size = 16, style}: {size?: number; style?: React.CSSPropert
       <line x1="10" x2="10" y1="11" y2="17" />
       <line x1="14" x2="14" y1="11" y2="17" />
     </svg>
+  );
+}
+
+export function ListPlantButton({
+  title = '埋设',
+  disabled,
+  stopPropagation,
+  onClick,
+}: {
+  title?: string;
+  disabled?: boolean;
+  stopPropagation?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      style={listIconBtnStyle(disabled)}
+      title={title}
+      disabled={disabled}
+      onClick={(e) => {
+        if (stopPropagation) e.stopPropagation();
+        if (disabled) return;
+        onClick();
+      }}
+    >
+      <PlantIcon />
+    </button>
+  );
+}
+
+export function ListClearButton({
+  title = '清除',
+  confirmMessage,
+  confirmTitle = '确认清除',
+  disabled,
+  stopPropagation,
+  onClick,
+}: {
+  title?: string;
+  confirmMessage?: string;
+  confirmTitle?: string;
+  disabled?: boolean;
+  stopPropagation?: boolean;
+  onClick: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const message = confirmMessage ?? `确认${title}？`;
+
+  return (
+    <>
+      <button
+        type="button"
+        style={listIconBtnStyle(disabled)}
+        title={title}
+        disabled={disabled}
+        onClick={(e) => {
+          if (stopPropagation) e.stopPropagation();
+          if (disabled) return;
+          setConfirmOpen(true);
+        }}
+      >
+        <ClearIcon />
+      </button>
+      <ConfirmModal
+        open={confirmOpen}
+        title={confirmTitle}
+        message={message}
+        confirmLabel="清除"
+        onConfirm={onClick}
+        onClose={() => setConfirmOpen(false)}
+      />
+    </>
   );
 }
 
@@ -63,7 +188,7 @@ export function ListDeleteButton({
     <>
       <button
         type="button"
-        style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+        style={listIconBtnStyle(disabled)}
         title={title}
         disabled={disabled}
         onClick={(e) => {

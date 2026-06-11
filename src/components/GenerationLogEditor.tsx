@@ -9,11 +9,12 @@ import {useGameId} from '@/context/GameIdContext';
 import {clearGenerationTraces, fetchGenerationTraces} from '@/utils/story-engine-files';
 import {getScenesFetchUrl} from '@/config';
 import {formatJsonCompact} from '@/utils/json-format';
+import {pageTitleStyle} from '@/styles/appTheme';
 
 const styles: Record<string, React.CSSProperties> = {
   container: {maxWidth: 960, margin: '0 auto', padding: 20, color: '#e8e8e8'},
-  title: {margin: 0, fontSize: 20},
-  hint: {color: '#888', fontSize: 13, marginBottom: 16},
+  title: pageTitleStyle,
+  hint: {color: '#888', fontSize: 12, marginBottom: 16},
   headerIconBtn: {
     padding: '4px 8px',
     backgroundColor: 'transparent',

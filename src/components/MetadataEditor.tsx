@@ -14,62 +14,7 @@ import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {ListAddButton, ListSectionHead} from './ui/ListPrimitives';
-import {APP_COLORS, pageTitleStyle} from '@/styles/appTheme';
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: APP_COLORS.text},
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottom: '1px solid #333',
-  },
-  title: pageTitleStyle,
-  btn: {
-    padding: '8px 16px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  card: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
-  cardHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    backgroundColor: '#252540',
-  },
-  row: {marginBottom: 12},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    width: '100%',
-    padding: 10,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 14,
-  },
-  btnIcon: {
-    padding: '2px 8px',
-    background: 'transparent',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 16
-  },
-};
+import {editorStyles as styles, sectionTitleStyle} from '@/styles/editorStyles';
 
 /** 保存元信息到预设路径 assets/games/{gameId}/story-metadata.json */
 async function saveMetadataToPreset(metadata: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
@@ -246,7 +191,7 @@ export function MetadataEditor({
 
       <section>
         <ListSectionHead
-          title={<h2 style={{...pageTitleStyle, fontSize: 16}}>人物属性</h2>}
+          title={<h2 style={{...sectionTitleStyle, margin: 0}}>人物属性</h2>}
           addTitle="添加人物属性"
           onAdd={openAddModal}
         />

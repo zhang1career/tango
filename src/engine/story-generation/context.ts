@@ -10,7 +10,7 @@ import {
 } from '@/utils/passage-blocks';
 import {buildSceneRawContextForAiBlock} from './raw-context';
 import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
-import {openForeshadowingThreads} from '@/schema/story-foreshadowing';
+import {foreshadowThreadsForGeneration} from '@/schema/story-foreshadowing';
 import {buildPriorCanonInjection} from './prior-canon';
 
 const BUDGET = {
@@ -83,7 +83,11 @@ export function buildGenerationContextPayload(
   }
 
   const rollingOutline = buildRollingOutlineGenerationContext(fw, outline, chapter.chapterId);
-  const openThreads = openForeshadowingThreads(foreshadowing.threads);
+  const openThreads = foreshadowThreadsForGeneration(
+    foreshadowing.threads,
+    scene.id,
+    passageBlockIndex
+  );
   const canonScene = canon.scenes[scene.id];
   const priorCanon = buildPriorCanonInjection(fw, canon, chapter.chapterIndex, chapter.sceneIndex);
 

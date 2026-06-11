@@ -19,8 +19,14 @@ import {
 import {
   EMPTY_STORY_FORESHADOWING,
   FORESHADOW_STATUS_OPTIONS,
+  applyForeshadowStatusChange,
+  canClearForeshadowThread,
+  canPlantForeshadowThread,
+  clearForeshadowThread,
   foreshadowStatusLabel,
+  foreshadowStatusStyle,
   normalizeStoryForeshadowing,
+  plantForeshadowThread,
   type ForeshadowPlantRef,
   type ForeshadowThread,
   type StoryForeshadowing,
@@ -30,9 +36,10 @@ import {useNarrativeTruth} from '@/context/NarrativeTruthContext';
 import {formatJsonCompact} from '@/utils/json-format';
 import {editorStyles as styles} from '@/styles/editorStyles';
 import {listStyles} from '@/styles/listStyles';
-import {ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
+import {ListClearButton, ListDeleteButton, ListOpsCell, ListPlantButton, ListSectionHead} from './ui/ListPrimitives';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {IdNameSelect} from './ui/IdNameSelect';
+import {MultiSelectField} from './ui/MultiSelectField';
 import {buildIdNameDict, resolveIdName, type IdNameDict} from '@/utils/id-name-dict';
 
 type Tab = 'foreshadowing' | 'canon';
@@ -245,29 +252,28 @@ function PayoffTargetSceneSelect({
     () => splitPayoffTarget(value, sceneIdSet),
     [value, sceneIdSet]
   );
-  const ids = useMemo(() => sortedSceneIds(scenes, sceneIds), [scenes, sceneIds]);
+  const options = useMemo(() => {
+    const known = new Set(scenes.map((s) => s.id));
+    const extras = sceneIds.filter((id) => id && !known.has(id));
+    return [
+      ...extras.map((id) => ({id, name: sceneLabel(id)})),
+      ...scenes.map((s) => ({id: s.id, name: sceneLabel(s.id)})),
+    ];
+  }, [scenes, sceneIds, sceneLabel]);
 
   return (
     <div>
-      <select
-        multiple
+      <MultiSelectField
+        label=""
+        options={options}
         value={sceneIds}
-        onChange={(e) => {
-          const selected = Array.from(e.target.selectedOptions, (o) => o.value);
-          onChange(joinPayoffTarget(selected, other));
-        }}
-        style={{...styles.input, minHeight: 88}}
-      >
-        {ids.map((sid) => (
-          <option key={sid} value={sid}>
-            {sceneLabel(sid)}
-          </option>
-        ))}
-      </select>
-      <p style={{...hintText, margin: '4px 0 0'}}>
-        按住 Ctrl（Mac：⌘）多选。
-        {other.length ? ` 另含文字说明：${other.join('、')}` : ''}
-      </p>
+        onChange={(selected) => onChange(joinPayoffTarget(selected, other))}
+        addPlaceholder="添加回收目标场景…"
+        emptyHint="（未选择场景）"
+      />
+      {other.length ? (
+        <p style={{...hintText, margin: '4px 0 0'}}>另含文字说明：{other.join('、')}</p>
+      ) : null}
     </div>
   );
 }
@@ -394,6 +400,8 @@ export function NarrativeTruthEditors({
             const threadKey = th.id || String(ti);
             const open = foreshadowOpenState[threadKey] ?? false;
             const displayTitle = th.title.trim() || '未命名伏笔';
+            const plantEnabled = canPlantForeshadowThread(th);
+            const clearEnabled = canClearForeshadowThread(th);
             const toggleOpen = () =>
               setForeshadowOpenState((prev) => ({...prev, [threadKey]: !open}));
 
@@ -414,13 +422,43 @@ export function NarrativeTruthEditors({
                 <span>
                   {open ? '▼' : '▶'} {displayTitle}
                   {th.status ? (
-                    <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        fontWeight: 500,
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        ...foreshadowStatusStyle(th.status),
+                      }}
+                    >
                       {foreshadowStatusLabel(th.status)}
                     </span>
                   ) : null}
                 </span>
                 <ListOpsCell>
                   <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
+                  <ListPlantButton
+                    title={plantEnabled ? '埋设' : th.status !== 'planned' ? '埋设（仅待埋设可用）' : '埋设（请先选择埋设场景）'}
+                    disabled={!plantEnabled}
+                    stopPropagation
+                    onClick={() =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) => (i === ti ? plantForeshadowThread(t) : t)),
+                      }))
+                    }
+                  />
+                  <ListClearButton
+                    title={clearEnabled ? '清除' : '清除（仅已埋设或已回收可用）'}
+                    confirmMessage={`确认清除伏笔「${displayTitle}」的埋设与回收信息？`}
+                    disabled={!clearEnabled}
+                    stopPropagation
+                    onClick={() =>
+                      setForeshadowing((f) => ({
+                        threads: f.threads.map((t, i) => (i === ti ? clearForeshadowThread(t) : t)),
+                      }))
+                    }
+                  />
                   <ListDeleteButton
                     title="删除伏笔"
                     confirmMessage={`确认删除伏笔「${displayTitle}」？`}
@@ -468,7 +506,9 @@ export function NarrativeTruthEditors({
                     onChange={(e) =>
                       setForeshadowing((f) => ({
                         threads: f.threads.map((t, i) =>
-                          i === ti ? {...t, status: e.target.value as ForeshadowThread['status']} : t
+                          i === ti
+                            ? applyForeshadowStatusChange(t, e.target.value as ForeshadowThread['status'])
+                            : t
                         ),
                       }))
                     }
@@ -541,7 +581,7 @@ export function NarrativeTruthEditors({
                       }))
                     }
                     style={styles.input}
-                    placeholder="逗号分隔；用于生成块锚点匹配与自动埋设"
+                    placeholder="逗号分隔；备忘或块级约束参考"
                   />
                 </div>
                 <div style={styles.row}>

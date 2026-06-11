@@ -65,8 +65,8 @@ const collapsibleStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 8,
     cursor: 'pointer',
-    fontSize: 13,
-    color: '#bbb',
+    fontSize: 12,
+    color: '#9ca3af',
     userSelect: 'none',
   },
   title: {flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'},
@@ -969,7 +969,7 @@ function SceneFormContent({
       />
 
       <FieldRow label="失败支线" value={scene.isFailure ? '是' : '否'} editable={editable && !!onUpdate}>
-        <label style={{display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#e8e8e8'}}>
+        <label style={{display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#d1d5db'}}>
           <input
             type="checkbox"
             checked={!!scene.isFailure}

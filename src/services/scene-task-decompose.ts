@@ -7,7 +7,7 @@ import type {GameScene, ScenePassageAiBlock, ScenePassageBlock} from '@/schema/g
 import {buildChapterContext} from '@/engine/story-generation/context';
 import {chatCompletion, previewText, requireAigcConfig} from '@/engine/story-generation/llm';
 import {buildPriorCanonInjection} from '@/engine/story-generation/prior-canon';
-import {openForeshadowingThreads} from '@/schema/story-foreshadowing';
+import {foreshadowThreadsForGeneration} from '@/schema/story-foreshadowing';
 import type {StoryOutline} from '@/schema/story-outline';
 import {
   fetchStoryCanon,
@@ -164,7 +164,7 @@ export async function decomposeSceneTaskToAiBlocks(input: {
       narrativeGoal: ch.narrativeGoal,
     },
     peerTasksReference: peerTasks.length ? peerTasks : undefined,
-    openForeshadowing: openForeshadowingThreads(foreshadowing.threads),
+    openForeshadowing: foreshadowThreadsForGeneration(foreshadowing.threads, sceneId),
     priorCanon,
     priorSceneGenerated: priorGenerated,
     leadingRawPreview: rawBlock?.text?.trim() ? truncate(rawBlock.text, 300) : undefined,

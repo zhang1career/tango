@@ -56,7 +56,7 @@ export function RuleUsageInjectionPanel({
   return (
     <div style={{marginBottom: 12, border: '1px solid #333', borderRadius: 8, padding: 12}}>
       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
-        <div style={{fontSize: 13, color: '#a78bfa'}}>
+        <div style={{fontSize: 13, color: '#d1d5db', fontWeight: 600}}>
           {rule.name}（{rule.id}）
         </div>
         {canEdit && onSaveRules ? (

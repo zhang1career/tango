@@ -34,7 +34,7 @@ const localStyles: Record<string, React.CSSProperties> = {
     padding: '0 4px',
     lineHeight: 1,
   },
-  empty: {fontSize: 13, color: '#888', marginBottom: 8},
+  empty: {fontSize: 12, color: '#888', marginBottom: 8},
 };
 
 export function MultiSelectField({

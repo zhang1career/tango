@@ -1,9 +1,6 @@
 import type {GenerationTracePhase} from '@/schema/story-generation-traces';
 import type {StoryCanon} from '@/schema/story-canon';
-import {
-  foreshadowAnchorHit,
-  type StoryForeshadowing,
-} from '@/schema/story-foreshadowing';
+import type {StoryForeshadowing} from '@/schema/story-foreshadowing';
 import {STORY_CANON_VERSION} from '@/schema/story-canon';
 import {buildGenerationContextPayload} from './context';
 import {getGenerationAuditMode, getGenerationAuditRetries} from '@/config';
@@ -204,26 +201,6 @@ ${JSON.stringify(canon.scenes[input.scene.id] ?? {}, null, 2)}`;
   return next;
 }
 
-function markForeshadowingPlanted(
-  foreshadowing: StoryForeshadowing,
-  sceneId: string,
-  blockIndex: number,
-  anchors: string[] | undefined
-): StoryForeshadowing {
-  if (!anchors?.length) return foreshadowing;
-  const threads = foreshadowing.threads.map((t) => {
-    if (t.status !== 'planned') return t;
-    const hit = foreshadowAnchorHit(t, anchors);
-    if (!hit) return t;
-    return {
-      ...t,
-      status: 'planted' as const,
-      plantedIn: {sceneId, blockIndex},
-    };
-  });
-  return {threads};
-}
-
 export async function generatePassageBlock(input: GenerateBlockInput): Promise<GenerateBlockResult> {
   if (!import.meta.env.DEV) throw new Error('叙事生成仅支持开发模式');
   requireAigcConfig();
@@ -282,16 +259,10 @@ export async function generatePassageBlock(input: GenerateBlockInput): Promise<G
   }
 
   let canon = await settleCanon(input, draft, input.bundle.canon);
-  const foreshadowing = markForeshadowingPlanted(
-    input.bundle.foreshadowing,
-    input.scene.id,
-    input.aiBlockIndex,
-    input.aiBlock.anchors
-  );
 
   phases.push({name: 'canon_settle', verdict: 'ok'});
 
-  return {generatedText: draft, phases, canon, foreshadowing};
+  return {generatedText: draft, phases, canon, foreshadowing: input.bundle.foreshadowing};
 }
 
 export async function loadGenerationBundle(

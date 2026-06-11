@@ -48,7 +48,7 @@ export function EntityFlatList({
   onDelete: (index: number) => void;
 }) {
   if (count === 0) {
-    return emptyHint ? <p style={{color: '#888', fontSize: 14, margin: 0}}>{emptyHint}</p> : null;
+    return emptyHint ? <p style={{color: '#888', fontSize: 12, margin: 0}}>{emptyHint}</p> : null;
   }
 
   const columns: EntityFlatListExtraColumn[] =

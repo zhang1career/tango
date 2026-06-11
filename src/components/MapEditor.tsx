@@ -31,7 +31,19 @@ import {formatJsonCompact} from '../utils/json-format';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {ListAddButton, ListSectionHead} from './ui/ListPrimitives';
 import {DetailEditModal} from './ui/DetailEditModal';
-import {APP_COLORS, pageTitleStyle} from '@/styles/appTheme';
+import {editorStyles as baseEditorStyles, sectionTitleStyle} from '@/styles/editorStyles';
+
+const styles: Record<string, React.CSSProperties> = {
+  ...baseEditorStyles,
+  input: {...baseEditorStyles.input, width: undefined},
+  sectionHead: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10},
+  cardBody: {padding: 16},
+};
+
+const mapPanelInputStyle: React.CSSProperties = {
+  ...baseEditorStyles.input,
+  marginTop: 4,
+};
 
 const GRID_GAP = 120;
 const NODE_WIDTH = 60;
@@ -214,16 +226,6 @@ function NodePropsPanel({
     };
     onUpdate({label: name, raw: nextRaw});
   };
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: 8,
-    marginTop: 4,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 13,
-  };
   return (
     <div
       style={{
@@ -233,24 +235,24 @@ function NodePropsPanel({
         border: '1px solid #444',
       }}
     >
-      <div style={{fontSize: 13, color: '#a78bfa', marginBottom: 12}}>编辑节点</div>
+      <div style={{...sectionTitleStyle, marginBottom: 12}}>编辑节点</div>
       <div style={{marginBottom: 10}}>
-        <label style={{fontSize: 12, color: '#888'}}>名称</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} onBlur={commit} style={inputStyle}/>
+        <label style={baseEditorStyles.label}>名称</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} onBlur={commit} style={mapPanelInputStyle}/>
       </div>
       <div style={{marginBottom: 10}}>
-        <label style={{fontSize: 12, color: '#888'}}>规则（每行一条）</label>
+        <label style={baseEditorStyles.label}>规则（每行一条）</label>
         <textarea value={rules} onChange={(e) => setRules(e.target.value)} onBlur={commit}
-                  style={{...inputStyle, minHeight: 50}}/>
+                  style={{...mapPanelInputStyle, minHeight: 50}}/>
       </div>
       <div style={{marginBottom: 10}}>
-        <label style={{fontSize: 12, color: '#888'}}>物品（逗号分隔）</label>
-        <input value={items} onChange={(e) => setItems(e.target.value)} onBlur={commit} style={inputStyle}/>
+        <label style={baseEditorStyles.label}>物品（逗号分隔）</label>
+        <input value={items} onChange={(e) => setItems(e.target.value)} onBlur={commit} style={mapPanelInputStyle}/>
       </div>
       <div style={{marginBottom: 10}}>
-        <label style={{fontSize: 12, color: '#888'}}>人物 id（逗号分隔）</label>
+        <label style={baseEditorStyles.label}>人物 id（逗号分隔）</label>
         <input value={characterIdsStr} onChange={(e) => setCharacterIdsStr(e.target.value)} onBlur={commit}
-               style={inputStyle}/>
+               style={mapPanelInputStyle}/>
       </div>
     </div>
   );
@@ -271,26 +273,16 @@ function EdgePropsPanel({
     setCondition(data.condition ?? '');
   }, [edge.id]);
   const commit = () => onUpdate({displayText: displayText || undefined, condition: condition || undefined});
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: 8,
-    marginTop: 4,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 13,
-  };
   return (
     <div style={{background: '#1e1e32', borderRadius: 8, padding: 14, border: '1px solid #444'}}>
-      <div style={{fontSize: 13, color: '#a78bfa', marginBottom: 12}}>编辑连接</div>
+      <div style={{...sectionTitleStyle, marginBottom: 12}}>编辑连接</div>
       <div style={{marginBottom: 10}}>
-        <label style={{fontSize: 12, color: '#888'}}>选项文案</label>
-        <input value={displayText} onChange={(e) => setDisplayText(e.target.value)} onBlur={commit} style={inputStyle}/>
+        <label style={baseEditorStyles.label}>选项文案</label>
+        <input value={displayText} onChange={(e) => setDisplayText(e.target.value)} onBlur={commit} style={mapPanelInputStyle}/>
       </div>
       <div style={{marginBottom: 10}}>
-        <label style={{fontSize: 12, color: '#888'}}>条件表达式</label>
-        <input value={condition} onChange={(e) => setCondition(e.target.value)} onBlur={commit} style={inputStyle}
+        <label style={baseEditorStyles.label}>条件表达式</label>
+        <input value={condition} onChange={(e) => setCondition(e.target.value)} onBlur={commit} style={mapPanelInputStyle}
                placeholder={'$items has "令牌"'}/>
       </div>
       <div style={{fontSize: 11, color: '#666'}}>{edge.source} → {edge.target}</div>
@@ -533,33 +525,29 @@ function MapFormContent({
 }) {
   if (!editable || !onUpdate) {
     return (
-      <div style={{color: '#e8e8e8', fontSize: 14}}>
+      <div style={{color: '#e8e8e8', fontSize: 13}}>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{map.name || map.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{map.id}</p>
       </div>
     );
   }
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: 10, backgroundColor: '#252540', border: '1px solid #333',
-    borderRadius: 6, color: '#e8e8e8', fontSize: 14, marginTop: 4,
-  };
   return (
     <div>
       <div style={{marginBottom: 12}}>
-        <label style={{display: 'block', marginBottom: 4, fontSize: 13, color: '#a78bfa'}}>ID</label>
+        <label style={baseEditorStyles.label}>ID</label>
         <input
           value={map.id}
           onChange={(e) => onUpdate((m) => ({...m, id: e.target.value}))}
-          style={inputStyle}
+          style={mapPanelInputStyle}
           placeholder="map_xxx"
         />
       </div>
       <div style={{marginBottom: 12}}>
-        <label style={{display: 'block', marginBottom: 4, fontSize: 13, color: '#a78bfa'}}>名称</label>
+        <label style={baseEditorStyles.label}>名称</label>
         <input
           value={map.name}
           onChange={(e) => onUpdate((m) => ({...m, name: e.target.value}))}
-          style={inputStyle}
+          style={mapPanelInputStyle}
           placeholder="未命名地图"
         />
       </div>
@@ -570,7 +558,7 @@ function MapFormContent({
 function MapDetailModal({map, onClose}: { map: GameMap; onClose: () => void }) {
   return (
     <DetailEditModal title="地图详情" open={true} onClose={onClose} editable={false}>
-      <div style={{color: '#e8e8e8', fontSize: 14}}>
+      <div style={{color: '#e8e8e8', fontSize: 13}}>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{map.name || map.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{map.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>节点数：</strong>{map.nodes.length}</p>
@@ -744,67 +732,3 @@ export function MapEditor({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: APP_COLORS.text},
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottom: '1px solid #333',
-  },
-  title: pageTitleStyle,
-  btn: {
-    padding: '8px 16px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  section: {marginBottom: 24},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    padding: 8,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 14,
-  },
-  sectionHead: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10},
-  btnSmall: {
-    padding: '4px 10px',
-    backgroundColor: '#333',
-    border: 'none',
-    borderRadius: 4,
-    color: '#aaa',
-    cursor: 'pointer',
-    fontSize: 12
-  },
-  btnIcon: {
-    padding: '2px 8px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 16
-  },
-  card: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
-  cardHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    backgroundColor: '#252540',
-  },
-  cardBody: {padding: 16},
-};

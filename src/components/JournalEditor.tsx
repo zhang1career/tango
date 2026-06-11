@@ -15,7 +15,7 @@ import {
 } from '@/schema/story-journal';
 import {formatJsonCompact} from '@/utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
-import {editorStyles as styles} from '@/styles/editorStyles';
+import {editorStyles as styles, sectionTitleStyle} from '@/styles/editorStyles';
 import {listBtnIcon, listGrids, listStyles} from '@/styles/listStyles';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {
@@ -125,13 +125,13 @@ function ThemeAssociationPanel({
       }}
     >
       <ListSectionHead
-        title={<h3 style={{fontSize: 16, margin: 0, color: '#a78bfa', fontWeight: 600}}>心迹列表项</h3>}
+        title={<h3 style={{...sectionTitleStyle, margin: 0}}>心迹列表项</h3>}
         addTitle={available.length === 0 ? '请先在下方「心迹列表项」中创建条目' : '添加'}
         addDisabled={available.length === 0}
         onAdd={openPicker}
       />
       {linked.length === 0 && !pickerOpen && (
-        <p style={{color: '#888', fontSize: 14, margin: '0 0 12px'}}>暂无条目</p>
+        <p style={{color: '#888', fontSize: 12, margin: '0 0 12px'}}>暂无条目</p>
       )}
       {pickerOpen && available.length > 0 && (
         <div style={{...styles.card, marginBottom: 12}}>
@@ -442,7 +442,7 @@ export function JournalEditor() {
 
       <section style={styles.section}>
         <ListSectionHead
-          title={<h2 style={{fontSize: 16, margin: 0, color: '#a78bfa'}}>主题</h2>}
+          title={<h2 style={{...sectionTitleStyle, margin: 0}}>主题</h2>}
           addTitle="添加主题"
           onAdd={() => setThemeAddOpen(true)}
         />
@@ -475,7 +475,7 @@ export function JournalEditor() {
 
       <section style={styles.section}>
         <ListSectionHead
-          title={<h2 style={{fontSize: 16, margin: 0, color: '#a78bfa'}}>心迹列表项</h2>}
+          title={<h2 style={{...sectionTitleStyle, margin: 0}}>心迹列表项</h2>}
           addTitle="添加条目"
           onAdd={() => {
             setNewEntry({
@@ -531,7 +531,7 @@ export function JournalEditor() {
             }
           />
           <div style={{marginTop: 8, paddingTop: 16, borderTop: '1px solid #333'}}>
-            <h3 style={{fontSize: 15, margin: '0 0 12px', color: '#a78bfa'}}>主题信息</h3>
+            <h3 style={{...sectionTitleStyle, margin: '0 0 12px'}}>主题信息</h3>
             <ThemeForm theme={themeDetailTheme} editable={false} />
           </div>
         </DetailEditModal>

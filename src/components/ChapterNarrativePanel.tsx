@@ -8,7 +8,7 @@ import type {StoryCanon} from '@/schema/story-canon';
 import type {StoryForeshadowing} from '@/schema/story-foreshadowing';
 import type {GameScene} from '@/schema/game-scene';
 import {getChapterAvailableSceneIds} from '@/utils/chapter-scene';
-import {foreshadowStatusLabel} from '@/schema/story-foreshadowing';
+import {foreshadowStatusLabel, foreshadowStatusStyle, foreshadowThreadsForChapter} from '@/schema/story-foreshadowing';
 
 const sectionTitle: React.CSSProperties = {
   display: 'block',
@@ -41,12 +41,7 @@ export function ChapterNarrativePanel({
   const pool = new Set(getChapterAvailableSceneIds(ch));
   const sceneLabel = (id: string) => scenes.find((s) => s.id === id)?.name ?? id;
 
-  const threads = (foreshadowing.threads ?? []).filter((t) => {
-    const planted = t.plantedIn?.sceneId && pool.has(t.plantedIn.sceneId);
-    const resolved = t.resolvedIn?.sceneId && pool.has(t.resolvedIn.sceneId);
-    const payoffBy = t.payoffBy && pool.has(t.payoffBy);
-    return planted || resolved || payoffBy || t.status !== 'resolved';
-  });
+  const threads = foreshadowThreadsForChapter(foreshadowing.threads ?? [], pool);
 
   const canonEntries = Object.entries(canon.scenes ?? {}).filter(([sid]) => pool.has(sid));
 
@@ -67,7 +62,18 @@ export function ChapterNarrativePanel({
             <div key={t.id} style={card}>
               <div style={{fontWeight: 600}}>
                 {t.title}{' '}
-                <span style={{color: '#888', fontWeight: 400}}>({foreshadowStatusLabel(t.status)})</span>
+                <span
+                  style={{
+                    marginLeft: 4,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    padding: '1px 6px',
+                    borderRadius: 4,
+                    ...foreshadowStatusStyle(t.status),
+                  }}
+                >
+                  {foreshadowStatusLabel(t.status)}
+                </span>
               </div>
               {t.setup && <div style={{color: '#aaa', marginTop: 4}}>埋设：{t.setup}</div>}
               {t.payoff && <div style={{color: '#aaa', marginTop: 4}}>回收：{t.payoff}</div>}

@@ -13,9 +13,11 @@ import {
   type RuleUsageContext,
 } from '@/utils/rule-usage';
 
+import {editorStyles as baseEditorStyles} from '@/styles/editorStyles';
+
 const styles: Record<string, React.CSSProperties> = {
-  row: {marginBottom: 12},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
+  row: baseEditorStyles.row,
+  label: baseEditorStyles.label,
   list: {
     display: 'flex',
     flexWrap: 'wrap',
@@ -67,7 +69,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 13,
   },
-  readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
+  readOnlyValue: {fontSize: 13, color: '#e8e8e8', padding: '4px 0'},
 };
 
 export function RuleIdsSelector({

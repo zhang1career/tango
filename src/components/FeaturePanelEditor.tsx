@@ -10,7 +10,7 @@ import type {FeaturesConfig} from '../schema/features';
 import {MediaUrlField} from './ui/MediaFields';
 import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {formatJsonCompact} from '../utils/json-format';
-import {editorStyles as styles} from '../styles/editorStyles';
+import {editorStyles as styles, sectionTitleStyle} from '../styles/editorStyles';
 
 const DEFAULT_FAILURE_TEMPLATE = '【失败结局】{{failureEnding}}\n\n你暂时偏离了主线目标。';
 const DEFAULT_FEATURES: FeaturesConfig = {battle: {}, failureBranch: {template: DEFAULT_FAILURE_TEMPLATE}};
@@ -94,7 +94,7 @@ export function FeaturePanelEditor() {
 
       <section style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>战斗</h2>
+          <h2 style={{...sectionTitleStyle, margin: 0}}>战斗</h2>
           <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleSaveBattle)} disabled={saving}>
             {saving ? '保存中...' : '保存'}
           </button>
@@ -124,7 +124,7 @@ export function FeaturePanelEditor() {
 
       <section style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ fontSize: 16, color: '#a78bfa', margin: 0 }}>失败支线（failureBranch）</h2>
+          <h2 style={{...sectionTitleStyle, margin: 0}}>失败支线（failureBranch）</h2>
           <button type="button" style={styles.btn} onClick={() => checkAuthForSave(handleSaveBattle)} disabled={saving}>
             {saving ? '保存中...' : '保存'}
           </button>

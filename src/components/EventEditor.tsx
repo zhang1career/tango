@@ -20,63 +20,10 @@ import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {normalizeStringList, StringListField} from './ui/StringListField';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
-import {APP_COLORS, pageTitleStyle} from '@/styles/appTheme';
+import {editorStyles as baseEditorStyles} from '@/styles/editorStyles';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: APP_COLORS.text},
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottom: '1px solid #333',
-  },
-  title: pageTitleStyle,
-  btn: {
-    padding: '8px 16px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  section: {marginBottom: 24},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    width: '100%',
-    padding: 10,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 14,
-  },
-  card: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
-  cardHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    backgroundColor: '#252540',
-  },
-  row: {marginBottom: 12},
-  btnSmall: {
-    padding: '4px 10px',
-    backgroundColor: '#333',
-    border: 'none',
-    borderRadius: 4,
-    color: '#aaa',
-    cursor: 'pointer',
-    fontSize: 12,
-  },
+  ...baseEditorStyles,
   btnIcon: {
     padding: '2px 8px',
     backgroundColor: 'transparent',
@@ -99,7 +46,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     border: '1px solid #333',
   },
-  readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
 };
 
 /** 收集事件下所有行为用于 id 生成 */
@@ -156,7 +102,7 @@ function EventBehaviorContentsEditor({
           <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
             {contents.map((b, i) => (
               <li key={b.id} style={{...styles.contentItem, marginBottom: 8}}>
-                <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
+                <div style={{fontSize: 13, color: '#d1d5db'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
                 <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
                 {b.judgeExpr && (
                   <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>
@@ -331,7 +277,7 @@ function BehaviorSequenceEditor({
       {seq.map((item, idx) => (
         <div key={idx} style={styles.seqItem}>
           <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center'}}>
-            <span style={{fontSize: 13, color: '#a78bfa'}}>行为序列项 #{idx + 1}</span>
+            <span style={{fontSize: 13, color: '#d1d5db', fontWeight: 600}}>行为序列项 #{idx + 1}</span>
             <ListOpsCell>
               <ListDeleteButton onClick={() => removeSeqItem(idx)} />
             </ListOpsCell>

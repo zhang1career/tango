@@ -22,72 +22,10 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
-import {APP_COLORS, pageTitleStyle} from '@/styles/appTheme';
+import {editorStyles as baseEditorStyles} from '@/styles/editorStyles';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: APP_COLORS.text},
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottom: '1px solid #333',
-  },
-  title: pageTitleStyle,
-  btn: {
-    padding: '8px 16px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  section: {marginBottom: 24},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    width: '100%',
-    padding: 10,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 14,
-  },
-  textarea: {minHeight: 60, resize: 'vertical' as const, boxSizing: 'border-box'},
-  card: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
-  cardHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    backgroundColor: '#252540',
-  },
-  row: {marginBottom: 12},
-  btnSmall: {
-    padding: '4px 10px',
-    backgroundColor: '#333',
-    border: 'none',
-    borderRadius: 4,
-    color: '#aaa',
-    cursor: 'pointer',
-    fontSize: 12
-  },
-  btnIcon: {
-    padding: '2px 8px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 16
-  },
+  ...baseEditorStyles,
   collapsible: {marginBottom: 12},
   collapsibleHead: {
     display: 'flex',
@@ -95,11 +33,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     padding: '6px 0',
     cursor: 'pointer',
-    fontSize: 13,
-    color: '#a78bfa',
+    fontSize: 12,
+    color: '#9ca3af',
   },
   collapsibleBody: {padding: '8px 0 0 0'},
-  readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
   dialogueItem: {marginBottom: 16, padding: 12, backgroundColor: '#1e1e32', borderRadius: 8, border: '1px solid #333'},
 };
 
@@ -239,7 +176,7 @@ function DialogueLibrarySection({
           <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
             {lib.map((b, i) => (
               <li key={b.id} style={{marginBottom: 12, padding: 10, backgroundColor: '#1e1e32', borderRadius: 6}}>
-                <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
+                <div style={{fontSize: 13, color: '#d1d5db'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
                 <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
                 {b.judgeExpr && <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>}
                 {b.sceneIds?.length ? (

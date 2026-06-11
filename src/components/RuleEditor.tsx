@@ -247,7 +247,7 @@ export function RuleEditor({
 
       <section style={{...styles.section, marginTop: 32}}>
         <ListSectionHead
-          title={<h2 style={{...styles.title, fontSize: 16, margin: 0}}>场景规则绑定（sceneBindings）</h2>}
+          title={<h2 style={{...styles.sectionTitle, margin: 0}}>场景规则绑定（sceneBindings）</h2>}
           addTitle="添加绑定"
           onAdd={() =>
             checkAuthForSave(() => {
@@ -266,7 +266,7 @@ export function RuleEditor({
           按章节×场景引用准入规则（写入 story-rules.json）。与场景自身的 ruleIds、conditions 按 and 合并。
         </p>
         {bindings.length === 0 ? (
-          <p style={{color: '#888', fontSize: 14}}>暂无绑定。章节场景池中的准入规则应在此维护。</p>
+          <p style={{color: '#888', fontSize: 12}}>暂无绑定。章节场景池中的准入规则应在此维护。</p>
         ) : (
           <div>
             <ListTableHeader grid={listGrids.binding}>
