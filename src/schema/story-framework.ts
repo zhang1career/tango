@@ -64,6 +64,10 @@ export interface FrameworkChapter {
   id: string;
   title: string;
   theme?: string;
+  /** 本章叙事目标（不可协商方向） */
+  narrativeGoal?: string;
+  /** 按场景 id 存储的本章叙事任务（同 scene 在不同章可有不同任务） */
+  narrativeTasks?: Record<string, string>;
   /** 本章可用场景池（无序） */
   availableSceneIds: string[];
   /** 是否开放世界：narrativeGraph 为 true 表示否（走叙事图）；省略表示是 */

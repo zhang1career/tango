@@ -16,10 +16,33 @@ import {
 } from '../utils/chapter-scene';
 import {repairFrameworkTransitions, validateFramework} from '../schema/story-framework';
 import {useGameId} from '../context/GameIdContext';
+import {useNarrativeTruth} from '../context/NarrativeTruthContext';
 import {useNotification} from '../context/NotificationContext';
 import {getScenesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {fromPersistedFramework, migrateFramework, toPersistedFramework} from '../schema/story-framework';
 import {formatJsonCompact} from '../utils/json-format';
+import type {StoryOutline} from '../schema/story-outline';
+import {EMPTY_STORY_OUTLINE, normalizeStoryOutline} from '../schema/story-outline';
+import type {StoryForeshadowing} from '../schema/story-foreshadowing';
+import {EMPTY_STORY_FORESHADOWING, normalizeStoryForeshadowing} from '../schema/story-foreshadowing';
+import type {StoryCanon} from '../schema/story-canon';
+import {EMPTY_STORY_CANON, normalizeStoryCanon} from '../schema/story-canon';
+import {
+  fetchStoryCanon,
+  fetchStoryForeshadowing,
+  fetchStoryOutline,
+} from '../utils/story-engine-files';
+import {
+  applyProgressAnchor,
+  ensureOutlineProgress,
+  getChapterZone,
+  inferProgressAnchorFromScenes,
+  isChapterMarkedArchived,
+} from '../utils/story-outline-fm';
+import {patchStoryOutline} from '../services/game-resource-patch';
+import {useDebouncedStoryFmPatch} from '../hooks/useDebouncedStoryFmPatch';
+import {decomposeSceneTaskToAiBlocks} from '../services/scene-task-decompose';
+import {ChapterNarrativePanel} from './ChapterNarrativePanel';
 import {
   loadStoryFromGame,
   lookupKeysForSceneEntry,
@@ -71,6 +94,27 @@ function EditPassageIcon({style, size = 18}: {style?: React.CSSProperties; size?
     >
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function DecomposeIcon({style, size = 18}: {style?: React.CSSProperties; size?: number}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+      <path d="M11 8v6M8 11h6" />
     </svg>
   );
 }
@@ -203,10 +247,29 @@ export function ChapterEditor({
     sceneId: string;
     segments: PassageBlockSegment[];
   } | null>(null);
+  const [outline, setOutline] = useState<StoryOutline>(EMPTY_STORY_OUTLINE);
+  const [foreshadowing, setForeshadowing] = useState<StoryForeshadowing>(EMPTY_STORY_FORESHADOWING);
+  const [canon, setCanon] = useState<StoryCanon>(EMPTY_STORY_CANON);
+  const [analyzingTarget, setAnalyzingTarget] = useState<string | null>(null);
+  const {queue: queueFmPatch} = useDebouncedStoryFmPatch(gameId);
+  const {revision: narrativeTruthRevision} = useNarrativeTruth();
 
   useEffect(() => {
     void loadStoryFromGame(gameId).then(setParsedStory);
   }, [gameId]);
+
+  useEffect(() => {
+    void (async () => {
+      const [o, fs, c] = await Promise.all([
+        fetchStoryOutline(gameId),
+        fetchStoryForeshadowing(gameId),
+        fetchStoryCanon(gameId),
+      ]);
+      setOutline(ensureOutlineProgress(o, fw, fw.scenes ?? []));
+      setForeshadowing(normalizeStoryForeshadowing(fs));
+      setCanon(normalizeStoryCanon(c));
+    })();
+  }, [gameId, fw.chapters.length, narrativeTruthRevision]);
 
   const lookupKeys = useCallback(
     (chi: number, sid: string) => lookupKeysForSceneEntry(fw, chi, sid),
@@ -304,6 +367,8 @@ export function ChapterEditor({
       await saveStoryTw(gameId, result.story);
       await saveFm(result.fw);
       setParsedStory(result.story);
+      const c = await fetchStoryCanon(gameId);
+      setCanon(normalizeStoryCanon(c));
       addNotification(
         'info',
         result.generatedCount > 0
@@ -373,6 +438,52 @@ export function ChapterEditor({
       ...d,
       chapters: d.chapters.map((c, i) => (i === chi ? fn(c) : c)),
     }));
+  };
+
+  const handleAnalyzeScene = async (chapterIndex: number, sceneId: string) => {
+    if (!getAIGCApiKey()?.trim()) {
+      addNotification('error', '未配置 AIGC API Key，无法分析');
+      return;
+    }
+    setAnalyzingTarget(sceneId);
+    try {
+      const result = await decomposeSceneTaskToAiBlocks({
+        gameId,
+        fw,
+        scenes: fw.scenes ?? [],
+        chapterIndex,
+        sceneId,
+      });
+      updateFw(() => result.fw);
+      addNotification('info', `已分析 ${sceneMap.get(sceneId)?.name ?? sceneId}，请点击锤子汇编`);
+    } catch (e) {
+      addNotification('error', (e as Error).message);
+    } finally {
+      setAnalyzingTarget(null);
+    }
+  };
+
+  const applyAnchor = async (newAnchorId: string, archiveSkipped?: boolean) => {
+    const next = applyProgressAnchor(fw, outline, newAnchorId, {archiveSkipped});
+    setOutline(next);
+    try {
+      await patchStoryOutline(gameId, [
+        {op: 'set', path: 'progressAnchorChapterId', value: next.progressAnchorChapterId},
+        {op: 'set', path: 'archivedChapterIds', value: next.archivedChapterIds ?? []},
+      ]);
+    } catch (e) {
+      addNotification('error', (e as Error).message);
+    }
+  };
+
+  const suggestAnchor = () => {
+    const inferred = inferProgressAnchorFromScenes(fw, fw.scenes ?? []);
+    if (!inferred) {
+      addNotification('info', '未能从已生成正文推断进度锚点');
+      return;
+    }
+    void applyAnchor(inferred);
+    addNotification('info', '已根据汇编进度更新锚点');
   };
 
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
@@ -522,8 +633,60 @@ export function ChapterEditor({
       )}
 
       <p style={styles.hint}>
-        叙事态：在叙事图中拖拽节点、拖线连边，选中边可编辑属性。开放世界态：场景 + 地图一步连通（见各场景 mapNodeId）。
-        双击节点可跳转「场景」页。保存会将叙事图、跨章过渡、叙事入口等路由写入 story.tw；汇编将 passageBlocks 写入 story.tw；铅笔图标可编辑 story.tw 成稿。
+        工作流：填写场景「任务」→ 分析（拆解 AI 块）→ 锤子（生成正文并汇编到 story.tw）。章级 theme / narrativeGoal
+        参与分析与生成；场景任务仅用于分析，不参与正文生成。双击叙事图节点可跳转「场景」页高级编辑。
+      </p>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          flexWrap: 'wrap',
+          alignItems: 'flex-end',
+          marginBottom: 16,
+          padding: 12,
+          border: '1px solid #333',
+          borderRadius: 8,
+        }}
+      >
+        <div style={styles.row}>
+          <label style={styles.label}>进度锚点</label>
+          <select
+            style={{...styles.input, minWidth: 200}}
+            value={outline.progressAnchorChapterId ?? ''}
+            onChange={(e) => void applyAnchor(e.target.value)}
+          >
+            {fw.chapters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title || c.id}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={styles.row}>
+          <label style={styles.label}>详细窗口（章）</label>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            style={{...styles.input, width: 72}}
+            value={outline.rollingHorizonChapters}
+            onChange={(e) => {
+              const v = Number(e.target.value) || 5;
+              setOutline((o) => ({...o, rollingHorizonChapters: v}));
+              void patchStoryOutline(gameId, [{op: 'set', path: 'rollingHorizonChapters', value: v}]).catch(
+                () => undefined
+              );
+            }}
+          />
+        </div>
+        <button type="button" style={styles.btn} onClick={suggestAnchor}>
+          从汇编进度推断锚点
+        </button>
+      </div>
+
+      <p style={styles.hint}>
+        叙事态：在叙事图中拖拽节点、拖线连边。保存写入 story.tw 路由；汇编将 passageBlocks 写入 story.tw。
       </p>
 
       {passageEdit && (
@@ -581,6 +744,8 @@ export function ChapterEditor({
       {fw.chapters.map((ch, chi) => {
         const open = expanded.has(ch.id);
         const pool = getChapterAvailableSceneIds(ch);
+        const zone = getChapterZone(fw, outline, chi);
+        const archived = isChapterMarkedArchived(outline, ch.id) || zone === 'archived';
         return (
           <div key={ch.id} style={styles.card}>
             <div
@@ -596,6 +761,12 @@ export function ChapterEditor({
             >
               <span>
                 {open ? '▼' : '▶'} {ch.title}
+                {archived ? (
+                  <span style={{marginLeft: 8, fontSize: 11, color: '#ffb74d'}}>已归档</span>
+                ) : null}
+                {ch.id === outline.progressAnchorChapterId ? (
+                  <span style={{marginLeft: 8, fontSize: 11, color: '#90caf9'}}>锚点</span>
+                ) : null}
               </span>
               <ListDeleteButton
                 stopPropagation
@@ -640,6 +811,37 @@ export function ChapterEditor({
                     </p>
                   ) : null}
                 </div>
+                <div style={styles.row}>
+                  <label style={styles.sectionTitle}>主题（theme）</label>
+                  <input
+                    style={styles.input}
+                    value={ch.theme ?? ''}
+                    readOnly={archived}
+                    onChange={(e) =>
+                      updateChapter(chi, (c) => ({...c, theme: e.target.value || undefined}))
+                    }
+                    onBlur={(e) =>
+                      queueFmPatch([{op: 'set', path: `chapters.${chi}.theme`, value: e.target.value || undefined}])
+                    }
+                  />
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.sectionTitle}>narrativeGoal</label>
+                  <textarea
+                    style={{...styles.input, minHeight: 56, resize: 'vertical'}}
+                    value={ch.narrativeGoal ?? ''}
+                    readOnly={archived}
+                    onChange={(e) =>
+                      updateChapter(chi, (c) => ({...c, narrativeGoal: e.target.value}))
+                    }
+                    onBlur={(e) =>
+                      queueFmPatch([
+                        {op: 'set', path: `chapters.${chi}.narrativeGoal`, value: e.target.value},
+                      ])
+                    }
+                    placeholder="本章叙事目标（不可协商方向）"
+                  />
+                </div>
 
                 <ChapterSceneList
                   chi={chi}
@@ -649,10 +851,29 @@ export function ChapterEditor({
                   sceneMap={sceneMap}
                   staleByChapter={staleByChapter}
                   compilingTarget={compilingTarget}
+                  analyzingTarget={analyzingTarget}
+                  archived={archived}
                   updateChapter={updateChapter}
                   canEditPassage={(sid) => canEditScenePassage(chi, sid)}
                   onCompileScene={(sid) => checkAuthForSave(() => void handleCompileScene(chi, sid))}
                   onEditPassage={(sid) => checkAuthForSave(() => void openPassageEdit(chi, sid))}
+                  onAnalyzeScene={(sid) => checkAuthForSave(() => void handleAnalyzeScene(chi, sid))}
+                  onTaskBlur={(sid, task) =>
+                    queueFmPatch([
+                      {
+                        op: 'set',
+                        path: `chapters.${chi}.narrativeTasks.${sid}`,
+                        value: task || undefined,
+                      },
+                    ])
+                  }
+                />
+
+                <ChapterNarrativePanel
+                  ch={ch}
+                  scenes={fw.scenes ?? []}
+                  foreshadowing={foreshadowing}
+                  canon={canon}
                 />
 
                 <div style={{marginBottom: 24}}>
@@ -697,10 +918,14 @@ function ChapterSceneList({
   sceneMap,
   staleByChapter,
   compilingTarget,
+  analyzingTarget,
+  archived,
   updateChapter,
   canEditPassage,
   onCompileScene,
   onEditPassage,
+  onAnalyzeScene,
+  onTaskBlur,
 }: {
   chi: number;
   ch: FrameworkChapter;
@@ -709,10 +934,14 @@ function ChapterSceneList({
   sceneMap: Map<string, import('../schema/game-scene').GameScene>;
   staleByChapter: Map<string, Set<string>>;
   compilingTarget: string | 'batch' | null;
+  analyzingTarget: string | null;
+  archived: boolean;
   updateChapter: (chi: number, fn: (c: FrameworkChapter) => FrameworkChapter) => void;
   canEditPassage: (sceneId: string) => boolean;
   onCompileScene: (sceneId: string) => void;
   onEditPassage: (sceneId: string) => void;
+  onAnalyzeScene: (sceneId: string) => void;
+  onTaskBlur: (sceneId: string, task: string) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const available = scenes.filter((s) => !pool.includes(s.id));
@@ -762,17 +991,39 @@ function ChapterSceneList({
       </DetailEditModal>
       {pool.length > 0 && (
         <div>
-          <ListTableHeader grid={listGrids.scenePool}>
+          <ListTableHeader grid={listGrids.scenePoolWithTask}>
             <span>名称</span>
-            <span>是否开放世界</span>
+            <span>任务</span>
+            <span>开放世界</span>
             <span style={listStyles.cellOps}>操作</span>
           </ListTableHeader>
           {pool.map((sid) => {
             const isStale = staleByChapter.get(ch.id)?.has(sid);
             const hasCompiled = !!getChapterSceneMeta(ch, sid)?.compiledFingerprint;
+            const task = ch.narrativeTasks?.[sid] ?? '';
+            const taskEmpty = !task.trim();
             return (
-              <ListTableRow key={sid} grid={listGrids.scenePool}>
+              <ListTableRow key={sid} grid={listGrids.scenePoolWithTask}>
                 <span>{sceneMap.get(sid)?.name ?? sid}</span>
+                <textarea
+                  style={{
+                    ...styles.input,
+                    minHeight: 40,
+                    resize: 'vertical',
+                    fontSize: 11,
+                    opacity: archived ? 0.7 : 1,
+                  }}
+                  value={task}
+                  readOnly={archived}
+                  placeholder="场景叙事任务"
+                  onChange={(e) =>
+                    updateChapter(chi, (c) => ({
+                      ...c,
+                      narrativeTasks: {...(c.narrativeTasks ?? {}), [sid]: e.target.value},
+                    }))
+                  }
+                  onBlur={(e) => onTaskBlur(sid, e.target.value)}
+                />
                 <span>
                   <input
                     type="checkbox"
@@ -791,6 +1042,32 @@ function ChapterSceneList({
                   />
                 </span>
                 <ListOpsCell>
+                  <button
+                    type="button"
+                    style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+                    disabled={
+                      archived ||
+                      analyzingTarget !== null ||
+                      compilingTarget !== null ||
+                      taskEmpty
+                    }
+                    onClick={() => onAnalyzeScene(sid)}
+                    title={
+                      archived
+                        ? '已归档章节不可分析'
+                        : taskEmpty
+                          ? '请先填写任务'
+                          : analyzingTarget === sid
+                            ? '分析中…'
+                            : '分析：将任务拆解为 AI 块'
+                    }
+                  >
+                    {analyzingTarget === sid ? (
+                      <InlineSpinner style={styles.compileIconFresh} />
+                    ) : (
+                      <DecomposeIcon style={styles.compileIconFresh} />
+                    )}
+                  </button>
                   <button
                     type="button"
                     style={{

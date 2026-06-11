@@ -16,13 +16,14 @@ import {ItemsEditorPage} from './components/ItemsEditorPage';
 import {SceneEditor} from './components/SceneEditor';
 import {RuleEditor} from './components/RuleEditor';
 import {JournalEditor} from './components/JournalEditor';
-import {NarrativeEngineEditor} from './components/NarrativeEngineEditor';
+import {GenerationLogEditor} from './components/GenerationLogEditor';
 import {FeaturePanelEditor} from './components/FeaturePanelEditor';
 import {NotificationToast} from './components/NotificationToast';
 import {LoginPage} from './components/LoginPage';
 import {useGameId} from './context/GameIdContext';
 import {useNotification} from './context/NotificationContext';
 import {AuthProvider, useAuth} from './context/AuthContext';
+import {NarrativeTruthProvider} from './context/NarrativeTruthContext';
 import {getAppMode, getContentPath, getGameContentUrl, getStoryFmFetchUrl, toFetchUrl, DEFAULT_GAME_ID} from './config';
 import {loadFrameworkWithListData} from './services/framework-list-data';
 import type {StoryFramework} from './schema/story-framework';
@@ -123,7 +124,7 @@ async function fetchContentForGame(gameId: string, pathOverride?: string): Promi
 export default function App() {
   const {gameId, setGameId, gameIds} = useGameId();
   const {addNotification} = useNotification();
-  const [mode, setMode] = useState<'game' | 'timeline' | 'chapters' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata'>('game');
+  const [mode, setMode] = useState<'game' | 'timeline' | 'chapters' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'logs' | 'rules' | 'features' | 'metadata'>('game');
   const [pendingSceneId, setPendingSceneId] = useState<string | null>(null);
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
@@ -170,20 +171,22 @@ export default function App() {
       getReturnTo={() => ({ mode, gameId })}
       onUnauthorized={() => addNotification('error', '未授权操作')}
     >
-      <AppBody
-        mode={mode}
-        setMode={setMode}
-        gameId={gameId}
-        gameIds={gameIds}
-        handleGameSelect={handleGameSelect}
-        setGameId={setGameId}
-        fw={fw}
-        updateFw={updateFw}
-        fetchContent={fetchContent}
-        loadStoryFm={loadStoryFm}
-        pendingSceneId={pendingSceneId}
-        setPendingSceneId={setPendingSceneId}
-      />
+      <NarrativeTruthProvider>
+        <AppBody
+          mode={mode}
+          setMode={setMode}
+          gameId={gameId}
+          gameIds={gameIds}
+          handleGameSelect={handleGameSelect}
+          setGameId={setGameId}
+          fw={fw}
+          updateFw={updateFw}
+          fetchContent={fetchContent}
+          loadStoryFm={loadStoryFm}
+          pendingSceneId={pendingSceneId}
+          setPendingSceneId={setPendingSceneId}
+        />
+      </NarrativeTruthProvider>
     </AuthProvider>
   );
 }
@@ -203,7 +206,7 @@ type AppBodyProps = {
   loadStoryFm: (targetGameId: string) => Promise<void>;
 };
 
-type ModeType = 'game' | 'timeline' | 'chapters' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata';
+type ModeType = 'game' | 'timeline' | 'chapters' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'logs' | 'rules' | 'features' | 'metadata';
 
 function AppBody({
   mode,
@@ -320,10 +323,10 @@ function AppBody({
             </button>
             <button
               type="button"
-              style={{...navStyles.tab, ...(mode === 'narrative' ? navStyles.tabActive : {})}}
-              onClick={() => setMode('narrative')}
+              style={{...navStyles.tab, ...(mode === 'logs' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('logs')}
             >
-              叙事引擎
+              日志
             </button>
             <button
               type="button"
@@ -412,8 +415,8 @@ function AppBody({
         <ItemsEditorPage fw={fw} updateFw={updateFw}/>
       ) : mode === 'journal' ? (
         <JournalEditor/>
-      ) : mode === 'narrative' ? (
-        <NarrativeEngineEditor/>
+      ) : mode === 'logs' ? (
+        <GenerationLogEditor/>
       ) : mode === 'rules' ? (
         <RuleEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'features' ? (

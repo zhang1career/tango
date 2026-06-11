@@ -2,7 +2,7 @@
  * 剧情界面（原时间线）
  */
 
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import JSZip from 'jszip';
 import type {StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
@@ -18,7 +18,6 @@ import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-sto
 import {
   collectChangedSceneTargets,
   collectSceneFingerprintMap,
-  collectStaleCompiledScenes,
   type SceneCompileTarget,
 } from '../utils/chapter-compile-helpers';
 import {compileChapterScene, sceneContextSummary} from '../services/chapter-scene-compile';
@@ -32,7 +31,6 @@ import {frameworkToStory, parseTwee, syncStoryTitleFromFramework} from '@/engine
 
 import {EDIT_MODAL_MAX_WIDTH} from '../styles/editorStyles';
 import {modalTitleStyle, pageTitleStyle} from '@/styles/appTheme';
-import {semanticColors} from '../theme/semantic-colors';
 import {formatJsonCompact} from '../utils/json-format';
 import {
   applyScenePassageFullText,
@@ -44,17 +42,17 @@ import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {runAssembleScene} from '@/services/scene-block-generation';
 import {loadFrameworkWithListData, preloadFrameworkListData} from '../services/framework-list-data';
 import {
-  loadStoryFromGame,
   lookupKeysForSceneEntry,
   saveStoryTw,
-  syncRoutingLinksForGame,
 } from '@/services/scene-routing-sync-service';
 import {
   collectRoutingStaleScenes,
   patchRoutingFingerprints,
   syncPassageLinksInStory,
 } from '../utils/scene-routing-sync';
-import {InventoryValuesCard} from './cards/InventoryValuesCard';
+import {NarrativeTruthEditors} from './NarrativeTruthEditors';
+
+type FrameworkTab = 'meta' | 'foreshadowing' | 'canon';
 
 type ImportZipFile = {path: string; contentBase64: string};
 type ImportPendingData = {
@@ -250,40 +248,11 @@ export function FrameworkEditor({
   const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
   const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
   const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
-  const [parsedStory, setParsedStory] = useState<ReturnType<typeof parseTwee> | null>(null);
-  const [syncingRouting, setSyncingRouting] = useState(false);
-  const [syncingSceneRoutingKey, setSyncingSceneRoutingKey] = useState<string | null>(null);
-
-  const reloadParsedStory = useCallback(async () => {
-    try {
-      const story = await loadStoryFromGame(gameId);
-      setParsedStory(story);
-    } catch {
-      setParsedStory(null);
-    }
-  }, [gameId]);
-
-  useEffect(() => {
-    void reloadParsedStory();
-  }, [reloadParsedStory, fw]);
+  const [frameworkTab, setFrameworkTab] = useState<FrameworkTab>('meta');
 
   useEffect(() => {
     preloadFrameworkListData(updateFw, gameId);
   }, [updateFw, gameId]);
-
-  const lookupKeysCallback = useCallback(
-    (chapterIndex: number, sceneId: string) => lookupKeysForSceneEntry(fw, chapterIndex, sceneId),
-    [fw]
-  );
-
-  const routingStaleEntries = useMemo(() => {
-    if (!parsedStory) return [];
-    try {
-      return collectRoutingStaleScenes(fw, parsedStory, lookupKeysCallback);
-    } catch {
-      return [];
-    }
-  }, [fw, parsedStory, lookupKeysCallback]);
 
   const updateFwWithErrorReset = useCallback(
     (fn: (d: StoryFramework) => StoryFramework) => {
@@ -304,9 +273,7 @@ export function FrameworkEditor({
 
   const sceneMap = new Map<string, GameScene>();
   for (const s of fw.scenes ?? []) sceneMap.set(s.id, s);
-  const staleSceneEntries = useMemo(() => collectStaleCompiledScenes(fw), [fw]);
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
-  const catalogItems = fw.items ?? [];
   const gameRules = fw.gameRules ?? [];
   const {valid, errors} = validateFramework(fw);
   const handleNew = useCallback(() => {
@@ -367,58 +334,12 @@ export function FrameworkEditor({
     try {
       await saveFrameworkToStorage(gameId, fw);
       await persistStoryTitleToTw(gameId, fw);
-
-      let nextFw = fw;
-      if (parsedStory && routingStaleEntries.length > 0) {
-        const syncResult = await syncRoutingLinksForGame(
-          gameId,
-          fw,
-          routingStaleEntries.map((s) => s.sceneId)
-        );
-        nextFw = syncResult.fw;
-        await saveFrameworkToStorage(gameId, nextFw);
-        updateFw(() => nextFw);
-        await reloadParsedStory();
-        addNotification(
-          'info',
-          `保存成功；已同步 ${syncResult.syncedCount} 个场景的路由链接`
-        );
-      } else {
-        addNotification('info', '保存成功');
-      }
+      addNotification('info', '保存成功');
       setJsonError(null);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
     }
-  }, [fw, gameId, addNotification, parsedStory, routingStaleEntries, updateFw, reloadParsedStory]);
-
-  const handleSyncAllRoutingLinks = useCallback(async () => {
-    if (routingStaleEntries.length === 0) {
-      addNotification('info', '路由链接已与框架一致');
-      return;
-    }
-    setSyncingRouting(true);
-    setJsonError(null);
-    try {
-      const syncResult = await syncRoutingLinksForGame(
-        gameId,
-        fw,
-        routingStaleEntries.map((s) => s.sceneId)
-      );
-      await saveFrameworkToStorage(gameId, syncResult.fw);
-      updateFw(() => syncResult.fw);
-      await reloadParsedStory();
-      addNotification(
-        'info',
-        `已同步 ${syncResult.syncedCount} 个场景的路由链接` +
-          (syncResult.skippedCount > 0 ? `（${syncResult.skippedCount} 个跳过）` : '')
-      );
-    } catch (e) {
-      setJsonError((e as Error).message || '同步路由链接失败');
-    } finally {
-      setSyncingRouting(false);
-    }
-  }, [fw, gameId, routingStaleEntries, updateFw, addNotification, reloadParsedStory]);
+  }, [fw, gameId, addNotification]);
 
   const handleImportClick = useCallback(() => {
     importFileInputRef.current?.click();
@@ -538,10 +459,9 @@ export function FrameworkEditor({
               await saveStoryTw(targetGameId, story);
               await saveFrameworkToStorage(targetGameId, nextFw);
               updateFw(() => nextFw);
-              addNotification('info', `已同步 ${routeSync.synced.length} 个场景的路由链接`);
             }
           } catch (routeErr) {
-            addNotification('error', `路由链接同步失败：${(routeErr as Error).message}`);
+            addNotification('error', `导入后路由同步失败：${(routeErr as Error).message}`);
           }
         }
       } else {
@@ -645,15 +565,6 @@ export function FrameworkEditor({
             新建
           </button>
           <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={() => checkAuthForSave(handleSave)}/>
-          <button
-            type="button"
-            style={styles.btn}
-            disabled={syncingRouting || routingStaleEntries.length === 0}
-            onClick={() => checkAuthForSave(handleSyncAllRoutingLinks)}
-            title="仅更新 story.tw 中的 passage 链接，不改正文、不调用 AI"
-          >
-            {syncingRouting ? '同步路由中…' : `同步路由链接${routingStaleEntries.length > 0 ? ` (${routingStaleEntries.length})` : ''}`}
-          </button>
           <button type="button" style={styles.btn} onClick={handleImportClick}>
             导入
           </button>
@@ -734,46 +645,37 @@ export function FrameworkEditor({
           {jsonError && <div style={styles.errorItem}>{jsonError}</div>}
         </div>
       )}
-      {routingStaleEntries.length > 0 && (
-        <div style={{...styles.errors, backgroundColor: 'rgba(255,152,0,0.12)', color: '#ffb74d'}}>
-          <div style={{fontWeight: 600, marginBottom: 6}}>
-            检测到 {routingStaleEntries.length} 个场景路由过期（story.tw 链接与框架不一致）
-          </div>
-          {routingStaleEntries.slice(0, 12).map((it, idx) => (
-            <div key={`route-${it.sceneId}-${idx}`} style={styles.errorItem}>
-              {it.chapterTitle} / {it.sceneName}（{it.sceneId}）
-            </div>
-          ))}
-          {routingStaleEntries.length > 12 && (
-            <div style={styles.errorItem}>... 还有 {routingStaleEntries.length - 12} 个</div>
-          )}
+
+      <div style={{display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap'}}>
+        {(['meta', 'foreshadowing', 'canon'] as const).map((id) => (
           <button
+            key={id}
             type="button"
-            style={{...styles.btnSmall, marginTop: 8}}
-            disabled={syncingRouting}
-            onClick={() => checkAuthForSave(handleSyncAllRoutingLinks)}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: frameworkTab === id ? '#4a3a6a' : '#2d2d44',
+              border: '1px solid #444',
+              borderRadius: 6,
+              color: '#e8e8e8',
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+            onClick={() => setFrameworkTab(id)}
           >
-            {syncingRouting ? '同步中…' : '一键同步全部路由链接'}
+            {id === 'meta' ? '框架' : id === 'foreshadowing' ? '伏笔池' : 'Canon'}
           </button>
-        </div>
+        ))}
+      </div>
+
+      {frameworkTab === 'foreshadowing' && (
+        <NarrativeTruthEditors scenes={fw.scenes ?? []} fixedTab="foreshadowing" hideTabBar />
+      )}
+      {frameworkTab === 'canon' && (
+        <NarrativeTruthEditors scenes={fw.scenes ?? []} fixedTab="canon" hideTabBar />
       )}
 
-      {staleSceneEntries.length > 0 && (
-        <div style={{...styles.errors, backgroundColor: semanticColors.warning.bgSubtle, color: semanticColors.warning.fg}}>
-          <div style={{fontWeight: 600, marginBottom: 6}}>
-            检测到 {staleSceneEntries.length} 个场景正文过期（story-fm 与 story.tw 版本不一致）
-          </div>
-          {staleSceneEntries.slice(0, 12).map((it, idx) => (
-            <div key={`${it.chapterTitle}-${it.sceneId}-${idx}`} style={styles.errorItem}>
-              {it.chapterTitle} / {it.sceneName}（{it.sceneId}）
-            </div>
-          ))}
-          {staleSceneEntries.length > 12 && (
-            <div style={styles.errorItem}>... 还有 {staleSceneEntries.length - 12} 个</div>
-          )}
-        </div>
-      )}
-
+      {frameworkTab === 'meta' && (
+        <>
       <section style={styles.section}>
         <label style={styles.label}>当前玩家角色</label>
         <select
@@ -789,36 +691,6 @@ export function FrameworkEditor({
           ))}
           {characterIds.length === 0 && <option value="" disabled>暂无人物，请在「人物」页添加</option>}
         </select>
-      </section>
-
-      <section style={styles.section}>
-        <InventoryValuesCard
-          items={catalogItems}
-          inventory={fw.initialState?.inventory ?? []}
-          onChange={(ids) =>
-            updateFwWithErrorReset((d) => {
-              const inventory = ids.length ? ids : undefined;
-              const variables = d.initialState?.variables;
-              const hasVariables = variables && Object.keys(variables).length > 0;
-              if (!inventory && !hasVariables) {
-                return {...d, initialState: undefined};
-              }
-              return {
-                ...d,
-                initialState: {
-                  ...d.initialState,
-                  variables: hasVariables ? variables : undefined,
-                  inventory,
-                },
-              };
-            })
-          }
-          title="开局背包（initialState.inventory）"
-          readOnly={false}
-        />
-        <p style={{fontSize: 12, color: '#888', marginTop: 8, marginBottom: 0}}>
-          游戏启动时玩家已持有的物品 id；写入 story-fm.json，编译 story.tw 后生效。与场景「进入时 give/take」不同。
-        </p>
       </section>
 
       <section style={styles.section}>
@@ -859,9 +731,11 @@ export function FrameworkEditor({
 
       <section style={styles.section}>
         <p style={{fontSize: 13, color: '#9ca3af', margin: 0}}>
-          章节场景池、叙事图、跨章过渡与连通态请在顶部导航「章节」页编辑。本页负责故事元数据、初始状态与全局汇编/路由同步。
+          章节场景池、叙事图、跨章过渡与连通态请在顶部导航「章节」页编辑。本页负责故事元数据与全局导入/导出。
         </p>
       </section>
+        </>
+      )}
     </div>
   );
 }

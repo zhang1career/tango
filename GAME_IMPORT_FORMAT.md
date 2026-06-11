@@ -289,8 +289,10 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 - **结构（硬性）**：
   - **有且仅有一个** leading `type: "raw"`，且必须为数组**首项**（定调 / 史料）；
   - 其余项**必须**为 `type: "ai"`（**禁止** `raw-ai-raw` 交替；旧式中间 raw 应拆成独立 scene 或合并进 leading raw）。
-- **生成与存储（叙事引擎两阶段）**：
-  1. **生成内容**（「场景」菜单，每 AI 块）：按块规格调用叙事引擎，正文写入 `ai.generatedText`（存于 `story-scenes.json`）。
+- **生成与存储（三阶段，DEV）**：
+  1. **场景分析**（「章节」页）：按 `story-fm > chapters[].narrativeTasks[sceneId]` 拆解 AI 块结构，写入 `story-scenes.json`（不含 `generatedText`）。
+  2. **汇编**（「章节」页锤子）：按 AI 块规格生成 `generatedText` 并写入 `story.tw`。
+  3. **高级编辑**（「场景」页）：可手工调整 AI 块字段与正文。
   2. **汇编内容**（「剧情」菜单，每场景条目）：将 `raw` + 各块 `generatedText` 连缀（必要时插入过渡句），写入 `story.tw`，再按 `VITE_PASSAGE_PAGE_CHARS_MIN/MAX` 自动分页。
   - **块级规格**存于 JSON；**汇编后的成稿**在 `story.tw`；**不在** JSON 重复存整段 passage 全文。
 - `ai` 块字段（`hints` 已废弃，请用结构化字段）：
@@ -346,7 +348,7 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 
 #### 叙事标注用语（项目约定与通用对照）
 
-下列标签常见于 `summary` / `emotion` / `constraints`，或 `story-outline.json` 的 `beats[].intent`（旧稿）。**Tango 不校验这些前缀**，但会原样进入叙事引擎生成上下文；新稿建议沿用同一套写法以利 AI 理解。
+下列标签常见于 AI 块 `summary` / `emotion` / `constraints`，或 `story-fm > chapters[].narrativeTasks`（场景任务，仅用于分析拆解，**不参与**正文生成 prompt）。
 
 | 项目用语 | 通用/行业概念 | 典型位置 | 含义与写法 |
 |----------|---------------|----------|------------|
@@ -357,7 +359,7 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 | **收束** | **收束节拍** / **场内尾声**（scene coda） | 同场末块或 `intent` 末段，常以 `收束：` 开头 | 本场落点、余波或过渡；长线场景可在末块收束情绪，避免悬而不决。 |
 | **曲线：…** | **张力档位** / **情绪强度标记**（dramatic intensity tag） | `emotion`、`constraints` | 标注本块在全书**戏剧强度曲线**上的位置，如 `曲线：序章·峰`、`曲线：经世·中`、`曲线：全剧峰`。写法为项目编码，**非**行业统一格式，但语义等同「这一场该写多紧」。 |
 | **曲线：支线** | **失败支线**的情绪寄存 | 支线场景 AI 块 | 与 `narrativeEdges[]` 中 `isBranch` 失败支线配套：宜短促、白描、突出因果，勿写成主线高潮。 |
-| **dramaticArc** | **章级戏剧弧线**（chapter arc） | `story-outline.json` 章条目（素材字段，非引擎必填） | 章的起止张力走向，如 `低→中`、`全剧峰`、`高·负向谷`。与块级 `曲线：…` 配合，粒度更粗。 |
+| **dramaticArc** | **章级戏剧弧线**（chapter arc） | `story-fm.json > chapters[].narrativeGoal` / `theme` | 章的起止张力走向。与块级 `曲线：…` 配合，粒度更粗。 |
 | **簇**（如禁烟簇、战罚簇） | **情节簇** / **戏剧段落**（story cluster） | `曲线：` 或大纲命名 | 将多章多场景归为同一戏剧段落，便于统一加压或落谷。 |
 | **定调** | **史料定调** / **leading raw** | `passageBlocks[0]`（`type: "raw"`） | 本场首块史料或引文，**原样展示**；后接 AI 块不得复述其中台词与事实。见下文「`raw` 与 `ai` 分工」。 |
 | **白描** | **白描**（中国文学常用语） | `style`、`constraints` | 以具象画面与动作承载情绪，少用议论与抒情滥调；为本项目推荐文风，非 Tango 独有术语。 |
@@ -381,7 +383,7 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 **其他不宜当作行业通识的写法**
 
 - `leading raw`：引擎/文档用语，指 passage 首块 `raw`；对作者可说「史料定调块」。
-- `intent`（大纲节拍）：旧式 `story-outline` 字段名，语义等同滚动大纲中的**场景任务**正文；新稿写入 `beats[].summary` 即可。
+- `narrativeTasks`：章内按 `sceneId` 存储的场景任务正文；供「章节 → 分析」拆解为 AI 块，**不**进入正文生成 prompt。
 - `CONTENT_BIBLE`、`曲线簇` 等：若出现在 `story-fm.json` 备注，属该项目世界观/强度总表，**非** Tango  schema 字段。
 
 #### `raw` 与 `ai` 分工（避免重复扩写）
@@ -455,7 +457,7 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 
 | 文件 | 导入 zip | 说明 |
 |------|----------|------|
-| `story-outline.json` | 可选 | 滚动大纲：与 `story-fm` 1:1 同步；`progressAnchorChapterId` + `rollingHorizonChapters` 定义详细维护窗口；`chapters[].narrativeGoal`、`beats[]`（场景任务，UI 称「场景任务」） |
+| `story-outline.json` | 可选 | **仅叙事进度**：`progressAnchorChapterId`、`rollingHorizonChapters`、`archivedChapterIds`；章级内容与场景任务在 `story-fm.json` |
 | `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`；见下文字段说明 |
 | `story-canon.json` | 可选 | 叙事状态快照：`scenes[sceneId].facts` / `characterStates` 等 |
 | `story-generation-traces.json` | **不得** | DEV 本地生成轨迹，由编辑器追加，**不要**放入上游 zip |
@@ -492,7 +494,7 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 
 - DEV 叙事生成将 `status !== 'resolved'` 的伏笔（经 `priority` 排序后取前 12 条）注入 `openForeshadowing` context。
 - 生成完成后，若 AI 块的 `anchors` 与某条 `planned` 伏笔的 `anchors[]`（或回退为 `title`）命中，则自动写入 `plantedIn` 并将 `status` 改为 `planted`。
-- 编辑器「叙事引擎 → 伏笔池」可查看/编辑上述全部字段；`status` 与 `plantedIn` / `resolvedIn` 亦可手工维护。
+- 编辑器「章节」页可编辑 `narrativeGoal` / `theme` / `narrativeTasks`，只读展示相关伏笔与 Canon；伏笔池 / Canon 仍存于独立 JSON，由汇编后自动更新 Canon / 伏笔 `planted` 状态。
 
 **示例（单条）**
 
@@ -514,7 +516,15 @@ node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 asse
 
 `story-journal.json`（心迹）**不参与**叙事生成 context，避免汇总剧透。
 
-编辑器「叙事引擎」菜单可查看/编辑大纲、伏笔、Canon；「生成轨迹」只读。
+编辑器「日志」菜单可查看生成轨迹（DEV only，不进 zip）。
+
+`story-fm.json > chapters[]` 叙事字段（推荐随章维护）：
+
+| 字段 | 说明 |
+|------|------|
+| `theme` | 章主题 |
+| `narrativeGoal` | 本章叙事目标；参与分析与正文生成的章级 context |
+| `narrativeTasks` | `{ [sceneId]: "任务正文" }`；按章存储，同 scene 在不同章可有不同任务；仅用于「分析」拆解 AI 块 |
 
 迁移旧 `hints`：`node scripts/migrate-passage-blocks.mjs [gameId]`
 

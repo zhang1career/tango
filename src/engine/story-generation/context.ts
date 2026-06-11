@@ -82,12 +82,7 @@ export function buildGenerationContextPayload(
     if (b.type === 'ai' && b.generatedText?.trim()) priorGenerated.push(truncate(b.generatedText, 200));
   }
 
-  const rollingOutline = buildRollingOutlineGenerationContext(
-    fw,
-    outline,
-    scene.id,
-    chapter.chapterId
-  );
+  const rollingOutline = buildRollingOutlineGenerationContext(fw, outline, chapter.chapterId);
   const openThreads = openForeshadowingThreads(foreshadowing.threads);
   const canonScene = canon.scenes[scene.id];
   const priorCanon = buildPriorCanonInjection(fw, canon, chapter.chapterIndex, chapter.sceneIndex);
