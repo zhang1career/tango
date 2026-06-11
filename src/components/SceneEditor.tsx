@@ -56,6 +56,15 @@ import {SceneRoutingFields} from './SceneRoutingFields';
 import {SingleSelectField} from './ui/SingleSelectField';
 import {MultiSelectField} from './ui/MultiSelectField';
 import {resolveSceneBackgroundMusic} from '../utils/scene-media';
+import {useNarrativeTruth} from '../context/NarrativeTruthContext';
+import {fetchStoryCanon, fetchStoryForeshadowing} from '@/utils/story-engine-files';
+import {EMPTY_STORY_CANON, normalizeStoryCanon, type StoryCanon} from '@/schema/story-canon';
+import {
+  EMPTY_STORY_FORESHADOWING,
+  normalizeStoryForeshadowing,
+  type StoryForeshadowing,
+} from '@/schema/story-foreshadowing';
+import {SceneNarrativePanel} from './SceneNarrativePanel';
 
 const collapsibleStyles: Record<string, React.CSSProperties> = {
   section: {marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6},
@@ -242,6 +251,9 @@ type SceneFormProps = {
   routingStaleEntry?: import('../utils/scene-routing-sync').RoutingStaleEntry;
   onSyncSceneRouting?: () => void | Promise<void>;
   syncingSceneRouting?: boolean;
+  foreshadowing?: StoryForeshadowing;
+  canon?: StoryCanon;
+  allScenes?: GameScene[];
 };
 
 function parseLines(text: string): string[] | undefined {
@@ -444,6 +456,9 @@ function SceneFormContent({
                             routingStaleEntry,
                             onSyncSceneRouting,
                             syncingSceneRouting,
+                            foreshadowing,
+                            canon,
+                            allScenes,
                           }: SceneFormProps) {
   const linkedEventId = scene.eventIds?.[0];
   const linkedEventBgm = linkedEventId
@@ -561,6 +576,16 @@ function SceneFormContent({
           placeholder="本场景唯一 raw 块"
         />
       </FieldRow>
+
+      {foreshadowing && canon && allScenes && (
+        <SceneNarrativePanel
+          sceneId={scene.id}
+          scenes={allScenes}
+          foreshadowing={foreshadowing}
+          canon={canon}
+          characterIds={characterIds}
+        />
+      )}
 
       {genError && <p style={{color: '#f88', fontSize: 13}}>{genError}</p>}
       {aiBlocks.map((block, aiIndex) => (
@@ -1073,6 +1098,9 @@ export function SceneEditor({
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
+  const {revision: narrativeTruthRevision} = useNarrativeTruth();
+  const [foreshadowing, setForeshadowing] = useState<StoryForeshadowing>(EMPTY_STORY_FORESHADOWING);
+  const [canon, setCanon] = useState<StoryCanon>(EMPTY_STORY_CANON);
   const [parsedStory, setParsedStory] = useState<Awaited<ReturnType<typeof loadStoryFromGame>>>(null);
   const [syncingSceneRoutingId, setSyncingSceneRoutingId] = useState<string | null>(null);
 
@@ -1087,6 +1115,14 @@ export function SceneEditor({
   useEffect(() => {
     void reloadParsedStory();
   }, [reloadParsedStory]);
+
+  useEffect(() => {
+    void (async () => {
+      const [fs, c] = await Promise.all([fetchStoryForeshadowing(gameId), fetchStoryCanon(gameId)]);
+      setForeshadowing(normalizeStoryForeshadowing(fs));
+      setCanon(normalizeStoryCanon(c));
+    })();
+  }, [gameId, narrativeTruthRevision]);
 
   const persistFrameworkRouting = useCallback(
     async (nextFw: StoryFramework) => {
@@ -1317,6 +1353,9 @@ export function SceneEditor({
             collapsibleDefaultExpanded
             fw={fw}
             routingStaleEntry={routingStaleForScene(scenes[detailIndex].id)}
+            foreshadowing={foreshadowing}
+            canon={canon}
+            allScenes={scenes}
           />
         </DetailEditModal>
       )}
@@ -1346,6 +1385,9 @@ export function SceneEditor({
             routingStaleEntry={routingStaleForScene(scenes[editIndex].id)}
             onSyncSceneRouting={() => checkAuthForSave(() => syncSceneRouting(scenes[editIndex].id))}
             syncingSceneRouting={syncingSceneRoutingId === scenes[editIndex].id}
+            foreshadowing={foreshadowing}
+            canon={canon}
+            allScenes={scenes}
             {...narrativeFormProps}
           />
         </DetailEditModal>

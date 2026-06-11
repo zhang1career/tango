@@ -32,6 +32,25 @@ export const EMPTY_STORY_CANON: StoryCanon = {
   scenes: {},
 };
 
+/** 场景页展示与 AI 块生成：本场 Canon 是否有可注入内容 */
+export function hasCanonSceneContent(state: CanonSceneState): boolean {
+  return !!(
+    state.summary?.trim() ||
+    (state.facts ?? []).length ||
+    (state.openQuestions ?? []).length ||
+    Object.keys(state.characterStates ?? {}).length
+  );
+}
+
+/** 场景页展示与 AI 块生成共用的本场 Canon（无内容时返回 undefined） */
+export function canonSceneForContext(
+  canon: StoryCanon,
+  sceneId: string
+): CanonSceneState | undefined {
+  const state = canon.scenes?.[sceneId];
+  return state && hasCanonSceneContent(state) ? state : undefined;
+}
+
 export function normalizeStoryCanon(raw: unknown): StoryCanon {
   if (!raw || typeof raw !== 'object') return {...EMPTY_STORY_CANON};
   const o = raw as Record<string, unknown>;

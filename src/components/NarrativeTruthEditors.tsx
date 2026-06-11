@@ -33,6 +33,7 @@ import {
 } from '@/schema/story-foreshadowing';
 import {fetchStoryCanon, fetchStoryForeshadowing, saveStoryCanon, saveStoryForeshadowing} from '@/utils/story-engine-files';
 import {useNarrativeTruth} from '@/context/NarrativeTruthContext';
+import {useNotification} from '@/context/NotificationContext';
 import {formatJsonCompact} from '@/utils/json-format';
 import {editorStyles as styles} from '@/styles/editorStyles';
 import {listStyles} from '@/styles/listStyles';
@@ -90,27 +91,6 @@ const headerIconBtn: React.CSSProperties = {
   padding: 6,
   borderRadius: 6,
 };
-
-function SaveIcon({size = 18, style}: {size?: number; style?: React.CSSProperties}) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{display: 'block', flexShrink: 0, ...style}}
-      aria-hidden
-    >
-      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-      <polyline points="17 21 17 13 7 13 7 21" />
-      <polyline points="7 3 7 8 15 8" />
-    </svg>
-  );
-}
 
 function RefreshIcon({size = 18, style}: {size?: number; style?: React.CSSProperties}) {
   return (
@@ -289,6 +269,7 @@ export function NarrativeTruthEditors({
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
+  const {addNotification} = useNotification();
   const {bumpRevision} = useNarrativeTruth();
   const [internalTab, setInternalTab] = useState<Tab>('foreshadowing');
   const tab = fixedTab ?? internalTab;
@@ -331,8 +312,13 @@ export function NarrativeTruthEditors({
       setSaving(true);
       setError(null);
       try {
-        if (tab === 'foreshadowing') await saveStoryForeshadowing(gameId, foreshadowing);
-        else await saveStoryCanon(gameId, canon);
+        if (tab === 'foreshadowing') {
+          await saveStoryForeshadowing(gameId, foreshadowing);
+          addNotification('info', '伏笔池已保存');
+        } else {
+          await saveStoryCanon(gameId, canon);
+          addNotification('info', 'Canon 已保存');
+        }
         bumpRevision();
       } catch (e) {
         setError(String(e));
@@ -352,7 +338,23 @@ export function NarrativeTruthEditors({
     </button>
   );
 
-  const saveTitle = saving ? '保存…' : tab === 'foreshadowing' ? '保存 story-foreshadowing.json' : '保存 story-canon.json';
+  const saveLabel = saving ? '保存中…' : tab === 'foreshadowing' ? '保存伏笔池' : '保存 Canon';
+  const saveTitle = tab === 'foreshadowing'
+    ? '写入 story-foreshadowing.json'
+    : '写入 story-canon.json';
+
+  const saveBtn = (
+    <button
+      type="button"
+      style={{...styles.btn, opacity: saving ? 0.5 : 1}}
+      title={saveTitle}
+      aria-label={saveTitle}
+      onClick={() => void saveCurrent()}
+      disabled={saving}
+    >
+      {saveLabel}
+    </button>
+  );
 
   return (
     <div>
@@ -360,19 +362,17 @@ export function NarrativeTruthEditors({
         <div style={{display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center'}}>
           {tabBtn('foreshadowing', '伏笔池')}
           {tabBtn('canon', 'Canon')}
-          <button type="button" style={{...headerIconBtn, marginLeft: 'auto', opacity: saving ? 0.5 : 1}} title={saveTitle} aria-label={saveTitle} onClick={() => void saveCurrent()} disabled={saving}>
-            <SaveIcon />
-          </button>
-          <button type="button" style={headerIconBtn} title="刷新" aria-label="刷新" onClick={() => void reload()}>
-            <RefreshIcon />
-          </button>
+          <div style={{marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center'}}>
+            {saveBtn}
+            <button type="button" style={headerIconBtn} title="刷新" aria-label="刷新" onClick={() => void reload()}>
+              <RefreshIcon />
+            </button>
+          </div>
         </div>
       )}
       {hideTabBar && (
         <div style={{display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end'}}>
-          <button type="button" style={{...headerIconBtn, opacity: saving ? 0.5 : 1}} title={saveTitle} aria-label={saveTitle} onClick={() => void saveCurrent()} disabled={saving}>
-            <SaveIcon />
-          </button>
+          {saveBtn}
           <button type="button" style={headerIconBtn} title="刷新" aria-label="刷新" onClick={() => void reload()}>
             <RefreshIcon />
           </button>

@@ -148,14 +148,16 @@ function FileHandleButton({
                             fileHandle,
                             onClick,
                             baseStyle = styles.btn,
+                            title,
                           }: {
   label: string;
   fileHandle: FileSystemFileHandle | null;
   onClick: () => void;
   baseStyle?: React.CSSProperties;
+  title?: string;
 }) {
   return (
-    <button type="button" style={{...baseStyle, ...styles.fileHandleBtn}} onClick={onClick}>
+    <button type="button" style={{...baseStyle, ...styles.fileHandleBtn}} onClick={onClick} title={title} aria-label={title ?? label}>
       <span>{label}</span>
       {fileHandle && (
         <span style={styles.fileHandleBtnPath}>{truncatePathForDisplay(fileHandle.name)}</span>
@@ -334,7 +336,7 @@ export function FrameworkEditor({
     try {
       await saveFrameworkToStorage(gameId, fw);
       await persistStoryTitleToTw(gameId, fw);
-      addNotification('info', '保存成功');
+      addNotification('info', '框架已保存');
       setJsonError(null);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
@@ -564,7 +566,14 @@ export function FrameworkEditor({
           <button type="button" style={styles.btn} onClick={handleNew}>
             新建
           </button>
-          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={() => checkAuthForSave(handleSave)}/>
+          {frameworkTab === 'meta' && (
+            <FileHandleButton
+              label="保存框架"
+              fileHandle={frameworkFileHandle}
+              title="保存 story-fm.json（章节、场景等框架数据，不含伏笔池与 Canon）"
+              onClick={() => checkAuthForSave(handleSave)}
+            />
+          )}
           <button type="button" style={styles.btn} onClick={handleImportClick}>
             导入
           </button>

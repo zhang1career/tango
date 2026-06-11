@@ -10,7 +10,8 @@ import {
 } from '@/utils/passage-blocks';
 import {buildSceneRawContextForAiBlock} from './raw-context';
 import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
-import {foreshadowThreadsForGeneration} from '@/schema/story-foreshadowing';
+import {canonSceneForContext} from '@/schema/story-canon';
+import {foreshadowThreadsForSceneContext} from '@/schema/story-foreshadowing';
 import {buildPriorCanonInjection} from './prior-canon';
 
 const BUDGET = {
@@ -83,12 +84,8 @@ export function buildGenerationContextPayload(
   }
 
   const rollingOutline = buildRollingOutlineGenerationContext(fw, outline, chapter.chapterId);
-  const openThreads = foreshadowThreadsForGeneration(
-    foreshadowing.threads,
-    scene.id,
-    passageBlockIndex
-  );
-  const canonScene = canon.scenes[scene.id];
+  const openThreads = foreshadowThreadsForSceneContext(foreshadowing.threads, scene.id);
+  const canonForScene = canonSceneForContext(canon, scene.id);
   const priorCanon = buildPriorCanonInjection(fw, canon, chapter.chapterIndex, chapter.sceneIndex);
 
   const chapterEventIds = new Set<string>();
@@ -143,8 +140,8 @@ export function buildGenerationContextPayload(
         : [scene.stateActions.give]
       : undefined,
     rollingOutline,
-    openForeshadowing: openThreads,
-    canonForScene: canonScene,
+    openForeshadowing: openThreads.length ? openThreads : undefined,
+    canonForScene,
     priorCanon,
     priorGeneratedInScene: priorGenerated.length ? priorGenerated : undefined,
     priorGeneratedWarning:

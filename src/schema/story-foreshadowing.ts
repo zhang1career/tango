@@ -150,6 +150,40 @@ export function foreshadowGenerationRole(
   return idx === payoffScenes.length - 1 ? 'payoff' : 'echo';
 }
 
+export interface ForeshadowThreadForSceneDisplay extends ForeshadowThreadForGeneration {
+  plantedSceneId?: string;
+  plantedBlockIndex?: number;
+}
+
+/**
+ * 场景页展示与 AI 块生成共用的伏笔筛选（场景级，不按 passage block 细分）。
+ * 与场景页「相关伏笔」面板注入生成上下文的内容一致。
+ */
+export function foreshadowThreadsForSceneContext(
+  threads: ForeshadowThread[],
+  sceneId: string,
+  limit = 12
+): ForeshadowThreadForGeneration[] {
+  return foreshadowThreadsForGeneration(threads, sceneId, undefined, limit);
+}
+
+/** 场景页只读：已埋设且与本场景相关（埋设位置 / 回收目标） */
+export function foreshadowThreadsForScene(
+  threads: ForeshadowThread[],
+  sceneId: string,
+  limit = 12
+): ForeshadowThreadForSceneDisplay[] {
+  return foreshadowThreadsForSceneContext(threads, sceneId, limit).map((g) => {
+    const thread = threads.find((t) => t.id === g.id);
+    const plantedSceneId = thread?.plantedIn?.sceneId?.trim() || undefined;
+    const plantedBlockIndex =
+      g.role === 'plant' && thread?.plantedIn?.blockIndex !== undefined
+        ? thread.plantedIn.blockIndex
+        : undefined;
+    return {...g, plantedSceneId, plantedBlockIndex};
+  });
+}
+
 /** 章节页只读：已埋设且「回收目标」与本章场景池有交集 */
 export function foreshadowThreadsForChapter(
   threads: ForeshadowThread[],
