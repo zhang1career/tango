@@ -10,6 +10,15 @@ import type {Passage, PassageLink, PassageStateActions, Story} from '@/types';
 
 const PASSAGE_HEADER_RE = /^::\s*(.+?)(?:\s+\[([^\]]*)])?(?:\s*(\{.*}))?$/;
 
+/** 去重 give/take 列表（修复往返序列化时宏与 header 重复合并导致的膨胀） */
+function dedupeItemList(val: unknown): string | string[] | undefined {
+  if (val === undefined || val === null) return undefined;
+  const arr = (Array.isArray(val) ? val : [val]).map(String);
+  const unique = [...new Set(arr)];
+  if (unique.length === 0) return undefined;
+  return unique.length === 1 ? unique[0]! : unique;
+}
+
 /** SugarCube 宏参数：匹配至 closing `>>`（允许表达式中含单个 `>`，如 >=） */
 const SUGARCUBE_MACRO_CLOSE = '([\\s\\S]*?)>>';
 
@@ -219,7 +228,7 @@ function parseSugarcubeContent(rawContent: string): {
   text = text.replace(new RegExp(`<<if\\s+${SUGARCUBE_MACRO_CLOSE}([\\s\\S]*?)<<endif>>`, 'gi'), (_, cond, inner) => {
     // 仅匹配 SugarCube setter 链接形态：[[text|target][setter]]
     // 不允许跨行吞并后续普通链接（如 [[A|B]]\n[[C|D]]）
-    const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\[(.*?)]]/g;
+    const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)\]\[(.*?)]]/g;
     const plainLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]|\[\[([^\]|]+)->([^\]]+)]]|\[\[([^\]|]+)<-([^\]]+)]]/g;
     let found = false;
     inner.replace(setterLinkRe, (m: string, d: string, t: string, setter: string) => {
@@ -243,7 +252,7 @@ function parseSugarcubeContent(rawContent: string): {
 
   // 仅匹配 SugarCube setter 链接形态：[[text|target][setter]]
   // 不允许跨行吞并后续普通链接（如 [[A|B]]\n[[C|D]]）
-  const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)]]\[(.*?)]]/g;
+  const setterLinkRe = /\[\[([^\]|]+)\|([^\]]+)\]\[(.*?)]]/g;
   text = text.replace(setterLinkRe, (_, display: string, target: string, setter: string) => {
     pushLink(display, target, undefined, parseSetterToActions(setter));
     return '';
@@ -406,18 +415,15 @@ export function parseTwee(source: string): Story {
     if (sugarcube.metadataMerge.set) {
       mergedMeta.set = {...((mergedMeta.set as Record<string, unknown>) ?? {}), ...sugarcube.metadataMerge.set};
     }
-    if (sugarcube.metadataMerge.give) {
-      const prev = (mergedMeta.give as string[]) ?? [];
-      mergedMeta.give = Array.isArray(sugarcube.metadataMerge.give)
-        ? [...(Array.isArray(prev) ? prev : [prev]), ...sugarcube.metadataMerge.give]
-        : [...(Array.isArray(prev) ? prev : prev ? [prev] : []), sugarcube.metadataMerge.give];
+    // header JSON 已含 give/take 时不再合并宏解析结果（序列化时宏由 metadata 生成，避免往返膨胀）
+    if (mergedMeta.give === undefined && sugarcube.metadataMerge.give) {
+      mergedMeta.give = sugarcube.metadataMerge.give;
     }
-    if (sugarcube.metadataMerge.take) {
-      const prev = (mergedMeta.take as string[]) ?? [];
-      mergedMeta.take = Array.isArray(sugarcube.metadataMerge.take)
-        ? [...(Array.isArray(prev) ? prev : [prev]), ...sugarcube.metadataMerge.take]
-        : [...(Array.isArray(prev) ? prev : prev ? [prev] : []), sugarcube.metadataMerge.take];
+    if (mergedMeta.take === undefined && sugarcube.metadataMerge.take) {
+      mergedMeta.take = sugarcube.metadataMerge.take;
     }
+    mergedMeta.give = dedupeItemList(mergedMeta.give);
+    mergedMeta.take = dedupeItemList(mergedMeta.take);
     if (sugarcube.metadataMerge.rep) {
       mergedMeta.rep = {...((mergedMeta.rep as Record<string, number>) ?? {}), ...sugarcube.metadataMerge.rep};
     }

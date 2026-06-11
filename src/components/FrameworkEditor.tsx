@@ -2,9 +2,9 @@
  * 剧情界面（原时间线）
  */
 
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import JSZip from 'jszip';
-import type {FrameworkChapter, SceneEntry, StoryFramework} from '../schema/story-framework';
+import type {StoryFramework} from '../schema/story-framework';
 import {flattenSceneEntries, fromPersistedFramework, migrateFramework, toPersistedFramework, toPassageId, validateFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import type {GameCharacter} from '../schema/game-character';
@@ -14,14 +14,23 @@ import type {GameEvent} from '../schema/game-event';
 import type {GameItem} from '../schema/game-item';
 import type {GameMetadata} from '../schema/metadata';
 import type {GameRule} from '../schema/game-rule';
-import {ONLY_ONCE_RULE_ID} from '../schema/game-rule';
+import {parseStoryRulesFile, serializeStoryRulesBundle} from '../utils/parse-story-rules';
+import {
+  collectChangedSceneTargets,
+  collectSceneFingerprintMap,
+  type SceneCompileTarget,
+} from '../utils/chapter-compile-helpers';
+import {compileChapterScene, sceneContextSummary} from '../services/chapter-scene-compile';
+import {getChapterAvailableSceneIds} from '../utils/chapter-scene';
+import {getIncomingNarrativeEdges} from '../utils/scene-passage-links';
 import {getAIGCApiKey, getCharactersFetchUrl, getScenesFetchUrl, getMapsFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl, getStoryFmFetchUrl, getGameContentUrl, getPassagePageCharsMin, getPassagePageCharsMax} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useNotification} from '@/context/NotificationContext';
 import {useAuth} from '@/context/AuthContext';
-import {frameworkToStory, parseTwee, serializeStorySugarcube, syncStoryTitleFromFramework} from '@/engine';
+import {frameworkToStory, parseTwee, syncStoryTitleFromFramework} from '@/engine';
 
 import {EDIT_MODAL_MAX_WIDTH} from '../styles/editorStyles';
+import {modalTitleStyle, pageTitleStyle} from '@/styles/appTheme';
 import {formatJsonCompact} from '../utils/json-format';
 import {
   applyScenePassageFullText,
@@ -31,16 +40,25 @@ import {getAiBlocks, getScenePassageBlocks} from '../utils/passage-blocks';
 import {resolveSceneBackgroundMusic, resolvedSceneImagesArray} from '../utils/scene-media';
 import {normalizeFeaturesConfig} from '../utils/normalize-features';
 import {runAssembleScene} from '@/services/scene-block-generation';
-import {InventoryValuesCard} from './cards/InventoryValuesCard';
-import {RuleIdsSelector} from './ui/RuleIdsSelector';
+import {loadFrameworkWithListData, preloadFrameworkListData} from '../services/framework-list-data';
+import {
+  lookupKeysForSceneEntry,
+  saveStoryTw,
+} from '@/services/scene-routing-sync-service';
+import {
+  collectRoutingStaleScenes,
+  patchRoutingFingerprints,
+  syncPassageLinksInStory,
+} from '../utils/scene-routing-sync';
+import {NarrativeTruthEditors} from './NarrativeTruthEditors';
+
+type FrameworkTab = 'meta' | 'foreshadowing' | 'canon';
 
 type ImportZipFile = {path: string; contentBase64: string};
 type ImportPendingData = {
   sourceGameId: string;
   files: ImportZipFile[];
 };
-
-type SceneCompileTarget = { chapterIndex: number; sceneIndex: number };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -116,7 +134,6 @@ function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Recor
   const resolvedBgm = resolveSceneBackgroundMusic(scene, fw.features);
   m.backgroundMusic = resolvedBgm;
   m.synthesizedBgm = scene.synthesizedBgm || undefined;
-  if (scene.branchFailureEnding) m.branchTerminal = true;
   return m;
 }
 
@@ -126,107 +143,27 @@ function truncatePathForDisplay(name: string, maxLen = 28): string {
   return '…' + name.slice(-maxLen + 1);
 }
 
-function sceneContextSummary(scene: GameScene): string {
-  const aiSummaries = getAiBlocks(scene).map((b) => b.summary?.trim()).filter(Boolean);
-  if (aiSummaries.length > 0) return aiSummaries.join(' ');
-  const raw = getScenePassageBlocks(scene).find((b) => b.type === 'raw');
-  if (raw?.type === 'raw' && raw.text?.trim()) {
-    const t = raw.text.trim();
-    return t.length > 40 ? `${t.slice(0, 40)}...` : t;
-  }
-  return '';
-}
-
 function FileHandleButton({
                             label,
                             fileHandle,
                             onClick,
                             baseStyle = styles.btn,
+                            title,
                           }: {
   label: string;
   fileHandle: FileSystemFileHandle | null;
   onClick: () => void;
   baseStyle?: React.CSSProperties;
+  title?: string;
 }) {
   return (
-    <button type="button" style={{...baseStyle, ...styles.fileHandleBtn}} onClick={onClick}>
+    <button type="button" style={{...baseStyle, ...styles.fileHandleBtn}} onClick={onClick} title={title} aria-label={title ?? label}>
       <span>{label}</span>
       {fileHandle && (
         <span style={styles.fileHandleBtnPath}>{truncatePathForDisplay(fileHandle.name)}</span>
       )}
     </button>
   );
-}
-
-async function fetchListData(gameId: string): Promise<Partial<StoryFramework>> {
-  const merged: Partial<StoryFramework> = {};
-  const apis = [
-    {url: getCharactersFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameCharacter[]},
-    {url: getScenesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameScene[]},
-    {url: getMapsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameMap[]},
-    {url: getEventsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameEvent[]},
-    {url: getItemsFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as GameItem[]},
-    {
-      url: getMetadataFetchUrl(gameId), parse: (d: unknown) => {
-        const m = d as { characterAttributes?: unknown };
-        return m?.characterAttributes ? ({characterAttributes: m.characterAttributes} as GameMetadata) : undefined;
-      }
-    },
-    {url: getRulesFetchUrl(gameId), parse: (d: unknown) => (Array.isArray(d) ? d : []) as import('../schema/game-rule').GameRule[]},
-    {
-      url: getFeaturesFetchUrl(gameId),
-      parse: (d: unknown) =>
-        d && typeof d === 'object' && !Array.isArray(d)
-          ? normalizeFeaturesConfig(d as import('../schema/features').FeaturesConfig)
-          : undefined,
-    },
-  ];
-  const keys: (keyof StoryFramework)[] = ['characters', 'scenes', 'maps', 'events', 'items', 'metadata', 'gameRules', 'features'];
-  for (let i = 0; i < apis.length; i++) {
-    const {url, parse} = apis[i];
-    const key = keys[i];
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        const parsed = parse(data);
-        if (parsed !== undefined && parsed !== null) {
-          (merged as Record<string, unknown>)[key] = parsed;
-        }
-      }
-    } catch {
-      // 忽略加载失败
-    }
-  }
-  return merged;
-}
-
-async function preloadListData(
-  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void,
-  gameId: string
-): Promise<void> {
-  const merged = await fetchListData(gameId);
-  if (Object.keys(merged).length > 0) {
-    updateFw((d) => ({...d, ...merged}));
-  }
-}
-
-async function loadFrameworkWithListData(gameId: string): Promise<StoryFramework | null> {
-  const storyRes = await fetch(getStoryFmFetchUrl(gameId));
-  if (!storyRes.ok) {
-    if (storyRes.status === 404) return null;
-    throw new Error(`读取剧情框架失败: ${storyRes.status}`);
-  }
-  const parsed = (await storyRes.json()) as Record<string, unknown>;
-  if (!isRecord(parsed)) throw new Error('剧情框架格式错误');
-  if (!parsed.title) parsed.title = '未命名故事';
-  if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
-    parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
-  }
-  migrateFramework(parsed as unknown as StoryFramework);
-  const fw = fromPersistedFramework(parsed);
-  const listData = await fetchListData(gameId);
-  return {...fw, ...listData};
 }
 
 async function saveFrameworkToStorage(gameId: string, fw: StoryFramework): Promise<void> {
@@ -237,204 +174,6 @@ async function saveFrameworkToStorage(gameId: string, fw: StoryFramework): Promi
   });
   const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
   if (!res.ok || !data.ok) throw new Error(data.error || `保存剧情框架失败: ${res.status}`);
-}
-
-function hashString(input: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function sceneEntryKey(chapterIndex: number, sceneIndex: number): string {
-  return `${chapterIndex}:${sceneIndex}`;
-}
-
-function normalizePassageKey(name: string): string {
-  return name.trim().replace(/\s+/g, '_');
-}
-
-function resolveStoryStartPassageName(fw: StoryFramework): string | null {
-  try {
-    const story = frameworkToStory(fw);
-    const startPassage = story.passages.get(story.startPassageId);
-    return startPassage?.name ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function getScenePassageLookupKeys(
-  fw: StoryFramework,
-  chapterIndex: number,
-  sceneId: string
-): string[] {
-  const pid = toPassageId(chapterIndex, sceneId);
-  const keys = [pid];
-  const template = frameworkToStory(fw).passages.get(pid);
-  if (template?.name) {
-    const byName = normalizePassageKey(template.name);
-    if (!keys.includes(byName)) keys.push(byName);
-  }
-  return keys;
-}
-
-function getSceneEntryFingerprint(
-  fw: StoryFramework,
-  ch: FrameworkChapter,
-  sceneIndex: number,
-  sceneMap: Map<string, GameScene>
-): string | null {
-  const entry = ch.sceneEntries[sceneIndex];
-  if (!entry) return null;
-  const scene = sceneMap.get(entry.sceneId);
-  if (!scene) return null;
-  return hashString(JSON.stringify({
-    title: fw.title,
-    background: fw.background ?? '',
-    rules: fw.rules ?? [],
-    chapter: {
-      id: ch.id,
-      title: ch.title,
-      theme: ch.theme ?? '',
-      startMapNodeId: ch.startMapNodeId ?? '',
-      endMapNodeId: ch.endMapNodeId ?? '',
-    },
-    entry: {
-      sceneId: entry.sceneId,
-      ruleIds: entry.ruleIds ?? [],
-      sceneIndex,
-    },
-    scene: {
-      id: scene.id,
-      name: scene.name,
-      passageBlocks: getScenePassageBlocks(scene),
-      mapNodeId: scene.mapNodeId ?? '',
-      characterIds: scene.characterIds ?? [],
-      counterpartCharacterIds: scene.counterpartCharacterIds ?? [],
-      characterOverrides: scene.characterOverrides ?? {},
-      eventIds: scene.eventIds ?? [],
-      openingAnimation: scene.openingAnimation ?? '',
-      backgroundMusic: scene.backgroundMusic ?? '',
-      images: scene.images ?? [],
-    },
-  }));
-}
-
-function collectSceneFingerprintMap(fw: StoryFramework): Map<string, string> {
-  const map = new Map<string, string>();
-  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
-  for (let chi = 0; chi < fw.chapters.length; chi++) {
-    const ch = fw.chapters[chi];
-    for (let si = 0; si < ch.sceneEntries.length; si++) {
-      const fp = getSceneEntryFingerprint(fw, ch, si, sceneMap);
-      if (fp) map.set(sceneEntryKey(chi, si), fp);
-    }
-  }
-  return map;
-}
-
-function patchSceneEntry(
-  fw: StoryFramework,
-  chapterIndex: number,
-  sceneIndex: number,
-  patch: (entry: SceneEntry) => SceneEntry
-): StoryFramework {
-  return {
-    ...fw,
-    chapters: fw.chapters.map((ch, chi) =>
-      chi === chapterIndex
-        ? {...ch, sceneEntries: ch.sceneEntries.map((entry, si) => (si === sceneIndex ? patch(entry) : entry))}
-        : ch
-    ),
-  };
-}
-
-function collectChangedSceneTargets(newFw: StoryFramework, oldFingerprintMap: Map<string, string>): SceneCompileTarget[] {
-  const targets: SceneCompileTarget[] = [];
-  const sceneMap = new Map((newFw.scenes ?? []).map((s) => [s.id, s]));
-  for (let chi = 0; chi < newFw.chapters.length; chi++) {
-    const ch = newFw.chapters[chi];
-    for (let si = 0; si < ch.sceneEntries.length; si++) {
-      const fp = getSceneEntryFingerprint(newFw, ch, si, sceneMap);
-      if (!fp || oldFingerprintMap.get(sceneEntryKey(chi, si)) === fp) continue;
-      targets.push({chapterIndex: chi, sceneIndex: si});
-    }
-  }
-  return targets;
-}
-
-function applySceneTextToStory(
-  story: ReturnType<typeof parseTwee>,
-  fullStory: ReturnType<typeof frameworkToStory>,
-  fw: StoryFramework,
-  scene: GameScene,
-  chapterIndex: number,
-  sceneText: string
-): void {
-  const pid = toPassageId(chapterIndex, scene.id);
-  const template = fullStory.passages.get(pid);
-  if (!template) throw new Error(`未找到 passage 模板: ${pid}`);
-
-  // 场景正文模板可能注入了“支线失败结局统一媒体预设”；模板元数据优先，避免被场景默认媒体覆盖。
-  const meta = {...sceneAuthoritativeMetadata(scene, fw), ...(template.metadata ?? {})};
-  const lookupKeys = getScenePassageLookupKeys(fw, chapterIndex, scene.id);
-  applyScenePassageFullText(story, {
-    sceneId: scene.id,
-    paginationBaseId: pid,
-    lookupKeys,
-    rootPassage: {
-      ...template,
-      name: template.name ?? scene.name ?? pid,
-      metadata: Object.keys(meta).length ? meta : undefined,
-    },
-    fullText: sceneText,
-    minChars: getPassagePageCharsMin(),
-    maxChars: getPassagePageCharsMax(),
-  });
-
-  story.metadata = {...(story.metadata ?? {}), ...(fullStory.metadata ?? {})};
-  syncStoryTitleFromFramework(story, fw);
-  const startName = resolveStoryStartPassageName(fw);
-  if (startName) story.startPassageId = startName;
-}
-
-async function compileSceneEntry(
-  fw: StoryFramework,
-  story: ReturnType<typeof parseTwee>,
-  target: SceneCompileTarget,
-  gameId: string
-): Promise<{ fw: StoryFramework; story: ReturnType<typeof parseTwee> }> {
-  const {chapterIndex, sceneIndex} = target;
-  const ch = fw.chapters[chapterIndex];
-  const entry = ch.sceneEntries[sceneIndex];
-  const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
-  const scene = sceneMap.get(entry.sceneId);
-  if (!scene) throw new Error(`未找到场景 ${entry.sceneId}`);
-
-  const fp = getSceneEntryFingerprint(fw, ch, sceneIndex, sceneMap);
-  if (!fp) throw new Error('无法计算版本指纹');
-
-  const {passageText} = await runAssembleScene(gameId, scene, ch.id);
-  applySceneTextToStory(story, frameworkToStory(fw), fw, scene, chapterIndex, passageText);
-  return {
-    fw: patchSceneEntry(fw, chapterIndex, sceneIndex, (e) => ({...e, compiledFingerprint: fp})),
-    story,
-  };
-}
-
-async function saveStoryTw(gameId: string, story: ReturnType<typeof parseTwee>): Promise<void> {
-  const res = await fetch(getGameContentUrl(gameId), {
-    method: 'PUT',
-    headers: {'Content-Type': 'text/plain; charset=utf-8'},
-    body: serializeStorySugarcube(story),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({error: res.statusText}));
-    throw new Error((err as { error?: string }).error ?? '保存 story.tw 失败');
-  }
 }
 
 /** 若 story.tw 标题与 story-fm 不一致，则仅同步 StoryTitle 并写回 */
@@ -449,13 +188,17 @@ async function persistStoryTitleToTw(gameId: string, fw: StoryFramework): Promis
   await saveStoryTw(gameId, story);
 }
 
-async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
+async function saveRulesToPreset(fw: StoryFramework, gameId: string): Promise<{ ok: boolean; error?: string }> {
+  const payload = serializeStoryRulesBundle({
+    rules: fw.gameRules ?? [],
+    sceneBindings: fw.sceneBindings ?? [],
+  });
   if (import.meta.env.DEV) {
     try {
       const res = await fetch(getRulesFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(rules),
+        body: formatJsonCompact(payload),
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (res.ok && json.ok) return {ok: true};
@@ -464,7 +207,7 @@ async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: 
       return {ok: false, error: String(e)};
     }
   }
-  const blob = new Blob([formatJsonCompact(rules)], {type: 'application/json'});
+  const blob = new Blob([formatJsonCompact(payload)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -507,9 +250,10 @@ export function FrameworkEditor({
   const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
   const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
   const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
+  const [frameworkTab, setFrameworkTab] = useState<FrameworkTab>('meta');
 
   useEffect(() => {
-    preloadListData(updateFw, gameId);
+    preloadFrameworkListData(updateFw, gameId);
   }, [updateFw, gameId]);
 
   const updateFwWithErrorReset = useCallback(
@@ -531,32 +275,7 @@ export function FrameworkEditor({
 
   const sceneMap = new Map<string, GameScene>();
   for (const s of fw.scenes ?? []) sceneMap.set(s.id, s);
-  const staleSceneEntries = useMemo(() => {
-    const stale: Array<{ chapterTitle: string; sceneName: string; sceneId: string }> = [];
-    for (let chi = 0; chi < fw.chapters.length; chi++) {
-      const ch = fw.chapters[chi];
-      for (let si = 0; si < (ch.sceneEntries ?? []).length; si++) {
-        const entry = ch.sceneEntries[si];
-        const fp = getSceneEntryFingerprint(fw, ch, si, sceneMap);
-        if (!fp) continue;
-        if (entry.compiledFingerprint !== fp) {
-          stale.push({
-            chapterTitle: ch.title || ch.id,
-            sceneName: sceneMap.get(entry.sceneId)?.name ?? entry.sceneId,
-            sceneId: entry.sceneId,
-          });
-        }
-      }
-    }
-    return stale;
-  }, [fw, sceneMap]);
-  flattenSceneEntries(fw);
-  const mapNodeIds: Array<{ id: string; name: string; mapName: string }> = [];
-  for (const map of fw.maps ?? []) {
-    for (const n of map.nodes) mapNodeIds.push({id: n.id, name: n.name, mapName: map.name});
-  }
   const characterIds = (fw.characters ?? []).map((c) => ({id: c.id, name: c.name}));
-  const catalogItems = fw.items ?? [];
   const gameRules = fw.gameRules ?? [];
   const {valid, errors} = validateFramework(fw);
   const handleNew = useCallback(() => {
@@ -609,16 +328,16 @@ export function FrameworkEditor({
   }, [updateFwWithErrorReset]);
 
   const saveRules = useCallback(async () => {
-    const result = await saveRulesToPreset(fw.gameRules ?? [], gameId);
+    const result = await saveRulesToPreset(fw, gameId);
     if (!result.ok) addNotification('error', `规则保存失败: ${result.error}`);
-  }, [fw.gameRules, gameId, addNotification]);
+  }, [fw, gameId, addNotification]);
 
   const handleSave = useCallback(async () => {
     try {
       await saveFrameworkToStorage(gameId, fw);
       await persistStoryTitleToTw(gameId, fw);
+      addNotification('info', '框架已保存');
       setJsonError(null);
-      addNotification('info', '保存成功');
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
     }
@@ -706,12 +425,11 @@ export function FrameworkEditor({
           for (let i = 0; i < changedTargets.length; i++) {
             const t = changedTargets[i];
             const ch = nextFw.chapters[t.chapterIndex];
-            const entry = ch.sceneEntries[t.sceneIndex];
-            const scene = nextFw.scenes?.find((s) => s.id === entry.sceneId);
-            const sceneLabel = `${ch.title || ch.id} / ${scene?.name ?? entry.sceneId}`;
+            const scene = nextFw.scenes?.find((s) => s.id === t.sceneId);
+            const sceneLabel = `${ch.title || ch.id} / ${scene?.name ?? t.sceneId}`;
             setCompileProgress({current: i + 1, total: changedTargets.length, scene: sceneLabel});
             try {
-              const result = await compileSceneEntry(nextFw, story, t, targetGameId);
+              const result = await compileChapterScene(nextFw, story, t.chapterIndex, t.sceneId, targetGameId);
               nextFw = result.fw;
               story = result.story;
               await saveStoryTw(targetGameId, story);
@@ -727,6 +445,25 @@ export function FrameworkEditor({
           } else {
             setJsonError(null);
             addNotification('info', `导入成功；已编译 ${changedTargets.length} 个变更场景`);
+          }
+          try {
+            const routingStale = collectRoutingStaleScenes(
+              nextFw,
+              story,
+              (chi, sid) => lookupKeysForSceneEntry(nextFw, chi, sid)
+            );
+            if (routingStale.length > 0) {
+              const routeSync = syncPassageLinksInStory(story, nextFw, {
+                sceneIds: routingStale.map((s) => s.sceneId),
+                lookupKeysForScene: (chi, sid) => lookupKeysForSceneEntry(nextFw, chi, sid),
+              });
+              nextFw = patchRoutingFingerprints(nextFw, routeSync.synced);
+              await saveStoryTw(targetGameId, story);
+              await saveFrameworkToStorage(targetGameId, nextFw);
+              updateFw(() => nextFw);
+            }
+          } catch (routeErr) {
+            addNotification('error', `导入后路由同步失败：${(routeErr as Error).message}`);
           }
         }
       } else {
@@ -790,140 +527,6 @@ export function FrameworkEditor({
     }
   }, [gameId, addNotification]);
 
-  const handleAssembleScene = useCallback(
-    async (chi: number, si: number) => {
-      const ch = fw.chapters[chi];
-      const entry = ch?.sceneEntries?.[si];
-      if (!entry) {
-        alert('未找到该场景条目，请刷新后重试。');
-        return;
-      }
-      const scene = sceneMap.get(entry.sceneId);
-      if (!scene) {
-        alert(`未找到场景「${entry.sceneId}」。请先在「场景」页添加该场景，并确保剧情页已加载场景数据。`);
-        return;
-      }
-      if (!apiKey?.trim()) {
-        alert('请配置 VITE_AIGC_API_KEY');
-        return;
-      }
-      if (!import.meta.env.DEV) {
-        alert('汇编内容需要开发模式，当前为生产环境。');
-        return;
-      }
-      const sk = `${chi}-${si}`;
-      setGeneratingSceneKey(sk);
-      setJsonError(null);
-      try {
-        const res = await fetch(getGameContentUrl(gameId));
-        const raw = res.ok ? await res.text() : '';
-        let story = parseTwee(raw);
-        const result = await compileSceneEntry(fw, story, {chapterIndex: chi, sceneIndex: si}, gameId);
-        await saveStoryTw(gameId, result.story);
-        updateFw(() => result.fw);
-        await saveFrameworkToStorage(gameId, result.fw);
-        addNotification('info', `已汇编场景：${scene.name}`);
-      } catch (e) {
-        setJsonError((e as Error).message);
-      } finally {
-        setGeneratingSceneKey(null);
-      }
-    },
-    [fw, apiKey, gameId, sceneMap, updateFw, addNotification]
-  );
-
-  const handleLoadSceneText = useCallback(
-    async (chi: number, si: number) => {
-      const ch = fw.chapters[chi];
-      const entry = ch?.sceneEntries?.[si];
-      if (!entry) return;
-      const entryKey = `${chi}-${si}`;
-      const lookupKeys = getScenePassageLookupKeys(fw, chi, entry.sceneId);
-      setLoadingSceneTextKey(entryKey);
-      try {
-        const contentUrl = getGameContentUrl(gameId);
-        const res = await fetch(contentUrl);
-        const raw = res.ok ? await res.text() : '';
-        const story = parseTwee(raw);
-        const pid = toPassageId(chi, entry.sceneId);
-        const fullText = collectSceneFullText(story, entry.sceneId, pid, lookupKeys);
-        const fallbackScene = sceneMap.get(entry.sceneId);
-        const fallback = fallbackScene ? sceneContextSummary(fallbackScene) : '';
-        setEditingSceneText((prev) => ({
-          ...prev,
-          [entryKey]: fullText || fallback,
-        }));
-        if (!fullText) addNotification('info', '未找到已有正文，已载入场景正文块摘要作为编辑初稿');
-      } catch (e) {
-        setJsonError((e as Error).message || '读取正文失败');
-      } finally {
-        setLoadingSceneTextKey(null);
-      }
-    },
-    [fw, gameId, sceneMap, addNotification]
-  );
-
-  const toggleScene = useCallback((chi: number, si: number) => {
-    const entryKey = `${chi}-${si}`;
-    setExpandedScene((prev) => {
-      const expanding = !prev.has(entryKey);
-      const next = new Set(prev);
-      if (prev.has(entryKey)) next.delete(entryKey);
-      else next.add(entryKey);
-      if (expanding && editingSceneTextRef.current[entryKey] === undefined) {
-        void handleLoadSceneText(chi, si);
-      }
-      return next;
-    });
-  }, [handleLoadSceneText]);
-
-  const handleSaveSceneText = useCallback(
-    async (chi: number, si: number) => {
-      const ch = fw.chapters[chi];
-      const entry = ch?.sceneEntries?.[si];
-      if (!entry) return;
-      const scene = sceneMap.get(entry.sceneId);
-      const entryKey = `${chi}-${si}`;
-      const text = editingSceneText[entryKey] ?? '';
-      const pid = toPassageId(chi, entry.sceneId);
-      const lookupKeys = getScenePassageLookupKeys(fw, chi, entry.sceneId);
-      setSavingSceneTextKey(entryKey);
-      setJsonError(null);
-      try {
-        const contentUrl = getGameContentUrl(gameId);
-        const res = await fetch(contentUrl);
-        const raw = res.ok ? await res.text() : '';
-        const story = parseTwee(raw);
-        const fullStory = frameworkToStory(fw);
-        const template = fullStory.passages.get(pid);
-        if (!template) throw new Error(`未找到场景 passage 模板: ${pid}`);
-        if (!scene) throw new Error(`未找到场景 ${entry.sceneId}`);
-        const meta = {...sceneAuthoritativeMetadata(scene, fw), ...(template.metadata ?? {})};
-        applyScenePassageFullText(story, {
-          sceneId: entry.sceneId,
-          paginationBaseId: pid,
-          lookupKeys,
-          rootPassage: {
-            ...template,
-            name: template.name ?? scene.name ?? pid,
-            metadata: Object.keys(meta).length ? meta : undefined,
-          },
-          fullText: text,
-          minChars: getPassagePageCharsMin(),
-          maxChars: getPassagePageCharsMax(),
-        });
-        syncStoryTitleFromFramework(story, fw);
-        await saveStoryTw(gameId, story);
-        addNotification('info', '场景正文已保存到 story.tw');
-      } catch (e) {
-        setJsonError((e as Error).message || '保存正文失败');
-      } finally {
-        setSavingSceneTextKey(null);
-      }
-    },
-    [fw, gameId, sceneMap, editingSceneText, addNotification]
-  );
-
   return (
     <div style={styles.container}>
       {newGameModalOpen && (
@@ -963,7 +566,14 @@ export function FrameworkEditor({
           <button type="button" style={styles.btn} onClick={handleNew}>
             新建
           </button>
-          <FileHandleButton label="保存" fileHandle={frameworkFileHandle} onClick={() => checkAuthForSave(handleSave)}/>
+          {frameworkTab === 'meta' && (
+            <FileHandleButton
+              label="保存框架"
+              fileHandle={frameworkFileHandle}
+              title="保存 story-fm.json（章节、场景等框架数据，不含伏笔池与 Canon）"
+              onClick={() => checkAuthForSave(handleSave)}
+            />
+          )}
           <button type="button" style={styles.btn} onClick={handleImportClick}>
             导入
           </button>
@@ -1044,22 +654,37 @@ export function FrameworkEditor({
           {jsonError && <div style={styles.errorItem}>{jsonError}</div>}
         </div>
       )}
-      {staleSceneEntries.length > 0 && (
-        <div style={{...styles.errors, backgroundColor: 'rgba(255,193,7,0.12)', color: '#ffd54f'}}>
-          <div style={{fontWeight: 600, marginBottom: 6}}>
-            检测到 {staleSceneEntries.length} 个场景正文过期（story-fm 与 story.tw 版本不一致）
-          </div>
-          {staleSceneEntries.slice(0, 12).map((it, idx) => (
-            <div key={`${it.chapterTitle}-${it.sceneId}-${idx}`} style={styles.errorItem}>
-              {it.chapterTitle} / {it.sceneName}（{it.sceneId}）
-            </div>
-          ))}
-          {staleSceneEntries.length > 12 && (
-            <div style={styles.errorItem}>... 还有 {staleSceneEntries.length - 12} 个</div>
-          )}
-        </div>
+
+      <div style={{display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap'}}>
+        {(['meta', 'foreshadowing', 'canon'] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: frameworkTab === id ? '#4a3a6a' : '#2d2d44',
+              border: '1px solid #444',
+              borderRadius: 6,
+              color: '#e8e8e8',
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+            onClick={() => setFrameworkTab(id)}
+          >
+            {id === 'meta' ? '框架' : id === 'foreshadowing' ? '伏笔池' : 'Canon'}
+          </button>
+        ))}
+      </div>
+
+      {frameworkTab === 'foreshadowing' && (
+        <NarrativeTruthEditors scenes={fw.scenes ?? []} fixedTab="foreshadowing" hideTabBar />
+      )}
+      {frameworkTab === 'canon' && (
+        <NarrativeTruthEditors scenes={fw.scenes ?? []} fixedTab="canon" hideTabBar />
       )}
 
+      {frameworkTab === 'meta' && (
+        <>
       <section style={styles.section}>
         <label style={styles.label}>当前玩家角色</label>
         <select
@@ -1075,36 +700,6 @@ export function FrameworkEditor({
           ))}
           {characterIds.length === 0 && <option value="" disabled>暂无人物，请在「人物」页添加</option>}
         </select>
-      </section>
-
-      <section style={styles.section}>
-        <InventoryValuesCard
-          items={catalogItems}
-          inventory={fw.initialState?.inventory ?? []}
-          onChange={(ids) =>
-            updateFwWithErrorReset((d) => {
-              const inventory = ids.length ? ids : undefined;
-              const variables = d.initialState?.variables;
-              const hasVariables = variables && Object.keys(variables).length > 0;
-              if (!inventory && !hasVariables) {
-                return {...d, initialState: undefined};
-              }
-              return {
-                ...d,
-                initialState: {
-                  ...d.initialState,
-                  variables: hasVariables ? variables : undefined,
-                  inventory,
-                },
-              };
-            })
-          }
-          title="开局背包（initialState.inventory）"
-          readOnly={false}
-        />
-        <p style={{fontSize: 12, color: '#888', marginTop: 8, marginBottom: 0}}>
-          游戏启动时玩家已持有的物品 id；写入 story-fm.json，编译 story.tw 后生效。与场景「进入时 give/take」不同。
-        </p>
       </section>
 
       <section style={styles.section}>
@@ -1144,422 +739,16 @@ export function FrameworkEditor({
       </section>
 
       <section style={styles.section}>
-        <div style={styles.sectionHead}>
-          <span>章节</span>
-          <button
-            type="button"
-            style={styles.btnSmall}
-            onClick={() =>
-              updateFwWithErrorReset((d) => ({
-                ...d,
-                chapters: [
-                  ...d.chapters,
-                  {id: `ch${d.chapters.length}`, title: `第${d.chapters.length + 1}章`, sceneEntries: []},
-                ],
-              }))
-            }
-          >
-            + 添加章节
-          </button>
-        </div>
-
-        {fw.chapters.map((ch, chi) => (
-          <ChapterBlock
-            key={ch.id}
-            ch={ch}
-            chi={chi}
-            startSceneName={chi === 0 ? resolveStoryStartPassageName(fw) : undefined}
-            scenes={fw.scenes ?? []}
-            mapNodeIds={mapNodeIds}
-            ruleList={(fw.gameRules ?? []).map((r) => ({id: r.id, name: r.name}))}
-            expandedCh={expandedCh}
-            expandedEntry={expandedScene}
-            toggleCh={toggleCh}
-            onToggleEntry={(si) => toggleScene(chi, si)}
-            updateFw={updateFwWithErrorReset}
-            onAssembleScene={(si) => handleAssembleScene(chi, si)}
-            generatingEntry={generatingSceneKey}
-            sceneTextDrafts={editingSceneText}
-            loadingSceneTextKey={loadingSceneTextKey}
-            savingSceneTextKey={savingSceneTextKey}
-            gameRules={gameRules}
-            onUpdateRule={updateRule}
-            onSaveRules={() => checkAuthForSave(saveRules)}
-            onSceneTextDraftChange={(entryKey, value) =>
-              setEditingSceneText((prev) => ({...prev, [entryKey]: value}))
-            }
-            onLoadSceneText={(si) => handleLoadSceneText(chi, si)}
-            onSaveSceneText={(si) => handleSaveSceneText(chi, si)}
-          />
-        ))}
+        <p style={{fontSize: 13, color: '#9ca3af', margin: 0}}>
+          章节场景池、叙事图、跨章过渡与连通态请在顶部导航「章节」页编辑。本页负责故事元数据与全局导入/导出。
+        </p>
       </section>
-    </div>
-  );
-}
-
-function ChapterBlock({
-  ch,
-  chi,
-  startSceneName,
-  scenes,
-  mapNodeIds,
-  ruleList,
-  expandedCh,
-  expandedEntry,
-  toggleCh,
-  onToggleEntry,
-  updateFw,
-  onAssembleScene,
-  generatingEntry,
-  sceneTextDrafts,
-  loadingSceneTextKey,
-  savingSceneTextKey,
-  gameRules,
-  onUpdateRule,
-  onSaveRules,
-  onSceneTextDraftChange,
-  onLoadSceneText,
-  onSaveSceneText,
-}: {
-  ch: FrameworkChapter;
-  chi: number;
-  /** 首章解析出的游戏起始场景名（只读提示） */
-  startSceneName?: string | null;
-  scenes: GameScene[];
-  mapNodeIds: Array<{ id: string; name: string; mapName: string }>;
-  ruleList: Array<{ id: string; name: string }>;
-  expandedCh: Set<string>;
-  expandedEntry: Set<string>;
-  toggleCh: (id: string) => void;
-  onToggleEntry: (si: number) => void;
-  updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
-  onAssembleScene: (si: number) => void;
-  generatingEntry: string | null;
-  sceneTextDrafts: Record<string, string>;
-  loadingSceneTextKey: string | null;
-  savingSceneTextKey: string | null;
-  gameRules: GameRule[];
-  onUpdateRule?: (ruleId: string, fn: (r: GameRule) => GameRule) => void;
-  onSaveRules?: () => void;
-  onSceneTextDraftChange: (entryKey: string, value: string) => void;
-  onLoadSceneText: (si: number) => void;
-  onSaveSceneText: (si: number) => void;
-}) {
-  const isExpanded = expandedCh.has(ch.id);
-  const entries = ch.sceneEntries ?? [];
-  const sceneMap = new Map(scenes.map((s) => [s.id, s]));
-  const [draggingSceneIndex, setDraggingSceneIndex] = useState<number | null>(null);
-
-  const updateChapter = (fn: (c: FrameworkChapter) => FrameworkChapter) =>
-    updateFw((d) => ({
-      ...d,
-      chapters: d.chapters.map((c, i) => (i === chi ? fn(c) : c)),
-    }));
-
-  const addSceneEntry = (sceneId: string) => {
-    if (entries.some((e) => e.sceneId === sceneId)) {
-      alert('该场景已在本章节中，一个章节与一个场景只能有唯一关系，不能重复添加。');
-      return;
-    }
-    updateChapter((c) => ({
-      ...c,
-      sceneEntries: [...(c.sceneEntries ?? []), {sceneId}],
-    }));
-  };
-
-  const removeSceneEntry = (si: number) => {
-    updateChapter((c) => ({
-      ...c,
-      sceneEntries: c.sceneEntries.filter((_, j) => j !== si),
-    }));
-  };
-
-  const updateEntry = (si: number, fn: (e: SceneEntry) => SceneEntry) => {
-    updateChapter((c) => ({
-      ...c,
-      sceneEntries: c.sceneEntries.map((e, j) => (j === si ? fn(e) : e)),
-    }));
-  };
-
-  const reorderSceneEntry = (fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex || toIndex < 0 || toIndex >= entries.length) return;
-    updateChapter((c) => {
-      const list = [...c.sceneEntries];
-      const [item] = list.splice(fromIndex, 1);
-      list.splice(toIndex, 0, item);
-      return {...c, sceneEntries: list};
-    });
-  };
-
-  const handleSceneDragStart = (e: React.DragEvent, index: number) => {
-    e.stopPropagation();
-    setDraggingSceneIndex(index);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(index));
-  };
-
-  const handleSceneDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleSceneDrop = (e: React.DragEvent, toIndex: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
-    if (!Number.isNaN(fromIndex) && fromIndex !== toIndex) {
-      reorderSceneEntry(fromIndex, toIndex);
-    }
-    setDraggingSceneIndex(null);
-  };
-
-  const handleSceneDragEnd = () => {
-    setDraggingSceneIndex(null);
-  };
-
-  return (
-    <div style={styles.chapter}>
-      <div style={styles.chapterHead} onClick={() => toggleCh(ch.id)}>
-        <span style={styles.chapterTitle}>{isExpanded ? '▼' : '▶'} {ch.title || ch.id}</span>
-        <div style={styles.chapterHeadRight} onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            style={styles.btnIcon}
-            onClick={() =>
-              updateFw((d) => ({
-                ...d,
-                chapters: d.chapters.filter((_, i) => i !== chi),
-              }))
-            }
-            title="删除章节"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-
-      {isExpanded && (
-        <div style={styles.chapterBody}>
-          <div style={styles.row}>
-            <label style={styles.label}>治理标题（仅编辑/治理用，建议与地图节点 name 一致）</label>
-            <input
-              type="text"
-              value={ch.title}
-              onChange={(e) =>
-                updateChapter((c) => ({...c, title: e.target.value}))
-              }
-              style={{...styles.input, flex: 1}}
-              placeholder="如：福州·夜雨（勿写「第一章：…」长标题）"
-            />
-          </div>
-          <div style={styles.row}>
-            <label style={styles.label}>主题</label>
-            <input
-              type="text"
-              value={ch.theme ?? ''}
-              onChange={(e) =>
-                updateChapter((c) => ({...c, theme: e.target.value || undefined}))
-              }
-              style={{...styles.input, flex: 1}}
-              placeholder="章节主题"
-            />
-          </div>
-          <div style={styles.row}>
-            <label style={styles.label}>起始地图节点（本章剧情发生地）</label>
-            <select
-              value={ch.startMapNodeId ?? ''}
-              onChange={(e) =>
-                updateChapter((c) => ({...c, startMapNodeId: e.target.value || undefined}))
-              }
-              style={styles.input}
-            >
-              <option value="">无</option>
-              {mapNodeIds.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.mapName} / {n.name}
-                </option>
-              ))}
-            </select>
-            {startSceneName != null && (
-              <p style={{margin: '6px 0 0', fontSize: 12, color: '#9ca3af'}}>
-                游戏起始场景：<strong style={{color: '#e8e8e8'}}>{startSceneName}</strong>
-                （首章该节点上的<strong>主线</strong>场景；支线不参与）
-              </p>
-            )}
-          </div>
-          <div style={styles.row}>
-            <label style={styles.label}>终止地图节点（本章结束后玩家可前往）</label>
-            <select
-              value={ch.endMapNodeId ?? ''}
-              onChange={(e) =>
-                updateChapter((c) => ({...c, endMapNodeId: e.target.value || undefined}))
-              }
-              style={styles.input}
-            >
-              <option value="">无</option>
-              {mapNodeIds.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.mapName} / {n.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={styles.scenesHead}>
-            <span>场景</span>
-            <select
-              value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                e.target.value = '';
-                if (v) addSceneEntry(v);
-              }}
-              style={{...styles.input, width: 200}}
-            >
-              <option value="">+ 添加场景</option>
-              {scenes
-                .filter((s) => !entries.some((e) => e.sceneId === s.id))
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}（{s.id}）
-                  </option>
-                ))}
-            </select>
-          </div>
-
-          {entries.map((entry, si) => {
-            const scene = sceneMap.get(entry.sceneId);
-            const branchRootScene = (scene?.branchOptions ?? []).filter(Boolean).length > 0;
-            const entryKey = `${chi}-${si}`;
-            const isEntryExpanded = expandedEntry.has(entryKey);
-            const isGenerating = generatingEntry === entryKey;
-            const isLoadingText = loadingSceneTextKey === entryKey;
-            const isSavingText = savingSceneTextKey === entryKey;
-            const textDraft = sceneTextDrafts[entryKey] ?? '';
-            return (
-              <div key={entryKey} style={styles.scene}>
-                <div
-                  style={{
-                    ...styles.sceneHead,
-                    ...(draggingSceneIndex === si ? styles.sceneHeadDragging : {}),
-                  }}
-                  onClick={() => onToggleEntry(si)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && onToggleEntry(si)}
-                  onDragOver={handleSceneDragOver}
-                  onDrop={(e) => handleSceneDrop(e, si)}
-                >
-                  <div style={styles.sceneHeadLeft}>
-                    <span
-                      draggable
-                      onDragStart={(e) => handleSceneDragStart(e, si)}
-                      onDragEnd={handleSceneDragEnd}
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      style={styles.sceneDragHandle}
-                      title="拖拽调整章内顺序（影响主线链）"
-                    >
-                      ⋮⋮
-                    </span>
-                    <span style={styles.sceneTitle}>
-                      {isEntryExpanded ? '▼' : '▶'} {scene?.name ?? entry.sceneId}
-                    </span>
-                  </div>
-                  <div
-                    onClick={(ev) => ev.stopPropagation()}
-                    style={styles.sceneHeadActions}
-                  >
-                    <button
-                      type="button"
-                      style={{
-                        ...styles.btnSmall,
-                        ...(isGenerating ? {opacity: 0.6} : {}),
-                      }}
-                      onClick={() => onAssembleScene(si)}
-                      disabled={isGenerating}
-                      title="将各 AI 块 generatedText 汇编写入 story.tw"
-                    >
-                      {isGenerating ? '汇编中...' : '汇编内容'}
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.btnIcon}
-                      onClick={() => removeSceneEntry(si)}
-                      title="移出本章节"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-                {isEntryExpanded && (
-                  <div style={styles.sceneBody}>
-                    <p style={styles.sceneEditHint}>
-                      请在「场景」菜单为各 AI 块填写规格并「生成内容」；汇编前请先保存 story-scenes.json。
-                    </p>
-                    <div style={styles.row}>
-                      <label style={styles.label}>生成正文（story.tw，多页自动合并编辑，保存时重新分页）</label>
-                      <div style={{display: 'flex', gap: 8, marginBottom: 8}}>
-                        <button
-                          type="button"
-                          style={styles.btnSmall}
-                          onClick={() => onLoadSceneText(si)}
-                          disabled={isLoadingText || isSavingText}
-                        >
-                          {isLoadingText ? '读取中...' : '读取正文'}
-                        </button>
-                        <button
-                          type="button"
-                          style={styles.btnSmall}
-                          onClick={() => onSaveSceneText(si)}
-                          disabled={isLoadingText || isSavingText}
-                        >
-                          {isSavingText ? '保存中...' : '保存正文'}
-                        </button>
-                      </div>
-                      <textarea
-                        value={textDraft}
-                        onChange={(e) => onSceneTextDraftChange(entryKey, e.target.value)}
-                        placeholder="该场景在 story.tw 中的完整正文（含全部分页，保存时自动拆分）"
-                        style={{...styles.input, ...styles.textarea, minHeight: 170}}
-                      />
-                    </div>
-                    <RuleIdsSelector
-                      ruleList={ruleList}
-                      value={entry.ruleIds ?? []}
-                      onChange={(ids) => {
-                        updateEntry(si, (e0) => ({
-                          ...e0,
-                          ruleIds: ids.length ? ids : undefined,
-                        }));
-                      }}
-                      label="规则"
-                      gameRules={gameRules}
-                      usageContext={{sceneId: entry.sceneId}}
-                      onUpdateRule={onUpdateRule}
-                      onSaveRules={onSaveRules}
-                      disabledAddOptions={
-                        branchRootScene
-                          ? [
-                              {
-                                id: ONLY_ONCE_RULE_ID,
-                                reason:
-                                  '该场景含 branchOptions，本章规则不能使用 onlyOnce。支线场景的 onlyOnce 请在「场景」页写入 scene.ruleIds。',
-                              },
-                            ]
-                          : undefined
-                      }
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        </>
       )}
     </div>
   );
 }
+
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
@@ -1576,7 +765,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: 16,
     borderBottom: '1px solid #333',
   },
-  title: {fontSize: 20, fontWeight: 600, margin: 0},
+  title: pageTitleStyle,
   actions: {display: 'flex', gap: 10},
   btn: {
     padding: '8px 16px',
@@ -1638,7 +827,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: {fontSize: 18, fontWeight: 600, margin: 0},
+  modalTitle: modalTitleStyle,
   modalClose: {
     background: 'none',
     border: 'none',

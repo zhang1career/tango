@@ -20,71 +20,12 @@ import {assignBehaviorIds} from '../utils/behavior-ids';
 import {MultiSelectField} from './ui/MultiSelectField';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
+import {editorStyles as baseEditorStyles} from '@/styles/editorStyles';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottom: '1px solid #333',
-  },
-  title: {fontSize: 20, fontWeight: 600, margin: 0},
-  btn: {
-    padding: '8px 16px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  section: {marginBottom: 24},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    width: '100%',
-    padding: 10,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 14,
-  },
-  textarea: {minHeight: 60, resize: 'vertical' as const, boxSizing: 'border-box'},
-  card: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
-  cardHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    backgroundColor: '#252540',
-  },
-  row: {marginBottom: 12},
-  btnSmall: {
-    padding: '4px 10px',
-    backgroundColor: '#333',
-    border: 'none',
-    borderRadius: 4,
-    color: '#aaa',
-    cursor: 'pointer',
-    fontSize: 12
-  },
-  btnIcon: {
-    padding: '2px 8px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: 16
-  },
+  ...baseEditorStyles,
   collapsible: {marginBottom: 12},
   collapsibleHead: {
     display: 'flex',
@@ -92,11 +33,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     padding: '6px 0',
     cursor: 'pointer',
-    fontSize: 13,
-    color: '#a78bfa',
+    fontSize: 12,
+    color: '#9ca3af',
   },
   collapsibleBody: {padding: '8px 0 0 0'},
-  readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
   dialogueItem: {marginBottom: 16, padding: 12, backgroundColor: '#1e1e32', borderRadius: 8, border: '1px solid #333'},
 };
 
@@ -236,7 +176,7 @@ function DialogueLibrarySection({
           <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
             {lib.map((b, i) => (
               <li key={b.id} style={{marginBottom: 12, padding: 10, backgroundColor: '#1e1e32', borderRadius: 6}}>
-                <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
+                <div style={{fontSize: 13, color: '#d1d5db'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
                 <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
                 {b.judgeExpr && <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>}
                 {b.sceneIds?.length ? (
@@ -263,13 +203,14 @@ function DialogueLibrarySection({
   };
   return (
     <div style={styles.row}>
+      <ListSectionHead title={<span style={{fontSize: 12, color: '#888'}}>行为库</span>} addTitle="添加行为" onAdd={add} />
       {lib.map((b, i) => (
         <div key={b.id} style={styles.dialogueItem}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center'}}>
             <span style={{fontSize: 12, color: '#888'}}>行为 #{i + 1}</span>
-            <button type="button" style={styles.btnSmall} onClick={() => remove(i)}>
-              删除
-            </button>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => remove(i)} />
+            </ListOpsCell>
           </div>
           <div style={styles.row}>
             <label style={styles.label}>请求</label>
@@ -354,9 +295,6 @@ function DialogueLibrarySection({
           </div>
         </div>
       ))}
-      <button type="button" style={styles.btn} onClick={add}>
-        + 添加行为
-      </button>
     </div>
   );
 }
@@ -822,44 +760,20 @@ export function CharacterEditor({fw, updateFw}: {
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>人物</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加人物
-        </button>
+        <ListAddButton title="添加人物" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {characters.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无人物，点击「添加人物」创建。</p>
-        )}
-
-        {characters.map((char, ci) => (
-          <div key={`char-${ci}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ci)}
-              >
-                {char.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {char.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ci)} title="编辑">
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={() => removeCharacterWithAuth(ci)}
-                  title="删除"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={characters.length}
+          emptyHint="暂无人物，点击 + 创建。"
+          getKey={(ci) => `char-${ci}`}
+          getPrimary={(ci) => characters[ci]!.name}
+          getMeta={(ci) => characters[ci]!.id}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeCharacterWithAuth}
+        />
       </section>
 
       {detailIndex !== null && characters[detailIndex] && (

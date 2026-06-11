@@ -2,8 +2,8 @@
  * 事件编辑界面
  */
 
-import React, {useEffect, useState} from 'react';
-import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl} from '@/config';
+import React, {useEffect, useMemo, useState} from 'react';
+import {getEventsFetchUrl, getCharactersFetchUrl, getRulesFetchUrl, getScenesFetchUrl} from '@/config';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
 import type {StoryFramework} from '../schema/story-framework';
@@ -11,68 +11,19 @@ import type {GameEvent, EventBehaviorSequenceItem} from '../schema/game-event';
 import type {GameBehavior} from '../schema/game-behavior';
 import type {GameCharacter} from '../schema/game-character';
 import type {GameRule} from '../schema/game-rule';
+import type {GameScene} from '../schema/game-scene';
 import {formatJsonCompact} from '../utils/json-format';
 import {assignBehaviorIds} from '../utils/behavior-ids';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {normalizeStringList, StringListField} from './ui/StringListField';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
+import {editorStyles as baseEditorStyles} from '@/styles/editorStyles';
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {maxWidth: 720, margin: '0 auto', padding: 20, color: '#e8e8e8'},
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingBottom: 16,
-    borderBottom: '1px solid #333',
-  },
-  title: {fontSize: 20, fontWeight: 600, margin: 0},
-  btn: {
-    padding: '8px 16px',
-    backgroundColor: '#2d2d44',
-    border: '1px solid #444',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    cursor: 'pointer',
-    fontSize: 14,
-  },
-  section: {marginBottom: 24},
-  label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
-  input: {
-    width: '100%',
-    padding: 10,
-    backgroundColor: '#252540',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#e8e8e8',
-    fontSize: 14,
-  },
-  card: {
-    marginBottom: 12,
-    backgroundColor: '#1e1e32',
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid #333',
-  },
-  cardHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    backgroundColor: '#252540',
-  },
-  row: {marginBottom: 12},
-  btnSmall: {
-    padding: '4px 10px',
-    backgroundColor: '#333',
-    border: 'none',
-    borderRadius: 4,
-    color: '#aaa',
-    cursor: 'pointer',
-    fontSize: 12,
-  },
+  ...baseEditorStyles,
   btnIcon: {
     padding: '2px 8px',
     backgroundColor: 'transparent',
@@ -95,7 +46,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     border: '1px solid #333',
   },
-  readOnlyValue: {fontSize: 14, color: '#e8e8e8', padding: '4px 0'},
 };
 
 /** 收集事件下所有行为用于 id 生成 */
@@ -112,6 +62,7 @@ type EventFormProps = {
   editable: boolean;
   characters: GameCharacter[];
   gameRules: GameRule[];
+  linkedScenes?: GameScene[];
   onUpdate?: (fn: (e: GameEvent) => GameEvent) => void;
 };
 
@@ -151,7 +102,7 @@ function EventBehaviorContentsEditor({
           <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
             {contents.map((b, i) => (
               <li key={b.id} style={{...styles.contentItem, marginBottom: 8}}>
-                <div style={{fontSize: 14, color: '#a78bfa'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
+                <div style={{fontSize: 13, color: '#d1d5db'}}>请求：{b.t === 'action' ? `(${b.q})` : b.q}</div>
                 <div style={{fontSize: 14, color: '#c4b5fd', marginTop: 4}}>响应：{b.a}</div>
                 {b.judgeExpr && (
                   <div style={{fontSize: 12, color: '#888', marginTop: 4}}>条件：{b.judgeExpr}</div>
@@ -166,13 +117,14 @@ function EventBehaviorContentsEditor({
 
   return (
     <div style={styles.row}>
+      <ListSectionHead title={<span style={{fontSize: 12, color: '#888'}}>内容列表</span>} addTitle="添加内容" onAdd={add} />
       {contents.map((b, i) => (
         <div key={b.id} style={styles.contentItem}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center'}}>
             <span style={{fontSize: 12, color: '#888'}}>行为 #{i + 1}</span>
-            <button type="button" style={styles.btnSmall} onClick={() => remove(i)}>
-              删除
-            </button>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => remove(i)} />
+            </ListOpsCell>
           </div>
           <div style={styles.row}>
             <label style={styles.label}>请求</label>
@@ -248,9 +200,6 @@ function EventBehaviorContentsEditor({
           </div>
         </div>
       ))}
-      <button type="button" style={styles.btn} onClick={add}>
-        + 添加内容
-      </button>
     </div>
   );
 }
@@ -320,14 +269,18 @@ function BehaviorSequenceEditor({
 
   return (
     <div style={styles.section}>
-      <label style={styles.label}>行为序列</label>
+      <ListSectionHead
+        title={<label style={{...styles.label, marginBottom: 0}}>行为序列</label>}
+        addTitle="添加行为"
+        onAdd={addSeqItem}
+      />
       {seq.map((item, idx) => (
         <div key={idx} style={styles.seqItem}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
-            <span style={{fontSize: 13, color: '#a78bfa'}}>行为序列项 #{idx + 1}</span>
-            <button type="button" style={styles.btnSmall} onClick={() => removeSeqItem(idx)}>
-              删除
-            </button>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center'}}>
+            <span style={{fontSize: 13, color: '#d1d5db', fontWeight: 600}}>行为序列项 #{idx + 1}</span>
+            <ListOpsCell>
+              <ListDeleteButton onClick={() => removeSeqItem(idx)} />
+            </ListOpsCell>
           </div>
           <div style={styles.row}>
             <label style={styles.label}>主体</label>
@@ -370,19 +323,31 @@ function BehaviorSequenceEditor({
           </div>
         </div>
       ))}
-      <button type="button" style={styles.btn} onClick={addSeqItem}>
-        + 添加行为
-      </button>
     </div>
   );
 }
 
-function EventFormContent({evt, editable, characters, gameRules, onUpdate}: EventFormProps) {
+function EventFormContent({evt, editable, characters, gameRules, linkedScenes, onUpdate}: EventFormProps) {
   if (!editable || !onUpdate) {
     return (
       <div style={{color: '#e8e8e8', fontSize: 14}}>
         <p style={{margin: '0 0 8px'}}><strong>ID：</strong>{evt.id}</p>
         <p style={{margin: '0 0 8px'}}><strong>名称：</strong>{evt.name}</p>
+        <div style={{margin: '0 0 12px'}}>
+          <strong>关联场景：</strong>
+          {!linkedScenes?.length ? (
+            <span style={{color: '#888'}}> 无</span>
+          ) : (
+            <ul style={{listStyle: 'none', padding: '6px 0 0', margin: 0}}>
+              {linkedScenes.map((scene) => (
+                <li key={scene.id} style={{marginBottom: 4, color: '#d0d0d0'}}>
+                  {scene.name}
+                  <span style={{marginLeft: 8, fontSize: 12, color: '#888'}}>{scene.id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {evt.description && (
           <p style={{margin: '0 0 8px'}}><strong>描述：</strong>{evt.description}</p>
         )}
@@ -508,6 +473,7 @@ async function saveEventsToPreset(events: unknown, gameId: string): Promise<{ ok
 async function preloadForEvents(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
   const apis: Array<{url: string; key: keyof StoryFramework}> = [
     {url: getEventsFetchUrl(gameId), key: 'events'},
+    {url: getScenesFetchUrl(gameId), key: 'scenes'},
     {url: getCharactersFetchUrl(gameId), key: 'characters'},
     {url: getRulesFetchUrl(gameId), key: 'gameRules'},
   ];
@@ -586,48 +552,38 @@ export function EventEditor({fw, updateFw}: {
 
   const characters = fw.characters ?? [];
   const gameRules = fw.gameRules ?? [];
+  const scenes = fw.scenes ?? [];
+
+  const linkedScenesForEvent = useMemo(() => {
+    const map = new Map<string, GameScene[]>();
+    for (const scene of scenes) {
+      for (const eventId of scene.eventIds ?? []) {
+        const list = map.get(eventId) ?? [];
+        list.push(scene);
+        map.set(eventId, list);
+      }
+    }
+    return map;
+  }, [scenes]);
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>事件</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加事件
-        </button>
+        <ListAddButton title="添加事件" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {events.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无事件，点击「添加事件」创建。</p>
-        )}
-        {events.map((evt, ei) => (
-          <div key={`evt-${ei}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ei)}
-              >
-                {evt.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {evt.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ei)} title="编辑">
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={() => removeEventWithAuth(ei)}
-                  title="删除"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={events.length}
+          emptyHint="暂无事件，点击 + 创建。"
+          getKey={(ei) => `evt-${ei}`}
+          getPrimary={(ei) => events[ei]!.name}
+          getMeta={(ei) => events[ei]!.id}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeEventWithAuth}
+        />
       </section>
 
       {detailIndex !== null && events[detailIndex] && (
@@ -642,6 +598,7 @@ export function EventEditor({fw, updateFw}: {
             editable={false}
             characters={characters}
             gameRules={gameRules}
+            linkedScenes={linkedScenesForEvent.get(events[detailIndex].id)}
           />
         </DetailEditModal>
       )}

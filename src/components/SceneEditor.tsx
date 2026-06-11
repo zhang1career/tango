@@ -2,9 +2,19 @@
  * 场景编辑界面
  */
 
-import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {getAIGCApiKey, getScenesFetchUrl, getMapsFetchUrl, getCharactersFetchUrl, getEventsFetchUrl, getItemsFetchUrl, getMetadataFetchUrl, getRulesFetchUrl, getFeaturesFetchUrl} from '@/config';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {getAIGCApiKey, getScenesFetchUrl, getRulesFetchUrl, getStoryFmFetchUrl} from '@/config';
 import {runGenerateAiBlock} from '@/services/scene-block-generation';
+import {saveStoryScenes} from '@/services/story-scenes-persist';
+import {
+  loadStoryFromGame,
+  lookupKeysForSceneEntry,
+  syncRoutingLinksForGame,
+} from '@/services/scene-routing-sync-service';
+import {collectRoutingStaleScenes} from '../utils/scene-routing-sync';
+import {getChapterAvailableSceneIds} from '../utils/chapter-scene';
+import {toPersistedFramework} from '../schema/story-framework';
+import {loadFrameworkWithListData, mergeRuntimeFrameworkListData} from '../services/framework-list-data';
 import type {AiBlockPriority, ScenePassageAiBlock} from '../schema/game-scene';
 import {useGameId} from '@/context/GameIdContext';
 import {useAuth} from '@/context/AuthContext';
@@ -20,10 +30,15 @@ import {defaultSceneImageSavePath} from '@/config/media-paths';
 import {BgmSynthesisField} from './ui/BgmSynthesisField';
 import {formatJsonCompact} from '../utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
+import {InlineSpinner} from './ui/InlineSpinner';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {ListAddButton, ListDeleteButton, ListOpsCell} from './ui/ListPrimitives';
+import {listBtnIcon} from '../styles/listStyles';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
+import {serializeStoryRulesBundle} from '../utils/parse-story-rules';
 import {
   AI_WORD_COUNT_MAX,
   AI_WORD_COUNT_MIN,
@@ -40,9 +55,16 @@ import {
 import {SceneRoutingFields} from './SceneRoutingFields';
 import {SingleSelectField} from './ui/SingleSelectField';
 import {MultiSelectField} from './ui/MultiSelectField';
-import {resolveSceneBackgroundMusic, sceneMediaDefaultsOnBranchFailureToggle} from '../utils/scene-media';
-import {normalizeFeaturesConfig} from '../utils/normalize-features';
-import type {FeaturesConfig} from '../schema/features';
+import {resolveSceneBackgroundMusic} from '../utils/scene-media';
+import {useNarrativeTruth} from '../context/NarrativeTruthContext';
+import {fetchStoryCanon, fetchStoryForeshadowing} from '@/utils/story-engine-files';
+import {EMPTY_STORY_CANON, normalizeStoryCanon, type StoryCanon} from '@/schema/story-canon';
+import {
+  EMPTY_STORY_FORESHADOWING,
+  normalizeStoryForeshadowing,
+  type StoryForeshadowing,
+} from '@/schema/story-foreshadowing';
+import {SceneNarrativePanel} from './SceneNarrativePanel';
 
 const collapsibleStyles: Record<string, React.CSSProperties> = {
   section: {marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6},
@@ -52,25 +74,67 @@ const collapsibleStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 8,
     cursor: 'pointer',
-    fontSize: 13,
-    color: '#bbb',
+    fontSize: 12,
+    color: '#9ca3af',
     userSelect: 'none',
   },
   title: {flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'},
   body: {paddingTop: 8},
 };
 
+function SaveIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+}
+
+function GenerateHammerIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', flexShrink: 0, ...style}}
+      aria-hidden
+    >
+      <path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9" />
+      <path d="m18 15 4-4" />
+      <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756l-.455.453" />
+    </svg>
+  );
+}
+
 function CollapsibleSection({
   title,
   expanded,
   onToggle,
-  rightAction,
+  headActions,
   children,
 }: {
   title: string;
   expanded: boolean;
   onToggle: () => void;
-  rightAction?: React.ReactNode;
+  headActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -80,13 +144,24 @@ function CollapsibleSection({
         onClick={onToggle}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && onToggle()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
       >
-        <span style={collapsibleStyles.title}>{title}</span>
-        <span style={{display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0}}>
-          {rightAction && <span onClick={(e) => e.stopPropagation()}>{rightAction}</span>}
-          <span>{expanded ? '▼' : '▶'}</span>
+        <span style={{display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0}}>
+          <span style={{flexShrink: 0}}>{expanded ? '▼' : '▶'}</span>
+          <span style={collapsibleStyles.title}>{title}</span>
         </span>
+        {headActions ? (
+          <ListOpsCell>
+            <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
+              {headActions}
+            </span>
+          </ListOpsCell>
+        ) : null}
       </div>
       {expanded && <div style={collapsibleStyles.body}>{children}</div>}
     </div>
@@ -123,37 +198,20 @@ function FieldRow({
 }
 
 async function saveScenesToPreset(scenes: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
-  if (import.meta.env.DEV) {
-    try {
-      const res = await fetch(getScenesFetchUrl(gameId), {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(scenes),
-      });
-      const json = (await res.json()) as { ok?: boolean; error?: string };
-      if (res.ok && json.ok) return {ok: true};
-      return {ok: false, error: json.error || `HTTP ${res.status}`};
-    } catch (e) {
-      return {ok: false, error: String(e)};
-    }
-  }
-  const blob = new Blob([formatJsonCompact(scenes)], {type: 'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'story-scenes.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  return {ok: true};
+  return saveStoryScenes(gameId, scenes);
 }
 
-async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
+async function saveRulesToPreset(fw: StoryFramework, gameId: string): Promise<{ ok: boolean; error?: string }> {
+  const payload = serializeStoryRulesBundle({
+    rules: fw.gameRules ?? [],
+    sceneBindings: fw.sceneBindings ?? [],
+  });
   if (import.meta.env.DEV) {
     try {
       const res = await fetch(getRulesFetchUrl(gameId), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: formatJsonCompact(rules),
+        body: formatJsonCompact(payload),
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (res.ok && json.ok) return {ok: true};
@@ -162,7 +220,7 @@ async function saveRulesToPreset(rules: unknown, gameId: string): Promise<{ ok: 
       return {ok: false, error: String(e)};
     }
   }
-  const blob = new Blob([formatJsonCompact(rules)], {type: 'application/json'});
+  const blob = new Blob([formatJsonCompact(payload)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -190,6 +248,12 @@ type SceneFormProps = {
   fw?: StoryFramework;
   onScenePatched?: (scene: GameScene) => void;
   onSaveScene?: () => void | Promise<void>;
+  routingStaleEntry?: import('../utils/scene-routing-sync').RoutingStaleEntry;
+  onSyncSceneRouting?: () => void | Promise<void>;
+  syncingSceneRouting?: boolean;
+  foreshadowing?: StoryForeshadowing;
+  canon?: StoryCanon;
+  allScenes?: GameScene[];
 };
 
 function parseLines(text: string): string[] | undefined {
@@ -214,22 +278,16 @@ function AiBlockFields({
   block,
   aiIndex,
   editable,
-  generating,
   sceneCharacterIds,
   characterOptions,
   onUpdate,
-  onGenerate,
-  onSave,
 }: {
   block: ScenePassageAiBlock;
   aiIndex: number;
   editable: boolean;
-  generating: boolean;
   sceneCharacterIds: string[];
   characterOptions: Array<{id: string; name: string}>;
   onUpdate?: (fn: (b: ScenePassageAiBlock) => ScenePassageAiBlock) => void;
-  onGenerate?: () => void;
-  onSave?: () => void | Promise<void>;
 }) {
   const patch = (p: Partial<ScenePassageAiBlock>) =>
     onUpdate?.((b) => ({...b, ...p}));
@@ -353,43 +411,14 @@ function AiBlockFields({
         />
       </FieldRow>
       <div style={styles.row}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            marginBottom: 6,
-          }}
-        >
-          <label style={{...styles.label, marginBottom: 0}}>generatedText</label>
-          {editable && (onGenerate || onSave) && (
-            <div style={{display: 'flex', gap: 8, flexShrink: 0}}>
-              {onGenerate && (
-                <button
-                  type="button"
-                  style={{...styles.btnSmall, opacity: generating ? 0.6 : 1}}
-                  disabled={generating || !block.summary?.trim()}
-                  onClick={onGenerate}
-                >
-                  {generating ? '生成中…' : '生成内容'}
-                </button>
-              )}
-              {onSave && (
-                <button type="button" style={styles.btnSmall} onClick={() => void onSave()}>
-                  保存
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        <label style={styles.label}>generatedText</label>
         {editable && onUpdate ? (
           <textarea
             value={block.generatedText ?? ''}
             onChange={(e) => patch({generatedText: e.target.value || undefined})}
             rows={8}
             style={{...styles.input, ...styles.textarea, minHeight: 160, whiteSpace: 'pre-wrap', lineHeight: 1.55}}
-            placeholder="（未生成，可手动编辑或点击「生成内容」；对白宜每句单独一行）"
+            placeholder="（未生成，可手动编辑或点击标题栏锤子图标生成；对白宜每句单独一行）"
           />
         ) : block.generatedText ? (
           <textarea
@@ -424,6 +453,12 @@ function SceneFormContent({
                             gameId: formGameId,
                             onScenePatched,
                             onSaveScene,
+                            routingStaleEntry,
+                            onSyncSceneRouting,
+                            syncingSceneRouting,
+                            foreshadowing,
+                            canon,
+                            allScenes,
                           }: SceneFormProps) {
   const linkedEventId = scene.eventIds?.[0];
   const linkedEventBgm = linkedEventId
@@ -542,6 +577,16 @@ function SceneFormContent({
         />
       </FieldRow>
 
+      {foreshadowing && canon && allScenes && (
+        <SceneNarrativePanel
+          sceneId={scene.id}
+          scenes={allScenes}
+          foreshadowing={foreshadowing}
+          canon={canon}
+          characterIds={characterIds}
+        />
+      )}
+
       {genError && <p style={{color: '#f88', fontSize: 13}}>{genError}</p>}
       {aiBlocks.map((block, aiIndex) => (
         <CollapsibleSection
@@ -549,20 +594,42 @@ function SceneFormContent({
           title={aiBlockCollapseTitle(block, aiIndex)}
           expanded={expandedAiBlocks.has(aiIndex)}
           onToggle={() => toggleAiBlock(aiIndex)}
-          rightAction={
+          headActions={
             editable && onUpdate ? (
-              <button
-                type="button"
-                style={{
-                  ...styles.btnIcon,
-                  ...(aiBlocks.length <= 1 ? {opacity: 0.45, cursor: 'not-allowed'} : {}),
-                }}
-                disabled={aiBlocks.length <= 1}
-                title={aiBlocks.length <= 1 ? '至少保留一个 AI 块' : '删除此 AI 块'}
-                onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
-              >
-                ×
-              </button>
+              <>
+                <button
+                  type="button"
+                  style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+                  disabled={generatingAiIndex === aiIndex || !block.summary?.trim()}
+                  title={
+                    generatingAiIndex === aiIndex
+                      ? '生成中…'
+                      : !block.summary?.trim()
+                        ? '请先填写 summary'
+                        : '生成内容'
+                  }
+                  onClick={() => void handleGenerateBlock(aiIndex)}
+                >
+                  {generatingAiIndex === aiIndex ? <InlineSpinner /> : <GenerateHammerIcon />}
+                </button>
+                {onSaveScene ? (
+                  <button
+                    type="button"
+                    style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+                    title="保存场景"
+                    onClick={() => void onSaveScene()}
+                  >
+                    <SaveIcon />
+                  </button>
+                ) : null}
+                <ListDeleteButton
+                  title="删除此 AI 块"
+                  confirmMessage={`确认删除「${aiBlockCollapseTitle(block, aiIndex)}」？`}
+                  disabled={aiBlocks.length <= 1}
+                  stopPropagation
+                  onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
+                />
+              </>
             ) : undefined
           }
         >
@@ -570,12 +637,9 @@ function SceneFormContent({
             block={block}
             aiIndex={aiIndex}
             editable={editable}
-            generating={generatingAiIndex === aiIndex}
             sceneCharacterIds={scene.characterIds ?? []}
             characterOptions={characterIds}
             onUpdate={onUpdate ? (fn) => onUpdate((s) => upsertAiBlock(s, aiIndex, fn)) : undefined}
-            onGenerate={() => void handleGenerateBlock(aiIndex)}
-            onSave={editable && onSaveScene ? () => onSaveScene() : undefined}
           />
         </CollapsibleSection>
       ))}
@@ -929,70 +993,53 @@ function SceneFormContent({
         placeholder="滚动消息"
       />
 
-      {fw ? (
-        <SceneRoutingFields fw={fw} scene={scene} editable={editable && !!onUpdate} onUpdate={onUpdate} />
-      ) : null}
-
-      <SingleSelectField
-        label="支线失败结局"
-        options={[
-          {id: 'yes', name: '是'},
-          {id: 'no', name: '否'},
-        ]}
-        value={scene.branchFailureEnding ? 'yes' : 'no'}
-        allowEmpty={false}
-        hint="选「是」且 BGM/配图为空时，汇编与运行将回落「功能」页的统一失败结局预设。"
-        readOnly={!editable || !onUpdate}
-        onChange={
-          onUpdate
-            ? (id) => {
-                const yes = id === 'yes';
-                onUpdate((s) => ({
-                  ...s,
-                  branchFailureEnding: yes,
-                  ...sceneMediaDefaultsOnBranchFailureToggle(),
-                }));
-              }
-            : undefined
-        }
-      />
-      {scene.branchFailureEnding ? (
-        <FieldRow
-          label="失败结局说明"
-          value={scene.branchFailureEndingText ?? ''}
-          editable={editable && !!onUpdate}
-        >
+      <FieldRow label="失败支线" value={scene.isFailure ? '是' : '否'} editable={editable && !!onUpdate}>
+        <label style={{display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#d1d5db'}}>
           <input
-            value={scene.branchFailureEndingText ?? ''}
+            type="checkbox"
+            checked={!!scene.isFailure}
             onChange={(e) =>
               onUpdate!((s) => ({
                 ...s,
-                branchFailureEndingText: e.target.value || undefined,
+                isFailure: e.target.checked || undefined,
+                ...(!e.target.checked
+                  ? {failureEnding: undefined, branchEndingText: undefined}
+                  : {}),
               }))
             }
-            style={styles.input}
-            placeholder="汇编模板占位符 {{failureEnding}}"
           />
-        </FieldRow>
+          本场景为失败支线结局
+        </label>
+      </FieldRow>
+      {scene.isFailure ? (
+        <>
+          <FieldRow label="failureEnding" value={scene.failureEnding ?? ''} editable={editable && !!onUpdate}>
+            <input
+              value={scene.failureEnding ?? ''}
+              onChange={(e) => onUpdate!((s) => ({...s, failureEnding: e.target.value || undefined}))}
+              style={styles.input}
+              placeholder="失败结局描述（套入功能面板模板）"
+            />
+          </FieldRow>
+          <FieldRow label="branchEndingText" value={scene.branchEndingText ?? ''} editable={editable && !!onUpdate}>
+            <textarea
+              value={scene.branchEndingText ?? ''}
+              onChange={(e) => onUpdate!((s) => ({...s, branchEndingText: e.target.value || undefined}))}
+              style={{...styles.input, minHeight: 64}}
+              placeholder="可选，覆盖末端附加文案"
+            />
+          </FieldRow>
+        </>
       ) : null}
 
-      <FieldRow
-        label="主线出口文案"
-        value={scene.mainlineLinkDisplayText ?? ''}
-        editable={editable && !!onUpdate}
-      >
-        <input
-          value={scene.mainlineLinkDisplayText ?? ''}
-          onChange={(e) =>
-            onUpdate!((s) => ({
-              ...s,
-              mainlineLinkDisplayText: e.target.value.trim() || undefined,
-            }))
-          }
-          style={styles.input}
-          placeholder="同章有后续主线且配置了 branchOptions 时必填，如：誓行严禁"
+      {fw ? (
+        <SceneRoutingFields
+          fw={fw}
+          scene={scene}
+          routingStale={!!routingStaleEntry}
+          expectedLinks={routingStaleEntry?.expectedLinks}
         />
-      </FieldRow>
+      ) : null}
 
       <MediaUrlField
         label="开场动画"
@@ -1000,6 +1047,20 @@ function SceneFormContent({
         onChange={(v) => onUpdate?.((s) => ({...s, openingAnimation: v}))}
         editable={editable && !!onUpdate}
       />
+      <FieldRow
+        label="过场动画提示词"
+        value={scene.openingAnimationPrompt ?? ''}
+        editable={editable && !!onUpdate}
+      >
+        <textarea
+          value={scene.openingAnimationPrompt ?? ''}
+          onChange={(e) =>
+            onUpdate?.((s) => ({...s, openingAnimationPrompt: e.target.value || undefined}))
+          }
+          style={{...styles.input, minHeight: 64}}
+          placeholder="创作过场动画时的参考提示词（章节保存时由 AI 根据跨章过渡生成）"
+        />
+      </FieldRow>
       <MediaUrlField
         label="配图"
         value={scene.images?.[0] ?? ''}
@@ -1038,76 +1099,90 @@ function SceneFormContent({
   );
 }
 
-async function preloadForScenes(updateFw: (fn: (d: StoryFramework) => StoryFramework) => void, gameId: string) {
-  const apis: Array<{ url: string; key: keyof StoryFramework }> = [
-    {url: getMapsFetchUrl(gameId), key: 'maps'},
-    {url: getCharactersFetchUrl(gameId), key: 'characters'},
-    {url: getEventsFetchUrl(gameId), key: 'events'},
-    {url: getItemsFetchUrl(gameId), key: 'items'},
-    {url: getMetadataFetchUrl(gameId), key: 'metadata'},
-    {url: getRulesFetchUrl(gameId), key: 'gameRules'},
-  ];
-  for (const {url, key} of apis) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        const parsed = key === 'metadata'
-          ? (data?.characterAttributes ? {characterAttributes: data.characterAttributes} : null)
-          : (Array.isArray(data) ? data : null);
-        if (parsed) {
-          const value = key === 'gameRules' ? normalizeGameRules(parsed as GameRule[]) : parsed;
-          updateFw((d) => ({...d, [key]: value}));
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-  try {
-    const res = await fetch(getFeaturesFetchUrl(gameId));
-    if (res.ok) {
-      const data = (await res.json()) as FeaturesConfig;
-      updateFw((d) => ({...d, features: normalizeFeaturesConfig(data)}));
-    }
-  } catch {
-    // ignore
-  }
-}
-
 export function SceneEditor({
                               fw,
                               updateFw,
+                              initialSceneId,
+                              onInitialSceneConsumed,
                             }: {
   fw: StoryFramework;
   updateFw: (fn: (d: StoryFramework) => StoryFramework) => void;
+  initialSceneId?: string | null;
+  onInitialSceneConsumed?: () => void;
 }) {
   const {gameId} = useGameId();
   const {checkAuthForSave} = useAuth();
-  useEffect(() => {
-    preloadForScenes(updateFw, gameId);
-  }, [updateFw, gameId]);
+  const {revision: narrativeTruthRevision} = useNarrativeTruth();
+  const [foreshadowing, setForeshadowing] = useState<StoryForeshadowing>(EMPTY_STORY_FORESHADOWING);
+  const [canon, setCanon] = useState<StoryCanon>(EMPTY_STORY_CANON);
+  const [parsedStory, setParsedStory] = useState<Awaited<ReturnType<typeof loadStoryFromGame>>>(null);
+  const [syncingSceneRoutingId, setSyncingSceneRoutingId] = useState<string | null>(null);
+
+  const reloadParsedStory = useCallback(async () => {
+    try {
+      setParsedStory(await loadStoryFromGame(gameId));
+    } catch {
+      setParsedStory(null);
+    }
+  }, [gameId]);
 
   useEffect(() => {
-    fetch(getRulesFetchUrl(gameId))
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => {
-        const list = Array.isArray(data) ? normalizeGameRules(data as GameRule[]) : [];
-        if (list.length) updateFw((d) => ({...d, gameRules: list}));
-      })
-      .catch(() => {});
-  }, [updateFw, gameId]);
+    void reloadParsedStory();
+  }, [reloadParsedStory]);
 
   useEffect(() => {
-    fetch(getScenesFetchUrl(gameId))
-      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
-      .then((data) => {
-        const list = Array.isArray(data) ? data : [];
-        updateFw((d) => ({...d, scenes: list as GameScene[]}));
-      })
-      .catch(() => {
+    void (async () => {
+      const [fs, c] = await Promise.all([fetchStoryForeshadowing(gameId), fetchStoryCanon(gameId)]);
+      setForeshadowing(normalizeStoryForeshadowing(fs));
+      setCanon(normalizeStoryCanon(c));
+    })();
+  }, [gameId, narrativeTruthRevision]);
+
+  const persistFrameworkRouting = useCallback(
+    async (nextFw: StoryFramework) => {
+      const res = await fetch(getStoryFmFetchUrl(gameId), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: formatJsonCompact(toPersistedFramework(nextFw)),
       });
-  }, [updateFw, gameId]);
+      const data = (await res.json().catch(() => ({}))) as {ok?: boolean; error?: string};
+      if (!res.ok || !data.ok) throw new Error(data.error || `保存剧情框架失败: ${res.status}`);
+    },
+    [gameId]
+  );
+
+  const syncSceneRouting = useCallback(
+    async (sceneId: string) => {
+      setSyncingSceneRoutingId(sceneId);
+      try {
+        const loaded = await loadFrameworkWithListData(gameId);
+        if (!loaded) throw new Error('无法加载 story-fm，已取消路由同步以免覆盖章节数据');
+        const fwForSync = mergeRuntimeFrameworkListData(loaded, fw);
+        const result = await syncRoutingLinksForGame(gameId, fwForSync, [sceneId]);
+        const nextFw = mergeRuntimeFrameworkListData(result.fw, fw);
+        updateFw(() => nextFw);
+        await persistFrameworkRouting(result.fw);
+        await reloadParsedStory();
+      } finally {
+        setSyncingSceneRoutingId(null);
+      }
+    },
+    [fw, gameId, updateFw, persistFrameworkRouting, reloadParsedStory]
+  );
+
+  const routingStaleForScene = useCallback(
+    (sceneId: string) => {
+      if (!parsedStory) return undefined;
+      try {
+        return collectRoutingStaleScenes(fw, parsedStory, (chi, sid) =>
+          lookupKeysForSceneEntry(fw, chi, sid)
+        ).find((s) => s.sceneId === sceneId);
+      } catch {
+        return undefined;
+      }
+    },
+    [fw, parsedStory]
+  );
 
   const scenes = fw.scenes ?? [];
   const setScenes = (fn: (s: GameScene[]) => GameScene[]) =>
@@ -1125,6 +1200,19 @@ export function SceneEditor({
     name: e.name,
     backgroundMusic: e.backgroundMusic,
   }));
+  const eventNameMap = useMemo(() => new Map(eventIds.map((e) => [e.id, e.name])), [eventIds]);
+  const sceneChapterTitles = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const ch of fw.chapters ?? []) {
+      const title = ch.title || ch.id;
+      for (const sid of getChapterAvailableSceneIds(ch)) {
+        const list = map.get(sid) ?? [];
+        list.push(title);
+        map.set(sid, list);
+      }
+    }
+    return map;
+  }, [fw.chapters]);
   const gameRules = useMemo(() => normalizeGameRules(fw.gameRules ?? []), [fw.gameRules]);
   const ruleIds = gameRules.map((r) => ({id: r.id, name: r.name}));
 
@@ -1136,6 +1224,14 @@ export function SceneEditor({
     name: '新场景',
     passageBlocks: defaultPassageBlocks(),
   }));
+
+  useEffect(() => {
+    if (!initialSceneId) return;
+    const index = scenes.findIndex((s) => s.id === initialSceneId);
+    if (index < 0) return;
+    setEditIndex(index);
+    onInitialSceneConsumed?.();
+  }, [initialSceneId, scenes, onInitialSceneConsumed]);
 
   const openAddModal = () => {
     setNewScene({id: `scene_${Date.now()}`, name: '新场景', passageBlocks: defaultPassageBlocks()});
@@ -1173,7 +1269,18 @@ export function SceneEditor({
     const normalized = scenes.map((s) => ({...s, messages: normalizeStringList(s.messages)}));
     setScenes(() => normalized);
     const result = await saveScenesToPreset(normalized, gameId);
-    if (!result.ok) alert(`保存失败: ${result.error}`);
+    if (!result.ok) {
+      alert(`保存失败: ${result.error}`);
+      return;
+    }
+    const editingScene = editIndex != null ? normalized[editIndex] : undefined;
+    if (editingScene) {
+      try {
+        await syncSceneRouting(editingScene.id);
+      } catch (e) {
+        alert(`场景已保存，但路由链接同步失败：${(e as Error).message}`);
+      }
+    }
   };
 
   const updateRule = (ruleId: string, fn: (r: GameRule) => GameRule) =>
@@ -1188,7 +1295,7 @@ export function SceneEditor({
     });
 
   const saveRules = async () => {
-    const result = await saveRulesToPreset(fw.gameRules ?? [], gameId);
+    const result = await saveRulesToPreset(fw, gameId);
     if (!result.ok) alert(`保存规则失败: ${result.error}`);
   };
 
@@ -1211,39 +1318,33 @@ export function SceneEditor({
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>场景</h1>
-        <button type="button" style={styles.btn} onClick={openAddModal}>
-          + 添加场景
-        </button>
+        <ListAddButton title="添加场景" onClick={openAddModal} />
       </header>
 
       <section style={styles.section}>
-        {scenes.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无场景，点击「添加场景」创建。</p>
-        )}
-
-        {scenes.map((scene, ci) => (
-          <div key={`scene-${ci}`} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setDetailIndex(ci)}
-              >
-                {scene.name}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {scene.id}
-                </span>
-              </span>
-              <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
-                <button type="button" style={styles.btnIcon} onClick={() => setEditIndex(ci)} title="编辑">
-                  ✎
-                </button>
-                <button type="button" style={styles.btnIcon} onClick={() => removeSceneWithAuth(ci)} title="删除">
-                  ×
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+        <EntityFlatList
+          count={scenes.length}
+          emptyHint="暂无场景，点击 + 创建。"
+          getKey={(ci) => `scene-${ci}`}
+          getPrimary={(ci) => scenes[ci]!.name}
+          getMeta={(ci) => scenes[ci]!.id}
+          extraColumns={[
+            {
+              label: '章节',
+              getValue: (ci) => (sceneChapterTitles.get(scenes[ci]!.id) ?? []).join('，'),
+            },
+            {
+              label: '事件',
+              getValue: (ci) =>
+                (scenes[ci]!.eventIds ?? [])
+                  .map((id) => eventNameMap.get(id) ?? id)
+                  .join('、'),
+            },
+          ]}
+          onOpen={setDetailIndex}
+          onEdit={setEditIndex}
+          onDelete={removeSceneWithAuth}
+        />
       </section>
 
       {detailIndex !== null && scenes[detailIndex] && (
@@ -1264,6 +1365,11 @@ export function SceneEditor({
             ruleIds={ruleIds}
             gameRules={gameRules}
             collapsibleDefaultExpanded
+            fw={fw}
+            routingStaleEntry={routingStaleForScene(scenes[detailIndex].id)}
+            foreshadowing={foreshadowing}
+            canon={canon}
+            allScenes={scenes}
           />
         </DetailEditModal>
       )}
@@ -1290,6 +1396,12 @@ export function SceneEditor({
             onSaveRules={() => checkAuthForSave(saveRules)}
             onUpdate={(fn) => updateScene(editIndex, fn)}
             onSaveScene={() => checkAuthForSave(persistScenes)}
+            routingStaleEntry={routingStaleForScene(scenes[editIndex].id)}
+            onSyncSceneRouting={() => checkAuthForSave(() => syncSceneRouting(scenes[editIndex].id))}
+            syncingSceneRouting={syncingSceneRoutingId === scenes[editIndex].id}
+            foreshadowing={foreshadowing}
+            canon={canon}
+            allScenes={scenes}
             {...narrativeFormProps}
           />
         </DetailEditModal>

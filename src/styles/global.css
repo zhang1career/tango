@@ -1,0 +1,58 @@
+/**
+ * 全局暗色主题基线：body 与标题默认继承可读文字色，减少局部漏设 color。
+ */
+:root {
+  --app-bg: #12121f;
+  --app-surface: #1e1e32;
+  --app-surface-raised: #252540;
+  --app-text: #e8e8e8;
+  --app-text-secondary: #d0d0d0;
+  --app-text-muted: #a0a0b0;
+  --app-text-dim: #888;
+  --app-label: #a78bfa;
+  --app-border: #333;
+  --app-border-strong: #444;
+}
+
+html,
+body,
+#root {
+  background-color: var(--app-bg);
+  color: var(--app-text);
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: inherit;
+}
+
+select,
+input,
+textarea,
+button {
+  font: inherit;
+}
+
+select option {
+  background-color: var(--app-surface-raised);
+  color: var(--app-text);
+}
+
+@keyframes tango-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tango-inline-spinner {
+  animation: tango-spin 0.75s linear infinite;
+}

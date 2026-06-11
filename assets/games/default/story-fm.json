@@ -11,14 +11,42 @@
       "id": "ch0",
       "title": "序章：河阴的余晖",
       "theme": "宿命与讽刺",
-      "sceneEntries": [
-        {"sceneId":"scene_0001","ruleIds":["rule_0001"]},
-        {"sceneId":"scene_0002","ruleIds":["rule_0001"]},
-        {"sceneId":"scene_0003","ruleIds":["rule_0001"]},
-        {"sceneId":"scene_0004","ruleIds":["rule_0001"]}
+      "availableSceneIds": [
+        "scene_0001",
+        "scene_0002",
+        "scene_0003",
+        "scene_0004"
       ],
-      "startMapNodeId": "xuanyangmen",
-      "endMapNodeId": "guozixue"
+      "startSceneId": "scene_0001",
+      "endSceneIds": [
+        "scene_0004"
+      ],
+      "narrativeEdges": [
+        {
+          "id": "e_scene_0001_to_scene_0002_main",
+          "fromSceneId": "scene_0001",
+          "toSceneId": "scene_0002",
+          "displayText": "继续"
+        },
+        {
+          "id": "e_scene_0002_to_scene_0003_main",
+          "fromSceneId": "scene_0002",
+          "toSceneId": "scene_0003",
+          "displayText": "继续"
+        },
+        {
+          "id": "e_scene_0003_to_scene_0004_main",
+          "fromSceneId": "scene_0003",
+          "toSceneId": "scene_0004",
+          "displayText": "继续"
+        }
+      ],
+      "transitions": [],
+      "sceneMeta": {
+        "scene_0001": {
+          "compiledTextFingerprint": "bd5ae132"
+        }
+      }
     }
   ],
   "initialState": {

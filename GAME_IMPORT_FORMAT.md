@@ -166,87 +166,122 @@ lzx-twine-import.zip
 - zip 中识别出的游戏目录名必须合法：`^[a-zA-Z0-9_-]+$`。
 - 导入会覆盖（重建）目标目录，请先备份。
 
-## 章节、地图节点与场景（推荐模型）
+## 章节、场景池与路由图（当前模型）
 
-运行时玩家**不看到「章节」标题**，只会经历地图节点与分页后的 passage。`story-fm.json > chapters[]` 与编辑器「剧情 → 章节」主要用于**治理与编排**；推荐按**地图节点**拆章，减轻文字墙并便于分块编辑。
+运行时玩家**不看到「章节」标题**，只会经历地图节点与分页后的 passage。`story-fm.json > chapters[]` 与编辑器「章节」页负责**编排场景池、叙事图与跨章过渡**；场景正文与媒体仍在 `story-scenes.json`。
 
 ### 三层关系
 
 | 层级 | 文件 | 含义 |
 |------|------|------|
-| **章节** | `story-fm.json > chapters[]` | 一段可游玩的叙事单元；由 `startMapNodeId` / `endMapNodeId` 界定在地图上的起止 |
-| **场景** | `story-scenes.json` + `chapters[].sceneEntries[]` | 章内叙事节拍；顺序由 `sceneEntries` 决定 |
-| **正文块** | `scene.passageBlocks[]` | 导出时拼接为单个 passage，再按现有规则自动分页（`.p_100`…） |
+| **章节** | `story-fm.json > chapters[]` | 场景池 + 叙事有向图 + 跨章过渡；不直接存正文 |
+| **场景** | `story-scenes.json` + `chapters[].availableSceneIds[]` | 叙事内容单元（`passageBlocks`、地图落点、媒体等） |
+| **正文块** | `scene.passageBlocks[]` | 汇编后写入 `story.tw` 单个 passage，再自动分页（`.p_100`…） |
 
-### 章节与地图节点（`story-fm.json`）
+### 章节结构（`story-fm.json > chapters[]`）
 
-- **推荐**：**一个地图节点对应一个章节**（含子节点如 `n02a`、`n03a` 亦**独立成章**）。
-- `chapters[].title`：**仅编辑/治理用**，建议与 `story-maps.json > nodes[].name` **完全一致**（如 `福州·夜雨`）。**不要**写「第一章：寒门与入局」等长标题，避免编辑菜单噪音。
-- `startMapNodeId`：本章剧情**发生地**（玩家在本章内主要停留的节点）。
-- `endMapNodeId`：沿地图主路径，玩家**离开本章时**抵达的下一节点（与 `story-maps.json` 中 `startMapNodeId -> endMapNodeId` 的前进边一致）。
-- **MUST**：若同时填写 `startMapNodeId` 与 `endMapNodeId`，二者**不得相同**（章内须能表达「从发生地前往下一节点」；这与**相邻章**共用边界节点无关，见下节跨章规则）。
-- **MUST NOT**：在 `story-maps.json` 中增加 `from === to` 的自环边；地图边只表示节点之间的**前进**，不用于「同节点拆章」。
-- `sceneEntries[]`：仅含 `sceneId`、可选 `ruleIds`、可选 `compiledFingerprint`。**不要**再填写已废弃的 `wordCount` 字段。
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | 是 | 章节 id |
+| `title` | 是 | 编辑/治理用标题（建议简短，可与地图节点 name 对齐） |
+| `availableSceneIds` | 是 | 本章场景池（**无序**） |
+| `narrativeGraph` | 否 | `sceneId → true` 表示叙事图（勾选）；省略表示开放世界 |
+| `startSceneId` | 否 | 叙事态推荐入口 |
+| ~~`endSceneIds`~~ | — | **已废弃**：由叙事图程序推断章末场景 |
+| `narrativeEdges` | 否 | 叙事态有向图边（见下节） |
+| `transitions` | 否 | 跨章跳转（`fromSceneId` → `toChapterId`；落地取目标章 `startSceneId`） |
+| `sceneMeta` | 否 | 每场景 `compiledFingerprint` / `routingFingerprint`（编辑器维护） |
+| `graphLayout` | 否 | 叙事图编辑器节点坐标 |
 
-`sceneEntries` 示例：
+**已废弃（勿在新 zip 中使用）**：`sceneEntries`、`sceneModes`、`narrativeRouting`、`openWorld`、`startMapNodeId`、`endMapNodeId`；`story-scenes.json` 中的 `branchOptions`、`mainlineLinkDisplayText`、`branchFailureEnding*`。请用 `node scripts/migrate-chapter-graph.mjs [gameId]` 迁移旧数据。
+
+章节示例：
 
 ```json
 {
   "id": "ch_n02a",
   "title": "京师·宣南",
   "theme": "宣南消寒",
-  "startMapNodeId": "n02a",
-  "endMapNodeId": "n03",
-  "sceneEntries": [
-    {"sceneId": "scene_1015"},
-    {"sceneId": "scene_1015_b1"}
+  "availableSceneIds": ["scene_1015", "scene_1015_b1", "scene_1015_b2"],
+  "narrativeGraph": {
+    "scene_1015": true
+  },
+  "startSceneId": "scene_1015",
+  "narrativeEdges": [
+    {
+      "id": "e_main_continue",
+      "fromSceneId": "scene_1015",
+      "toSceneId": "scene_1015_b1",
+      "displayText": "仓促认罪，换取速断",
+      "condition": "$will < 40",
+      "isBranch": true
+    },
+    {
+      "id": "e_branch_return",
+      "fromSceneId": "scene_1015_b1",
+      "toSceneId": "scene_1015",
+      "displayText": "回到会审前夜",
+      "isBranch": true
+    }
+  ],
+  "transitions": [
+    {
+      "fromSceneId": "scene_1015",
+      "toChapterId": "ch_n03",
+      "displayText": "前往江南"
+    }
   ]
 }
 ```
 
-### 场景与地图节点（`story-scenes.json`）
+### 场景准入规则（`story-rules.json`）
 
-- `scene.mapNodeId`：场景叙事落点；**不强制**与章内其他 scene 相同，但实践中**一般与**该章 `startMapNodeId` **一致**。
-- 章内主线顺序以 `sceneEntries` 为准，**不要**用地图边表达章内「继续」。
-- **支线 scene**（如 `scene_*_b1`）仍收录在**同一章**的 `sceneEntries` 中（规则/链接不同，见「支线剧情选项」）。
+规则定义与章节×场景绑定**分离**存储：
 
-### 运行时主线跳转规则（重要）
+```json
+{
+  "rules": [{"id": "rule_0001", "name": "onlyOnce", "judgeExpr": "..."}],
+  "sceneBindings": [
+    {"chapterId": "ch_n02a", "sceneId": "scene_1015_b1", "ruleIds": ["rule_0001"]}
+  ]
+}
+```
 
-- 章内主线：按 `sceneEntries` 顺序生成「继续」链接。
-- 跨章：当本章配置了 `endMapNodeId`、下一章配置了 `startMapNodeId` 时：
-  - 下一章须存在 `mapNodeId === next.startMapNodeId` 的**主线**场景（作为跨章入口）；
-  - 在**本章最后一个主线场景** passage 上生成「前往 …」链接（**不要求**该场景 `mapNodeId === endMapNodeId`）。
-  - **地图连边（用于跨章链接文案与条件，禁止自环）**：
-    - 若 `endMapNodeId === next.startMapNodeId`（**推荐**：按「一节点一章」拆分时，上一章终点即下一章起点，如 `ch_n01` 的 `end=n02` 与 `ch_n02` 的 `start=n02`）：`story-maps.json` 须存在 **`本章 startMapNodeId -> 本章 endMapNodeId`** 的前进边（例：`n01 -> n02`「入京」）；**不要**要求 `n02 -> n02` 自环边。
-    - 若 `endMapNodeId !== next.startMapNodeId`（一章横跨多节点、或边界未对齐时）：须存在 **`endMapNodeId -> next.startMapNodeId`** 的前进边。
+编译准入条件 = `sceneBindings` 规则 ∧ `scene.conditions` ∧ `scene.ruleIds`（均按 and 合并）。
 
-### 默认游戏中的实际映射（`assets/games/default`）
+### 场景与地图（`story-scenes.json`）
 
-- `story-scenes.json` 中各场景绑定具体 `mapNodeId`（如 `xuanyangmen`）。
-- `story-maps.json` 的边表示地图主路径上的**前进**；编译器用其校验跨章「前往」链接并取 `displayText`/`condition`，**不**决定章内 `sceneEntries` 顺序，**不**使用自环边。
+- `scene.mapNodeId`：场景叙事落点，须在 `story-maps.json > nodes[].id` 中存在。
+- 场景**不再**自带路由字段；章内/跨章链接均由章节图 + 地图边编译生成。
+- 开放世界态出口：`mapNodeId` 相同或地图**一步**可达的、且在本章 `availableSceneIds` 内的场景。
 
-### 上游录入建议（避免常见坑）
+### 运行时双轨路由（重要）
 
-- `scene.mapNodeId` 必须能在 `story-maps.json > nodes[].id` 中找到；
-- `passageBlocks` 结构见下文（**首块 raw，其余 ai**）；
-- 跨章须配置 `endMapNodeId`、`next.startMapNodeId`，并满足上节「地图连边」规则（边界重合时用 `本章 start -> 本章 end`，勿造自环边）；
-- 支线与地图边解耦，按 `branchOptions` 录入。
+编译器为每个场景预生成**叙事**与**开放世界**两套链接，由运行时变量 `$chapterMode_{chapterId}` 门控：
 
-### `game_export` 迁移示例（由上游重导，勿手改仓库 json）
+| 连通态 | 出口来源 | 门控条件 |
+|--------|----------|----------|
+| `narrative` | `narrativeEdges[]` | `$chapterMode_{chapterId} == "narrative"` |
+| `open_world` | 地图一步边 ∩ 本章场景池 | `$chapterMode_{chapterId} == "open_world"` |
 
-旧版将多节点（如 `n01`–`n04`）合在一章 `ch0` 中。推荐拆为**每节点一章**，例如：
+- 进入场景时，passage metadata 的 `set` 块写入 `$activeChapterId` 与 `$chapterMode_{chapterId}`（`narrativeGraph[toSceneId] === true` 时为 `narrative`，否则 `open_world`）。
+- **跨章**：仅通过 `transitions[]`（从 `fromSceneId` 起跳至 `toChapterId`）；落地场景取目标章 `startSceneId`；链接附带 `set.activeChapterId` 与目标章模式。
+- **支线**：在 `narrativeEdges[]` 边字段设 `isBranch: true` 表示结构上的支线；是否失败结局由目标场景 `isFailure`、`failureEnding`、`branchEndingText` 定义，统一媒体/模板见 `story-features.failureBranch`。
 
-| 新章节 id（示例） | title（= 节点 name） | start | end | sceneEntries（示意） |
-|------------------|----------------------|-------|-----|----------------------|
-| `ch_n01` | 福州·夜雨 | n01 | n02 | scene_1000 |
-| `ch_n02` | 京师·入局 | n02 | n02a | scene_1010 |
-| `ch_n02a` | 京师·宣南 | n02a | n03 | scene_1015, scene_1015_b1（若有支线） |
-| `ch_n03` | 江南·林青天 | n03 | n03a | scene_1020 |
-| … | … | … | … | … |
+### 上游录入建议
 
-相邻章边界示例：`ch_n01` 的 `end=n02` 与 `ch_n02` 的 `start=n02` **共用节点**；跨章链接取地图边 **`n01 -> n02`**（非 `n02 -> n02`）。
+- 主线场景在 `narrativeGraph` 中设为 `true`，用 `narrativeEdges` 串联。
+- 支线/分歧场景不设 `narrativeGraph`（开放世界），或用叙事边连回主线。
+- 跨章在 `transitions` 显式声明，勿依赖旧版 `startMapNodeId`/`endMapNodeId` 自动推断。
+- 池内叙事图不可达的场景，须在开放世界态下经地图可达（否则编译报错）。
 
-同一节点上多个主线 scene（如 `n06` 上多场戏）仍放在**同一章**的 `sceneEntries` 中按序排列。拆章后请删除 `sceneEntries[].wordCount`，并将 `passageBlocks` 整理为 **raw + 多个 ai**（见下节）。
+### 旧版迁移
+
+```bash
+node scripts/migrate-chapter-graph.mjs [gameId]   # 省略 gameId 则处理 assets/games 下全部目录
+```
+
+迁移将：`sceneEntries` 顺序 → 主线 `narrativeEdges`；`branchOptions` → 支线边（`isBranch`）+ 场景失败字段；`sceneEntries[].ruleIds` → `story-rules.json > sceneBindings`。
 
 ### `story-scenes.json` 里 `passageBlocks` 字段规范（必填）
 
@@ -254,8 +289,10 @@ lzx-twine-import.zip
 - **结构（硬性）**：
   - **有且仅有一个** leading `type: "raw"`，且必须为数组**首项**（定调 / 史料）；
   - 其余项**必须**为 `type: "ai"`（**禁止** `raw-ai-raw` 交替；旧式中间 raw 应拆成独立 scene 或合并进 leading raw）。
-- **生成与存储（叙事引擎两阶段）**：
-  1. **生成内容**（「场景」菜单，每 AI 块）：按块规格调用叙事引擎，正文写入 `ai.generatedText`（存于 `story-scenes.json`）。
+- **生成与存储（三阶段，DEV）**：
+  1. **场景分析**（「章节」页）：按 `story-fm > chapters[].narrativeTasks[sceneId]` 拆解 AI 块结构，写入 `story-scenes.json`（不含 `generatedText`）。
+  2. **汇编**（「章节」页锤子）：按 AI 块规格生成 `generatedText` 并写入 `story.tw`。
+  3. **高级编辑**（「场景」页）：可手工调整 AI 块字段与正文。
   2. **汇编内容**（「剧情」菜单，每场景条目）：将 `raw` + 各块 `generatedText` 连缀（必要时插入过渡句），写入 `story.tw`，再按 `VITE_PASSAGE_PAGE_CHARS_MIN/MAX` 自动分页。
   - **块级规格**存于 JSON；**汇编后的成稿**在 `story.tw`；**不在** JSON 重复存整段 passage 全文。
 - `ai` 块字段（`hints` 已废弃，请用结构化字段）：
@@ -309,6 +346,46 @@ lzx-twine-import.zip
 - **旁白与描写优先**：默认输出以叙述者视角的旁白 + 描写性文字为主；不在正文中堆砌背景百科。
 - **对白宜少**：完整问答、可反复触发的角色台词应写入 `story-characters.json > behaviorLibrary`（玩家通过人物弹窗阅读）。passage 正文**仅保留**推进本场叙事所必需的少量引语（通常 0–2 轮，每轮一问一答）。
 
+#### 叙事标注用语（项目约定与通用对照）
+
+下列标签常见于 AI 块 `summary` / `emotion` / `constraints`，或 `story-fm > chapters[].narrativeTasks`（场景任务，仅用于分析拆解，**不参与**正文生成 prompt）。
+
+| 项目用语 | 通用/行业概念 | 典型位置 | 含义与写法 |
+|----------|---------------|----------|------------|
+| **序幕** | **序幕**（prologue）、**框叙事**（frame narrative） | 序章/开篇场景标题、`summary` 前缀 | 在主线开始前用一场高浓度戏确立全篇主题与气压。全书仅少数场景；章节/场景命名可用「××序幕」（如 `序章·潮声序幕`）。 |
+| **闪回序幕** | **闪回序幕** / in medias res 开场 | `intent` / `summary` 前缀，常以 `闪回序幕：` 开头 | **先呈现时间线后段的高潮抉择，再倒叙**进入正文起点。与「序幕」区别：必须写明时间跳转；例：`闪回序幕：虎门价值抉择……；推进：誓行严禁后倒叙——`。**勿**再使用已废弃的「书框」。 |
+| **定场** | **建场** / **定场戏**（establishing beat） | `summary` 或 `intent` 首段，常以 `定场：` 开头 | 交代时地、氛围、局面与体感，建立本场起点气压。**先定场，再推进**。 |
+| **推进** | **情节推进** / **戏剧推进**（plot beat） | 同场后续 AI 块，或 `intent` 中段，常以 `推进：` 开头 | 本场要完成的因果、情绪后果或悬念，把叙事往前推一步。 |
+| **收束** | **收束节拍** / **场内尾声**（scene coda） | 同场末块或 `intent` 末段，常以 `收束：` 开头 | 本场落点、余波或过渡；长线场景可在末块收束情绪，避免悬而不决。 |
+| **曲线：…** | **张力档位** / **情绪强度标记**（dramatic intensity tag） | `emotion`、`constraints` | 标注本块在全书**戏剧强度曲线**上的位置，如 `曲线：序章·峰`、`曲线：经世·中`、`曲线：全剧峰`。写法为项目编码，**非**行业统一格式，但语义等同「这一场该写多紧」。 |
+| **曲线：支线** | **失败支线**的情绪寄存 | 支线场景 AI 块 | 与 `narrativeEdges[]` 中 `isBranch` 失败支线配套：宜短促、白描、突出因果，勿写成主线高潮。 |
+| **dramaticArc** | **章级戏剧弧线**（chapter arc） | `story-fm.json > chapters[].narrativeGoal` / `theme` | 章的起止张力走向。与块级 `曲线：…` 配合，粒度更粗。 |
+| **簇**（如禁烟簇、战罚簇） | **情节簇** / **戏剧段落**（story cluster） | `曲线：` 或大纲命名 | 将多章多场景归为同一戏剧段落，便于统一加压或落谷。 |
+| **定调** | **史料定调** / **leading raw** | `passageBlocks[0]`（`type: "raw"`） | 本场首块史料或引文，**原样展示**；后接 AI 块不得复述其中台词与事实。见下文「`raw` 与 `ai` 分工」。 |
+| **白描** | **白描**（中国文学常用语） | `style`、`constraints` | 以具象画面与动作承载情绪，少用议论与抒情滥调；为本项目推荐文风，非 Tango 独有术语。 |
+
+**单场景多 AI 块推荐节奏**（与上表对应）：
+
+```text
+定场：……        ← 第 1 个 ai 块（或 intent 首段）
+推进：……        ← 中间 ai 块
+推进：……        ← 可选
+收束：……        ← 末块（可选）
+```
+
+**序幕 vs 闪回序幕（选用规则）**
+
+| 选用 | 条件 |
+|------|------|
+| **序幕** | 开篇定调、框定主题；命名（章/场景/心迹标题）；不一定写明倒叙 |
+| **闪回序幕** | `summary` / `intent` 前缀；本场位于后段时间线，正文随后**倒叙**至更早主线 |
+
+**其他不宜当作行业通识的写法**
+
+- `leading raw`：引擎/文档用语，指 passage 首块 `raw`；对作者可说「史料定调块」。
+- `narrativeTasks`：章内按 `sceneId` 存储的场景任务正文；供「章节 → 分析」拆解为 AI 块，**不**进入正文生成 prompt。
+- `CONTENT_BIBLE`、`曲线簇` 等：若出现在 `story-fm.json` 备注，属该项目世界观/强度总表，**非** Tango  schema 字段。
+
 #### `raw` 与 `ai` 分工（避免重复扩写）
 
 - `type: "raw"` 的 `text` 会原样展示；若其中已含史料摘录、殿议台词、诏书原句等，**同一信息不得**在相邻 `ai` 块中复述、摘抄或同义改写。
@@ -343,7 +420,7 @@ lzx-twine-import.zip
 
 #### 篇幅（单块 `wordCount`，轻量互动默认）
 
-- **仅**在 `passageBlocks[].wordCount`（`ai` 块）配置上限；**不要**在 `sceneEntries[]` 写场景总字数（已废弃）。
+- **仅**在 `passageBlocks[].wordCount`（`ai` 块）配置上限。
 - 推荐区间（汉字，含标点，**上限**）：
 
 | 块角色 | 建议 `wordCount` |
@@ -369,115 +446,128 @@ lzx-twine-import.zip
 - [ ] **AI 块摘要质量**：每个 `type: "ai"` 块都包含明确 `summary`（避免空泛描述），并符合「AI 正文文风与对白约定」。
 - [ ] **节点引用有效性**：所有 `scene.mapNodeId` 都能在 `story-maps.json > nodes[].id` 中找到。
 - [ ] **连通可达性**：希望互相可跳转的场景，其 `mapNodeId` 在 `story-maps.json > edges` 中存在连通关系。
-- [ ] **章节收录一致性**：`story-fm.json > chapters[].sceneEntries[].sceneId` 已包含需要参与该章节导航的场景。
-- [ ] **章节末场景显式可识别**：每章最后一个主线场景必须在 `sceneEntries` 顺序中明确可识别（建议作为该章 `sceneEntries` 末项），避免跨章边界校验歧义。
-- [ ] **同节点多场景**：同一 `mapNodeId` 上可有多个主线 scene，应放在**同一章**的 `sceneEntries` 中按序排列。
-- [ ] **章节起止节点**：每章 `startMapNodeId` ≠ `endMapNodeId`；`title` 与地图节点 `name` 一致，无「第×章」长前缀。
-- [ ] **跨章地图边**：若 `本章 end === 下一章 start`，须有 `本章 start -> 本章 end` 边；否则须有 `本章 end -> 下一章 start` 边；**禁止**自环 `from === to`。
+- [ ] **章节场景池**：`chapters[].availableSceneIds` 已包含本章所有参与路由的场景 id。
+- [ ] **叙事图完整**：主线 `narrative` 场景经 `narrativeEdges` 可达；`startSceneId` 已配置；章末场景由图推断（无叙事出边，或入口仅有支线出边）。
+- [ ] **跨章过渡**：章间跳转写在 `transitions[]`；`fromSceneId` 为推断章末场景之一；`toChapterId` 有效且目标章已配置 `startSceneId`。
+- [ ] **场景绑定**：章内准入规则写在 `story-rules.json > sceneBindings`，非 `sceneEntries[].ruleIds`。
+- [ ] **开放世界兜底**：叙事图不可达的池内场景，在 `open_world` 态下须地图一步可达。
 - [ ] **passageBlocks 结构**：每 scene 首块为唯一 `raw`，其余为 `ai`；每个 `ai` 块填写 `wordCount`（160–220）及结构化文风字段（无 `hints`）。
 
 ### 叙事引擎真相层（可选 JSON，推荐随游戏维护）
 
 | 文件 | 导入 zip | 说明 |
 |------|----------|------|
-| `story-outline.json` | 可选 | 滚动大纲：`chapters[].narrativeGoal`、`beats[]`，与 `story-fm` 章节 id 对齐 |
-| `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`（`planned` / `planted` / `resolved`） |
+| `story-outline.json` | 可选 | **仅叙事进度**：`progressAnchorChapterId`、`rollingHorizonChapters`、`archivedChapterIds`；章级内容与场景任务在 `story-fm.json` |
+| `story-foreshadowing.json` | 可选 | 伏笔池：`threads[]`；见下文字段说明 |
 | `story-canon.json` | 可选 | 叙事状态快照：`scenes[sceneId].facts` / `characterStates` 等 |
 | `story-generation-traces.json` | **不得** | DEV 本地生成轨迹，由编辑器追加，**不要**放入上游 zip |
 
-`story-journal.json`（心迹）**不参与**叙事生成 context，避免汇总剧透。
+#### `story-foreshadowing.json`（伏笔池）
 
-编辑器「叙事引擎」菜单可查看/编辑大纲、伏笔、Canon；「生成轨迹」只读。
+顶层结构：`{ "threads": [ … ] }`。每条伏笔描述一条可追踪的叙事线索（埋设 → 回收）。
 
-迁移旧 `hints`：`node scripts/migrate-passage-blocks.mjs [gameId]`
-
-### 支线剧情选项（`story-scenes.json`，用于失败结局分支）
-
-为降低上游与编译链路复杂度，支线剧情统一建模在 `story-scenes.json > scene.branchOptions[]`（仅主线根场景填写）。
-
-#### 设计约束（硬性）
-
-- 支线剧情**只在当前章节内生效**，不产生“进入下一章/返回上一章”线路。
-- 说明：`story.tw` 中可能出现“继续”链接（长文本自动分页子页），这属于同一场景内容分页机制，不属于地图导航或章节跳转分支。
-- 支线剧情语义是“导向某种失败结局”，且支线末端必须返回其根主线场景。
-- 单个支线仅允许 `1-2` 个支线场景；支线场景之间单向连通，不可成环。
-- 支线剧情与地图边解耦：支线链接不通过 `story-maps.json > edges` 生成。
-- 支线场景 **MUST** 与其根主线场景使用相同 `mapNodeId`（视为同一地点内的分歧）。
-- 作为支线场景的 `scene.ruleIds` **MUST** 包含 `rule_0001`（`onlyOnce`）。
-- 若某主线场景配置了 `branchOptions`，该主线场景的规则（`chapter.sceneEntries[].ruleIds` 与 `scene.ruleIds`）**MUST NOT** 包含 `rule_0001`。
-
-#### 字段定义（`story-scenes.json > scene.branchOptions[]`）
+**`threads[]` 字段**
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `id` | 是 | 分支选项 id（建议全局唯一） |
-| `displayText` | 是 | 主线场景中展示的入口文案 |
-| `failureEnding` | 是 | 该分支对应的失败结局标识/描述（供验收与内容治理） |
-| `branchSceneIds` | 是 | 支线路径场景 id 数组，长度必须为 `1` 或 `2` |
-| `condition` | 否 | 主线 -> 支线入口可见条件表达式 |
-| `continueDisplayTexts` | 否 | 支线内部“继续”文案数组；长度应为 `branchSceneIds.length - 1` |
-| `returnDisplayText` | 否 | 末端支线场景返回主线根场景的文案（默认 `返回主线`） |
+| `id` | 是 | 稳定标识，如 `thread_family_precept` |
+| `title` | 是 | 人读标题；列表展示用，亦作无 `anchors` 时的自动埋设回退匹配 |
+| `status` | 是 | 生命周期：`planned`（待埋设）/ `planted`（已埋设）/ `resolved`（已回收） |
+| `setup` | 否 | 埋设要点：读者应注意到什么、用什么意象或道具 |
+| `payoff` | 否 | 回收要点：须兑现什么信息或情绪 |
+| `plantedIn` | 否 | 实际埋设位置，见下表 `ForeshadowPlantRef` |
+| `resolvedIn` | 否 | 实际回收位置，结构同 `plantedIn` |
+| `anchors` | 否 | 字符串数组；生成块 `anchors` 与之模糊匹配时，可将 `planned` 自动标为 `planted` |
+| `priority` | 否 | 整数 `1`（高）– `3`（低）；未设视为 `2`。未回收伏笔注入生成 context 时按升序优先（最多 12 条） |
+| `payoffBy` | 否 | 须于此场景前完成回收，填 `scene id`（如 `scene_1090`） |
+| `payoffTarget` | 否 | 预期回收说明或目标场景 id；可写多个场景，供作者备忘 |
+| `notes` | 否 | 维护者备注（可选） |
 
-#### 示例（位于 `story-scenes.json`）
+**`plantedIn` / `resolvedIn`（`ForeshadowPlantRef`）**
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `sceneId` | 是 | 场景 id |
+| `blockIndex` | 否 | passage block 序号（0 起）；省略表示仅精确到场景 |
+
+**生成与编辑器行为**
+
+- DEV 叙事生成将 `status !== 'resolved'` 的伏笔（经 `priority` 排序后取前 12 条）注入 `openForeshadowing` context。
+- 生成完成后，若 AI 块的 `anchors` 与某条 `planned` 伏笔的 `anchors[]`（或回退为 `title`）命中，则自动写入 `plantedIn` 并将 `status` 改为 `planted`。
+- 编辑器「章节」页可编辑 `narrativeGoal` / `theme` / `narrativeTasks`，只读展示相关伏笔与 Canon；伏笔池 / Canon 仍存于独立 JSON，由汇编后自动更新 Canon / 伏笔 `planted` 状态。
+
+**示例（单条）**
 
 ```json
 {
-  "id": "scene_0100",
-  "name": "会审前夜",
-  "passageBlocks": [{"type": "ai", "summary": "主线正文略"}],
-  "branchOptions": [
-    {
-      "id": "br_confess",
-      "displayText": "仓促认罪，换取速断",
-      "failureEnding": "名节尽失，民望崩塌",
-      "condition": "$will < 40",
-      "branchSceneIds": ["scene_0100_b1"],
-      "returnDisplayText": "回到会审前夜"
-    },
-    {
-      "id": "br_private_deal",
-      "displayText": "私下交易，暂避锋芒",
-      "failureEnding": "短期脱身，长期失控",
-      "branchSceneIds": ["scene_0100_b2", "scene_0100_b3"],
-      "continueDisplayTexts": ["继续掩盖"],
-      "returnDisplayText": "硬着头皮回到主线"
-    }
-  ]
+  "id": "thread_family_precept",
+  "title": "父训十无益",
+  "status": "resolved",
+  "setup": "寒门夜雨府君考问「十无益」，开局持 family_precept。",
+  "payoff": "东归与林公祠收束，与左营司巷序幕互文。",
+  "plantedIn": {"sceneId": "scene_1000"},
+  "resolvedIn": {"sceneId": "scene_1150"},
+  "anchors": ["十无益", "父训", "family_precept"],
+  "priority": 1,
+  "payoffBy": "scene_1150",
+  "payoffTarget": "scene_1120、scene_1150"
 }
 ```
 
-配套约束示例（支线场景必须 onlyOnce）：
+`story-journal.json`（心迹）**不参与**叙事生成 context，避免汇总剧透。
+
+编辑器「日志」菜单可查看生成轨迹（DEV only，不进 zip）。
+
+`story-fm.json > chapters[]` 叙事字段（推荐随章维护）：
+
+| 字段 | 说明 |
+|------|------|
+| `theme` | 章主题 |
+| `narrativeGoal` | 本章叙事目标；参与分析与正文生成的章级 context |
+| `narrativeTasks` | `{ [sceneId]: "任务正文" }`；按章存储，同 scene 在不同章可有不同任务；仅用于「分析」拆解 AI 块 |
+
+迁移旧 `hints`：`node scripts/migrate-passage-blocks.mjs [gameId]`
+
+### 支线（`narrativeEdges[]` + 场景）
+
+章节只定义场景顺序与结构；是否失败结局由场景定义。不再使用 `story-scenes.json > branchOptions`。
+
+#### 设计约束（硬性）
+
+- 支线**只在当前章节内**生效；跨章仅走 `transitions[]`。
+- 支线边须设 `isBranch: true`；入口边可填 `condition`。
+- 支线末端须有一条返回主线的 `narrativeEdge`（`isBranch: true`）。
+- 支线场景 **MUST** 与根场景同 `mapNodeId`（同一地点分歧）。
+- 支线场景 **MUST** 在 `story-rules.json > sceneBindings` 或 `scene.ruleIds` 中包含 `rule_0001`（`onlyOnce`）。
+- 主线根场景 **MUST NOT** 使用 `rule_0001`。
+
+#### 叙事边字段（支线）
+
+| 字段 | 说明 |
+|------|------|
+| `displayText` | 链接文案 |
+| `condition` | 可见条件（与目标场景准入 and 合并） |
+| `isBranch` | `true` 表示支线边（结构） |
+
+#### 场景字段（失败）
+
+| 字段 | 说明 |
+|------|------|
+| `isFailure` | `true` 表示失败支线结局场景 |
+| `failureEnding` | 失败结局描述（模板占位符） |
+| `branchEndingText` | 可选，覆盖末端附加文案 |
+
+#### 编译行为
+
+- `isFailure` 场景可套用 `story-features.json > failureBranch` 统一媒体与模板。
+- `isFailure` 且为支线末端的场景 metadata 含 `branchTerminal: true`。
+- 开放世界态下，失败支线场景默认不生成地图导航出口（避免与支线语义冲突）。
+
+#### 失败结局模板（`story-features.json`）
 
 ```json
 {
-  "id": "scene_0100_b2",
-  "name": "密室交易",
-  "passageBlocks": [{"type": "ai", "summary": "失败分支正文略"}],
-  "ruleIds": ["rule_0001"]
-}
-```
-
-#### 从 `*.json` 到 `story.tw` 的编译规则
-
-- 编译器会把 `branchOptions` 翻译为 passage 间链接：
-  - 主线根场景 -> `branchSceneIds[0]`（文案=`displayText`，条件=`condition` 与目标场景准入条件按 `and` 合并）
-  - 若 `branchSceneIds` 有第 2 个场景：第 1 个支线场景 -> 第 2 个支线场景（文案取 `continueDisplayTexts[0]` 或默认 `继续`）
-  - 末端支线场景 -> 主线根场景（文案取 `returnDisplayText` 或默认 `返回主线`）
-- 作为支线场景的 passage，默认不再从 `map.edges` 自动生成导航链接（避免与支线约束冲突）。
-- 若章节终点场景恰好是支线场景，编译器不会为其注入跨章“前往下一章”链接。
-- 支线末端场景会自动附加“失败结局模板文案”（由 `failureEnding` 填充），并可套用统一失败结局媒体预设（见下文 `story-features.json`）。
-- 任一约束不满足（例如：`branchSceneIds` 超过 2、支线场景缺少 `rule_0001`、主线根场景使用了 `rule_0001`）时，编译会报错并中止。
-
-#### 失败结局模板与统一媒体预设（`story-features.json`）
-
-可选在 `story-features.json` 提供 `branchFailureEnding` 配置，让所有支线失败结局使用统一背景图/BGM，同时保留每个分支自定义失败文案。
-
-```json
-{
-  "battle": {
-    "backgroundMusic": "media/bgm/battle_theme.mp3"
-  },
-  "branchFailureEnding": {
+  "failureBranch": {
     "backgroundMusic": "media/bgm/failure_common.mp3",
     "images": ["media/bg/failure_common.png"],
     "template": "【失败结局】{{failureEnding}}\n\n你暂时偏离了主线目标。"
@@ -485,20 +575,14 @@ lzx-twine-import.zip
 }
 ```
 
-模板占位符：
+模板占位符：`{{failureEnding}}`（取自场景 `failureEnding` / `branchEndingText`）、`{{rootSceneName}}`、`{{branchOptionId}}`（入边 `id`）。
 
-- `{{failureEnding}}`：取自 `branchOptions[].failureEnding`
-- `{{rootSceneName}}`：根主线场景名
-- `{{branchOptionId}}`：分支选项 id
+#### 上游自检（支线维度）
 
-#### 上游交付前自检（支线维度）
-
-- [ ] 每个 `branchOptions[].branchSceneIds` 仅包含当前章节已收录的场景 id。
-- [ ] 每个 `branchOptions[].branchSceneIds` 长度为 `1-2` 且无重复 id。
-- [ ] 每个支线场景与根主线场景使用同一 `mapNodeId`。
-- [ ] 每个支线场景 `scene.ruleIds` 均包含 `rule_0001`。
-- [ ] 配置 `branchOptions` 的主线根场景，未在 `scene.ruleIds` 或 `sceneEntries[].ruleIds` 中使用 `rule_0001`。
-- [ ] 支线末端已设置可回到根主线场景（显式或使用默认 `returnDisplayText`）。
+- [ ] 支线路径场景均在 `availableSceneIds` 内。
+- [ ] 支线场景与根场景 `mapNodeId` 一致。
+- [ ] 支线场景含 `rule_0001`；主线根场景不含 `rule_0001`。
+- [ ] 每条支线路径有返回主线的 `narrativeEdge`。
 
 ## 对话集（人物互动）可识别格式
 
@@ -914,7 +998,7 @@ lzx-twine-import.zip
 
 ### 上游自检补充（篇幅维度）
 
-- [ ] 每个 `ai` 块已填 `wordCount`（160–220）；`sceneEntries` 中**无**废弃字段 `wordCount`。
+- [ ] 每个 `ai` 块已填 `wordCount`（160–220）。
 - [ ] 每 scene 仅一个 leading `raw`，无 `raw-ai-raw` 交替。
 - [ ] 部署环境分页阈值为 160/220（或与目标体验一致）。
 - [ ] 抽检 3 个场景导出正文：无连续超长无换行段；单页约 1 情绪点 + 1 信息点。

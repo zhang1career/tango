@@ -4,6 +4,7 @@ import { resolve, dirname, normalize } from 'node:path';
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import {CUSTOM_MEDIA_FS_DIR, GENERATED_MEDIA_FS_DIR} from './src/config/media-paths';
 import { formatJsonCompact } from './src/utils/json-format';
+import { applyResourcePatch } from './src/utils/json-patch';
 import { bundleStoryTwForProd } from './src/utils/bundle-game-for-prod';
 import {applyBgmVolumeUpdates, normalizeBgmVolumesMap, parseBgmMixVolume} from './src/utils/bgm-volumes';
 import {
@@ -362,7 +363,7 @@ export default defineConfig(({ mode }) => {
                 }
                 if (resource === 'story-outline') {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ version: '1', rollingHorizonChapters: 5, chapters: [] }));
+                  res.end(JSON.stringify({ version: '1', rollingHorizonChapters: 5, archivedChapterIds: [] }));
                   return;
                 }
                 if (resource === 'story-foreshadowing') {
@@ -394,6 +395,44 @@ export default defineConfig(({ mode }) => {
               res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
             }
           };
+
+          if (req.method === 'PATCH') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const parsed = JSON.parse(body);
+                mkdirSync(resolve(cwd, gamesBasePath, gameId), { recursive: true });
+                const writePath = gameAssetPath(gameId, resource);
+                let current: unknown = { version: '1', rollingHorizonChapters: 5, archivedChapterIds: [] };
+                if (existsSync(writePath)) {
+                  try {
+                    current = JSON.parse(readFileSync(writePath, 'utf-8'));
+                  } catch {
+                    current = resource === 'story-scenes' ? [] : current;
+                  }
+                } else if (resource === 'story-scenes') {
+                  current = [];
+                } else if (resource === 'story-foreshadowing') {
+                  current = { threads: [] };
+                } else if (resource === 'story-canon') {
+                  current = { version: '1', scenes: {} };
+                }
+                const next = applyResourcePatch(
+                  resource as 'story-fm' | 'story-outline' | 'story-scenes' | 'story-foreshadowing' | 'story-canon',
+                  current,
+                  parsed
+                );
+                writeFileSync(writePath, formatJsonCompact(next), 'utf-8');
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true }));
+              } catch (e) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: String((e as Error).message) }));
+              }
+            });
+            return;
+          }
 
           if (req.method !== 'GET') {
             if (isGameContent) {

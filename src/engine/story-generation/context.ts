@@ -1,5 +1,5 @@
-import type {StoryFramework} from '@/schema/story-framework';
-import type {FrameworkChapter} from '@/schema/story-framework';
+import type {StoryFramework, FrameworkChapter} from '@/schema/story-framework';
+import {getChapterAvailableSceneIds} from '@/utils/chapter-scene';
 import type {GameScene, ScenePassageAiBlock} from '@/schema/game-scene';
 import type {StoryGenerationBundle, SceneChapterContext, TextPolicyBundle} from './types';
 import {
@@ -9,6 +9,10 @@ import {
   resolveAiBlockCharacterIds,
 } from '@/utils/passage-blocks';
 import {buildSceneRawContextForAiBlock} from './raw-context';
+import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
+import {canonSceneForContext} from '@/schema/story-canon';
+import {foreshadowThreadsForSceneContext} from '@/schema/story-foreshadowing';
+import {buildPriorCanonInjection} from './prior-canon';
 
 const BUDGET = {
   maxChapterEvents: 8,
@@ -34,10 +38,9 @@ export function findChapterForScene(
 ): {chapter: FrameworkChapter; chapterIndex: number; sceneIndex: number} | null {
   for (let chi = 0; chi < (fw.chapters ?? []).length; chi++) {
     const ch = fw.chapters[chi];
-    const entries = ch.sceneEntries ?? [];
-    for (let si = 0; si < entries.length; si++) {
-      if (entries[si].sceneId === sceneId) return {chapter: ch, chapterIndex: chi, sceneIndex: si};
-    }
+    const pool = getChapterAvailableSceneIds(ch);
+    const si = pool.indexOf(sceneId);
+    if (si >= 0) return {chapter: ch, chapterIndex: chi, sceneIndex: si};
   }
   return null;
 }
@@ -67,10 +70,10 @@ export function buildGenerationContextPayload(
   const {fw, outline, foreshadowing, canon, policy} = bundle;
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
   const ch = fw.chapters[chapter.chapterIndex];
-  const entries = ch.sceneEntries ?? [];
-  const prevSummaries = entries.slice(0, chapter.sceneIndex).slice(-BUDGET.maxPreviousSceneSummaries).map((e) => {
-    const s = sceneMap.get(e.sceneId);
-    return {sceneId: e.sceneId, summary: s ? truncate(sceneSummary(s), 180) : ''};
+  const pool = getChapterAvailableSceneIds(ch);
+  const prevSummaries = pool.slice(0, chapter.sceneIndex).slice(-BUDGET.maxPreviousSceneSummaries).map((sid) => {
+    const s = sceneMap.get(sid);
+    return {sceneId: sid, summary: s ? truncate(sceneSummary(s), 180) : ''};
   });
 
   const blocks = getScenePassageBlocks(scene);
@@ -80,13 +83,14 @@ export function buildGenerationContextPayload(
     if (b.type === 'ai' && b.generatedText?.trim()) priorGenerated.push(truncate(b.generatedText, 200));
   }
 
-  const outlineChapter = outline.chapters.find((c) => c.chapterId === chapter.chapterId);
-  const openThreads = foreshadowing.threads.filter((t) => t.status !== 'resolved').slice(0, 12);
-  const canonScene = canon.scenes[scene.id];
+  const rollingOutline = buildRollingOutlineGenerationContext(fw, outline, chapter.chapterId);
+  const openThreads = foreshadowThreadsForSceneContext(foreshadowing.threads, scene.id);
+  const canonForScene = canonSceneForContext(canon, scene.id);
+  const priorCanon = buildPriorCanonInjection(fw, canon, chapter.chapterIndex, chapter.sceneIndex);
 
   const chapterEventIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
+  for (const sid of pool) {
+    const s = sceneMap.get(sid);
     for (const id of s?.eventIds ?? []) chapterEventIds.add(id);
   }
   const chapterEvents = (fw.events ?? [])
@@ -95,8 +99,8 @@ export function buildGenerationContextPayload(
     .map((e) => ({id: e.id, name: e.name, description: e.description ? truncate(e.description, 160) : undefined}));
 
   const chapterCharIds = new Set<string>();
-  for (const e of entries) {
-    const s = sceneMap.get(e.sceneId);
+  for (const sid of pool) {
+    const s = sceneMap.get(sid);
     for (const id of s?.characterIds ?? []) chapterCharIds.add(id);
   }
   const sceneCharIds = new Set((scene.characterIds ?? []).filter(Boolean));
@@ -135,9 +139,10 @@ export function buildGenerationContextPayload(
         ? scene.stateActions.give
         : [scene.stateActions.give]
       : undefined,
-    outlineChapter,
-    openForeshadowing: openThreads,
-    canonForScene: canonScene,
+    rollingOutline,
+    openForeshadowing: openThreads.length ? openThreads : undefined,
+    canonForScene,
+    priorCanon,
     priorGeneratedInScene: priorGenerated.length ? priorGenerated : undefined,
     priorGeneratedWarning:
       priorGenerated.length < passageBlockIndex - 1

@@ -13,8 +13,10 @@ export interface CanonCharacterState {
 
 export interface CanonSceneState {
   lastUpdatedAt?: string;
+  /** 本场结局的浓缩陈述，供后续场次快速接续 */
+  summary?: string;
   characterStates?: Record<string, CanonCharacterState>;
-  /** 本场结束后仍为真的客观事实 */
+  /** 本场结束后仍可核验的客观事实（事件、决定、道具、关系、时空落点） */
   facts?: string[];
   openQuestions?: string[];
 }
@@ -29,6 +31,25 @@ export const EMPTY_STORY_CANON: StoryCanon = {
   version: STORY_CANON_VERSION,
   scenes: {},
 };
+
+/** 场景页展示与 AI 块生成：本场 Canon 是否有可注入内容 */
+export function hasCanonSceneContent(state: CanonSceneState): boolean {
+  return !!(
+    state.summary?.trim() ||
+    (state.facts ?? []).length ||
+    (state.openQuestions ?? []).length ||
+    Object.keys(state.characterStates ?? {}).length
+  );
+}
+
+/** 场景页展示与 AI 块生成共用的本场 Canon（无内容时返回 undefined） */
+export function canonSceneForContext(
+  canon: StoryCanon,
+  sceneId: string
+): CanonSceneState | undefined {
+  const state = canon.scenes?.[sceneId];
+  return state && hasCanonSceneContent(state) ? state : undefined;
+}
 
 export function normalizeStoryCanon(raw: unknown): StoryCanon {
   if (!raw || typeof raw !== 'object') return {...EMPTY_STORY_CANON};
@@ -52,6 +73,7 @@ export function normalizeStoryCanon(raw: unknown): StoryCanon {
       }
       scenes[sid] = {
         lastUpdatedAt: typeof v.lastUpdatedAt === 'string' ? v.lastUpdatedAt : undefined,
+        summary: typeof v.summary === 'string' && v.summary.trim() ? v.summary.trim() : undefined,
         characterStates: Object.keys(characterStates).length ? characterStates : undefined,
         facts: Array.isArray(v.facts) ? v.facts.map(String) : undefined,
         openQuestions: Array.isArray(v.openQuestions) ? v.openQuestions.map(String) : undefined,

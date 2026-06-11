@@ -8,7 +8,9 @@ export type GenerationTraceKind =
   | 'audit'
   | 'generate_block'
   | 'assemble_scene'
-  | 'canon_settle';
+  | 'canon_settle'
+  | 'decompose_scene'
+  | 'transition_prompt';
 
 export interface GenerationTracePhase {
   name: string;

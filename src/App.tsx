@@ -7,6 +7,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {GameScreen} from './components/GameScreen';
 import {FrameworkEditor} from './components/FrameworkEditor';
+import {ChapterEditor} from './components/ChapterEditor';
 import {MapEditor} from './components/MapEditor';
 import {CharacterEditor} from './components/CharacterEditor';
 import {EventEditor} from './components/EventEditor';
@@ -15,20 +16,21 @@ import {ItemsEditorPage} from './components/ItemsEditorPage';
 import {SceneEditor} from './components/SceneEditor';
 import {RuleEditor} from './components/RuleEditor';
 import {JournalEditor} from './components/JournalEditor';
-import {NarrativeEngineEditor} from './components/NarrativeEngineEditor';
+import {GenerationLogEditor} from './components/GenerationLogEditor';
 import {FeaturePanelEditor} from './components/FeaturePanelEditor';
 import {NotificationToast} from './components/NotificationToast';
 import {LoginPage} from './components/LoginPage';
 import {useGameId} from './context/GameIdContext';
 import {useNotification} from './context/NotificationContext';
 import {AuthProvider, useAuth} from './context/AuthContext';
+import {NarrativeTruthProvider} from './context/NarrativeTruthContext';
 import {getAppMode, getContentPath, getGameContentUrl, getStoryFmFetchUrl, toFetchUrl, DEFAULT_GAME_ID} from './config';
-import {fromPersistedFramework, migrateFramework} from './schema/story-framework';
+import {loadFrameworkWithListData} from './services/framework-list-data';
 import type {StoryFramework} from './schema/story-framework';
 
 const DEFAULT_FRAMEWORK: StoryFramework = {
   title: '未命名故事',
-  chapters: [{id: 'ch0', title: '第一章', sceneEntries: []}],
+  chapters: [{id: 'ch0', title: '第一章', availableSceneIds: [], narrativeEdges: [], transitions: []}],
 };
 
 const isProd = getAppMode() === 'prod';
@@ -122,7 +124,8 @@ async function fetchContentForGame(gameId: string, pathOverride?: string): Promi
 export default function App() {
   const {gameId, setGameId, gameIds} = useGameId();
   const {addNotification} = useNotification();
-  const [mode, setMode] = useState<'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata'>('game');
+  const [mode, setMode] = useState<'game' | 'timeline' | 'chapters' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'logs' | 'rules' | 'features' | 'metadata'>('game');
+  const [pendingSceneId, setPendingSceneId] = useState<string | null>(null);
   const [fw, setFw] = useState<StoryFramework>(DEFAULT_FRAMEWORK);
   const updateFw = useCallback((fn: (d: StoryFramework) => StoryFramework) => {
     setFw((prev) => fn(prev));
@@ -130,24 +133,13 @@ export default function App() {
 
   const loadStoryFm = useCallback(
     async (targetGameId: string) => {
-      const url = getStoryFmFetchUrl(targetGameId);
       try {
-        const res = await fetch(url);
-        if (!res.ok) {
-          if (res.status === 404) {
-            addNotification('error', `剧情文件不存在：${targetGameId}/story-fm.json`);
-          } else {
-            addNotification('error', `加载失败: ${res.status}`);
-          }
+        const loaded = await loadFrameworkWithListData(targetGameId);
+        if (!loaded) {
+          addNotification('error', `剧情文件不存在：${targetGameId}/story-fm.json`);
           return;
         }
-        const parsed = (await res.json()) as Record<string, unknown>;
-        if (!parsed.title) parsed.title = '未命名故事';
-        if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
-          parsed.chapters = [{id: 'ch0', title: '第一章', sceneEntries: []}];
-        }
-        migrateFramework(parsed as unknown as StoryFramework);
-        updateFw(() => fromPersistedFramework(parsed));
+        updateFw(() => loaded);
         setGameId(targetGameId);
       } catch (e) {
         addNotification('error', (e as Error).message || '加载剧情失败');
@@ -157,8 +149,8 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (mode === 'timeline') loadStoryFm(gameId);
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps -- load on timeline enter only
+    if (mode === 'timeline' || mode === 'chapters' || mode === 'scenes') loadStoryFm(gameId);
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps -- load story-fm when editor needs chapter graph
 
   const fetchContent = useCallback(
     (path?: string) => fetchContentForGame(gameId, path),
@@ -179,25 +171,31 @@ export default function App() {
       getReturnTo={() => ({ mode, gameId })}
       onUnauthorized={() => addNotification('error', '未授权操作')}
     >
-      <AppBody
-        mode={mode}
-        setMode={setMode}
-        gameId={gameId}
-        gameIds={gameIds}
-        handleGameSelect={handleGameSelect}
-        setGameId={setGameId}
-        fw={fw}
-        updateFw={updateFw}
-        fetchContent={fetchContent}
-        loadStoryFm={loadStoryFm}
-      />
+      <NarrativeTruthProvider>
+        <AppBody
+          mode={mode}
+          setMode={setMode}
+          gameId={gameId}
+          gameIds={gameIds}
+          handleGameSelect={handleGameSelect}
+          setGameId={setGameId}
+          fw={fw}
+          updateFw={updateFw}
+          fetchContent={fetchContent}
+          loadStoryFm={loadStoryFm}
+          pendingSceneId={pendingSceneId}
+          setPendingSceneId={setPendingSceneId}
+        />
+      </NarrativeTruthProvider>
     </AuthProvider>
   );
 }
 
 type AppBodyProps = {
   mode: string;
-  setMode: (m: 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata') => void;
+  setMode: (m: ModeType) => void;
+  pendingSceneId: string | null;
+  setPendingSceneId: (id: string | null) => void;
   gameId: string;
   gameIds: string[];
   handleGameSelect: (e: React.ChangeEvent<HTMLSelectElement>) => void;
@@ -208,7 +206,7 @@ type AppBodyProps = {
   loadStoryFm: (targetGameId: string) => Promise<void>;
 };
 
-type ModeType = 'game' | 'timeline' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'narrative' | 'rules' | 'features' | 'metadata';
+type ModeType = 'game' | 'timeline' | 'chapters' | 'scenes' | 'map' | 'characters' | 'events' | 'items' | 'journal' | 'logs' | 'rules' | 'features' | 'metadata';
 
 function AppBody({
   mode,
@@ -221,8 +219,11 @@ function AppBody({
   updateFw,
   fetchContent,
   loadStoryFm,
+  pendingSceneId,
+  setPendingSceneId,
 }: AppBodyProps) {
   const {user, returnTo, clearReturnTo, login} = useAuth();
+  const clearPendingSceneId = useCallback(() => setPendingSceneId(null), [setPendingSceneId]);
   const [audioMuted, setAudioMuted] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('tango.audioMuted') === '1';
@@ -273,6 +274,13 @@ function AppBody({
             </button>
             <button
               type="button"
+              style={{...navStyles.tab, ...(mode === 'chapters' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('chapters')}
+            >
+              章节
+            </button>
+            <button
+              type="button"
               style={{...navStyles.tab, ...(mode === 'scenes' ? navStyles.tabActive : {})}}
               onClick={() => setMode('scenes')}
             >
@@ -315,10 +323,10 @@ function AppBody({
             </button>
             <button
               type="button"
-              style={{...navStyles.tab, ...(mode === 'narrative' ? navStyles.tabActive : {})}}
-              onClick={() => setMode('narrative')}
+              style={{...navStyles.tab, ...(mode === 'logs' ? navStyles.tabActive : {})}}
+              onClick={() => setMode('logs')}
             >
-              叙事引擎
+              日志
             </button>
             <button
               type="button"
@@ -383,8 +391,22 @@ function AppBody({
         <GameScreen fetchContent={fetchContent} audioMuted={audioMuted}/>
       ) : mode === 'timeline' ? (
         <FrameworkEditor fw={fw} updateFw={updateFw}/>
+      ) : mode === 'chapters' ? (
+        <ChapterEditor
+          fw={fw}
+          updateFw={updateFw}
+          onOpenScene={(sceneId) => {
+            setPendingSceneId(sceneId);
+            setMode('scenes');
+          }}
+        />
       ) : mode === 'scenes' ? (
-        <SceneEditor fw={fw} updateFw={updateFw}/>
+        <SceneEditor
+          fw={fw}
+          updateFw={updateFw}
+          initialSceneId={pendingSceneId}
+          onInitialSceneConsumed={clearPendingSceneId}
+        />
       ) : mode === 'map' ? (
         <MapEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'events' ? (
@@ -393,8 +415,8 @@ function AppBody({
         <ItemsEditorPage fw={fw} updateFw={updateFw}/>
       ) : mode === 'journal' ? (
         <JournalEditor/>
-      ) : mode === 'narrative' ? (
-        <NarrativeEngineEditor/>
+      ) : mode === 'logs' ? (
+        <GenerationLogEditor/>
       ) : mode === 'rules' ? (
         <RuleEditor fw={fw} updateFw={updateFw}/>
       ) : mode === 'features' ? (

@@ -172,9 +172,24 @@ export class GameEngine {
       this.stateManager.applyActions(link.linkActions);
     }
 
-    const actions = getPassageActions(passage.metadata);
-    if (actions) {
-      this.stateManager.applyActions(actions);
+    const meta = passage.metadata;
+    const chapterSet: Record<string, string | number | boolean> = {};
+    if (meta && typeof meta.chapterId === 'string' && meta.chapterId.trim()) {
+      chapterSet.activeChapterId = meta.chapterId.trim();
+      const mode = meta.chapterMode;
+      if (mode === 'narrative' || mode === 'open_world') {
+        chapterSet[`chapterMode_${meta.chapterId.trim()}`] = mode;
+      }
+    }
+
+    const actions = getPassageActions(meta);
+    const mergedActions = actions
+      ? {...actions, set: {...chapterSet, ...(actions.set ?? {})}}
+      : Object.keys(chapterSet).length
+        ? {set: chapterSet}
+        : undefined;
+    if (mergedActions) {
+      this.stateManager.applyActions(mergedActions);
     }
 
     if (this.state.currentPassage) {

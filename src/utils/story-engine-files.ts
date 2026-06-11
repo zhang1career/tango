@@ -100,3 +100,13 @@ export async function appendGenerationTrace(gameId: string, entry: GenerationTra
   const json = (await res.json().catch(() => ({}))) as {ok?: boolean; error?: string};
   if (!res.ok || !json.ok) throw new Error(json.error || `保存轨迹失败: ${res.status}`);
 }
+
+export async function clearGenerationTraces(gameId: string): Promise<void> {
+  const res = await fetch(getGenerationTracesFetchUrl(gameId), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: formatJsonCompact(EMPTY_GENERATION_TRACES),
+  });
+  const json = (await res.json().catch(() => ({}))) as {ok?: boolean; error?: string};
+  if (!res.ok || !json.ok) throw new Error(json.error || `清空轨迹失败: ${res.status}`);
+}

@@ -1,11 +1,11 @@
-import type {BranchFailureEndingConfig, FeaturesConfig} from '../schema/features';
+import type {FailureBranchConfig, FeaturesConfig} from '../schema/features';
 
-/** 兼容旧版 branchFailureEnding.images 数组 */
-export function normalizeBranchFailureEnding(
-  raw: BranchFailureEndingConfig | undefined
-): BranchFailureEndingConfig | undefined {
+/** 兼容旧版 failureBranch / branchFailureEnding.images 数组 */
+export function normalizeFailureBranch(
+  raw: FailureBranchConfig | undefined
+): FailureBranchConfig | undefined {
   if (!raw) return undefined;
-  const legacy = raw as BranchFailureEndingConfig & {images?: string[]};
+  const legacy = raw as FailureBranchConfig & {images?: string[]};
   if (!legacy.image && legacy.images?.length) {
     const first = legacy.images.map((u) => u?.trim()).find(Boolean);
     if (first) {
@@ -18,8 +18,9 @@ export function normalizeBranchFailureEnding(
 
 export function normalizeFeaturesConfig(raw: FeaturesConfig | null | undefined): FeaturesConfig {
   if (!raw || typeof raw !== 'object') return {battle: {}};
+  const failureBranch = normalizeFailureBranch(raw.failureBranch ?? raw.branchFailureEnding);
   return {
     ...raw,
-    branchFailureEnding: normalizeBranchFailureEnding(raw.branchFailureEnding),
+    ...(failureBranch ? {failureBranch} : {}),
   };
 }

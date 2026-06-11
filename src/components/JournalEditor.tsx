@@ -15,7 +15,16 @@ import {
 } from '@/schema/story-journal';
 import {formatJsonCompact} from '@/utils/json-format';
 import {DetailEditModal} from './ui/DetailEditModal';
-import {editorStyles as styles} from '@/styles/editorStyles';
+import {editorStyles as styles, sectionTitleStyle} from '@/styles/editorStyles';
+import {listBtnIcon, listGrids, listStyles} from '@/styles/listStyles';
+import {EntityFlatList} from './ui/EntityFlatList';
+import {
+  ListDeleteButton,
+  ListOpsCell,
+  ListSectionHead,
+  ListTableHeader,
+  ListTableRow,
+} from './ui/ListPrimitives';
 
 async function saveJournalToPreset(
   catalog: StoryJournalCatalog,
@@ -115,20 +124,14 @@ function ThemeAssociationPanel({
         border: '1px solid #444',
       }}
     >
-      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-        <h3 style={{fontSize: 16, margin: 0, color: '#a78bfa', fontWeight: 600}}>心迹列表项</h3>
-        <button
-          type="button"
-          style={styles.btn}
-          onClick={openPicker}
-          disabled={available.length === 0}
-          title={available.length === 0 ? '请先在下方「心迹列表项」中创建条目' : undefined}
-        >
-          + 添加
-        </button>
-      </div>
+      <ListSectionHead
+        title={<h3 style={{...sectionTitleStyle, margin: 0}}>心迹列表项</h3>}
+        addTitle={available.length === 0 ? '请先在下方「心迹列表项」中创建条目' : '添加'}
+        addDisabled={available.length === 0}
+        onAdd={openPicker}
+      />
       {linked.length === 0 && !pickerOpen && (
-        <p style={{color: '#888', fontSize: 14, margin: '0 0 12px'}}>暂无条目</p>
+        <p style={{color: '#888', fontSize: 12, margin: '0 0 12px'}}>暂无条目</p>
       )}
       {pickerOpen && available.length > 0 && (
         <div style={{...styles.card, marginBottom: 12}}>
@@ -164,48 +167,52 @@ function ThemeAssociationPanel({
           </div>
         </div>
       )}
-      {linked.map((entry, li) => (
-        <div key={entry.id} style={styles.card}>
-          <div style={styles.cardHead}>
-            <span style={{fontWeight: 600, flex: 1}}>
-              {entry.title}
-              <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                {entry.id} · 排序 {entry.order ?? 0}
+      {linked.length > 0 && (
+        <div>
+          <ListTableHeader grid={listGrids.nameOps}>
+            <span>名称</span>
+            <span style={listStyles.cellOps}>操作</span>
+          </ListTableHeader>
+          {linked.map((entry, li) => (
+            <ListTableRow key={entry.id} grid={listGrids.nameOps}>
+              <span>
+                <span style={{fontWeight: 600}}>{entry.title}</span>
+                <span style={{marginLeft: 8, fontSize: 12, color: '#888'}}>
+                  {entry.id} · 排序 {entry.order ?? 0}
+                </span>
               </span>
-            </span>
-            <button
-              type="button"
-              style={styles.btnIcon}
-              onClick={() => onDraftChange(moveEntryInTheme(draftEntries, theme.id, entry.id, -1))}
-              disabled={li === 0}
-              title="上移"
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              style={styles.btnIcon}
-              onClick={() => onDraftChange(moveEntryInTheme(draftEntries, theme.id, entry.id, 1))}
-              disabled={li === linked.length - 1}
-              title="下移"
-            >
-              ↓
-            </button>
-            <button
-              type="button"
-              style={styles.btnIcon}
-              onClick={() =>
-                onDraftChange(
-                  draftEntries.map((e) => (e.id === entry.id ? {...e, themeId: ''} : e))
-                )
-              }
-              title="移除关联"
-            >
-              ×
-            </button>
-          </div>
+              <ListOpsCell>
+                <button
+                  type="button"
+                  style={listBtnIcon}
+                  onClick={() => onDraftChange(moveEntryInTheme(draftEntries, theme.id, entry.id, -1))}
+                  disabled={li === 0}
+                  title="上移"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  style={listBtnIcon}
+                  onClick={() => onDraftChange(moveEntryInTheme(draftEntries, theme.id, entry.id, 1))}
+                  disabled={li === linked.length - 1}
+                  title="下移"
+                >
+                  ↓
+                </button>
+                <ListDeleteButton
+                  title="移除关联"
+                  onClick={() =>
+                    onDraftChange(
+                      draftEntries.map((e) => (e.id === entry.id ? {...e, themeId: ''} : e))
+                    )
+                  }
+                />
+              </ListOpsCell>
+            </ListTableRow>
+          ))}
         </div>
-      ))}
+      )}
       <p style={{fontSize: 12, color: '#888', marginTop: 8, marginBottom: 0}}>
         管理本主题下的条目关联与排序；正文等内容请在页面底部「心迹列表项」区编辑。点击「保存」后写入 story-journal.json。
       </p>
@@ -434,129 +441,70 @@ export function JournalEditor() {
       </header>
 
       <section style={styles.section}>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-          <h2 style={{fontSize: 16, margin: 0, color: '#a78bfa'}}>主题</h2>
-          <button type="button" style={styles.btn} onClick={() => setThemeAddOpen(true)}>
-            + 添加主题
-          </button>
-        </div>
-        {sortedThemes.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无主题。可从元信息迁移或手动添加。</p>
-        )}
-        {sortedThemes.map((theme, ti) => {
-          const idx = catalog.themes.indexOf(theme);
-          const count = entries.filter((e) => e.themeId === theme.id).length;
-          return (
-            <div key={theme.id} style={styles.card}>
-              <div
-                style={{...styles.cardHead, cursor: 'pointer'}}
-                onClick={() => openThemeDetail(idx)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    openThemeDetail(idx);
-                  }
-                }}
-              >
-                <span style={{fontWeight: 600, flex: 1}}>
-                  {theme.name}
-                  <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                    {theme.id} · {count} 条
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setThemeEdit(idx);
-                  }}
-                  title="编辑主题字段"
-                >
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  style={styles.btnIcon}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    checkAuthForSave(async () => {
-                      const next = {
-                        ...catalog,
-                        themes: catalog.themes.filter((_, i) => i !== idx),
-                        entries: entries.map((e) =>
-                          e.themeId === theme.id ? {...e, themeId: ''} : e
-                        ),
-                      };
-                      await persist(next);
-                    });
-                  }}
-                  title="删除"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          );
-        })}
+        <ListSectionHead
+          title={<h2 style={{...sectionTitleStyle, margin: 0}}>主题</h2>}
+          addTitle="添加主题"
+          onAdd={() => setThemeAddOpen(true)}
+        />
+        <EntityFlatList
+          count={sortedThemes.length}
+          emptyHint="暂无主题。可从元信息迁移或手动添加。"
+          getKey={(ti) => sortedThemes[ti]!.id}
+          getPrimary={(ti) => sortedThemes[ti]!.name}
+          getMeta={(ti) => {
+            const theme = sortedThemes[ti]!;
+            const count = entries.filter((e) => e.themeId === theme.id).length;
+            return `${theme.id} · ${count} 条`;
+          }}
+          onOpen={(ti) => openThemeDetail(catalog.themes.indexOf(sortedThemes[ti]!))}
+          onEdit={(ti) => setThemeEdit(catalog.themes.indexOf(sortedThemes[ti]!))}
+          onDelete={(ti) => {
+            const theme = sortedThemes[ti]!;
+            const idx = catalog.themes.indexOf(theme);
+            checkAuthForSave(async () => {
+              const next = {
+                ...catalog,
+                themes: catalog.themes.filter((_, i) => i !== idx),
+                entries: entries.map((e) => (e.themeId === theme.id ? {...e, themeId: ''} : e)),
+              };
+              await persist(next);
+            });
+          }}
+        />
       </section>
 
       <section style={styles.section}>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-          <h2 style={{fontSize: 16, margin: 0, color: '#a78bfa'}}>心迹列表项</h2>
-          <button
-            type="button"
-            style={styles.btn}
-            onClick={() => {
-              setNewEntry({
-                id: `j_${Date.now()}`,
-                themeId: sortedThemes[0]?.id ?? '',
-                title: '新心迹',
-                content: '',
-                order: entries.length,
+        <ListSectionHead
+          title={<h2 style={{...sectionTitleStyle, margin: 0}}>心迹列表项</h2>}
+          addTitle="添加条目"
+          onAdd={() => {
+            setNewEntry({
+              id: `j_${Date.now()}`,
+              themeId: sortedThemes[0]?.id ?? '',
+              title: '新心迹',
+              content: '',
+              order: entries.length,
+            });
+            setEntryAddOpen(true);
+          }}
+        />
+        <EntityFlatList
+          count={entries.length}
+          emptyHint="暂无条目。解锁触发在「场景」「剧情」等使用处配置。"
+          getKey={(ei) => entries[ei]!.id}
+          getPrimary={(ei) => entries[ei]!.title}
+          getMeta={(ei) => entries[ei]!.id}
+          onOpen={setEntryDetail}
+          onEdit={setEntryEdit}
+          onDelete={(ei) =>
+            checkAuthForSave(async () => {
+              await persist({
+                ...catalog,
+                entries: entries.filter((_, i) => i !== ei),
               });
-              setEntryAddOpen(true);
-            }}
-          >
-            + 添加条目
-          </button>
-        </div>
-        {entries.length === 0 && (
-          <p style={{color: '#888', fontSize: 14}}>暂无条目。解锁触发在「场景」「剧情」等使用处配置。</p>
-        )}
-        {entries.map((entry, ei) => (
-          <div key={entry.id} style={styles.card}>
-            <div style={styles.cardHead}>
-              <span
-                style={{fontWeight: 600, flex: 1, cursor: 'pointer'}}
-                onClick={() => setEntryDetail(ei)}
-              >
-                {entry.title}
-                <span style={{marginLeft: 8, fontSize: 12, color: '#888', fontWeight: 400}}>
-                  {entry.id}
-                </span>
-              </span>
-              <button type="button" style={styles.btnIcon} onClick={() => setEntryEdit(ei)} title="编辑">✎</button>
-              <button
-                type="button"
-                style={styles.btnIcon}
-                onClick={() =>
-                  checkAuthForSave(async () => {
-                    await persist({
-                      ...catalog,
-                      entries: entries.filter((_, i) => i !== ei),
-                    });
-                  })
-                }
-                title="删除"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-        ))}
+            })
+          }
+        />
       </section>
 
       {themeDetailSession !== null && themeDetailTheme && (
@@ -583,7 +531,7 @@ export function JournalEditor() {
             }
           />
           <div style={{marginTop: 8, paddingTop: 16, borderTop: '1px solid #333'}}>
-            <h3 style={{fontSize: 15, margin: '0 0 12px', color: '#a78bfa'}}>主题信息</h3>
+            <h3 style={{...sectionTitleStyle, margin: '0 0 12px'}}>主题信息</h3>
             <ThemeForm theme={themeDetailTheme} editable={false} />
           </div>
         </DetailEditModal>

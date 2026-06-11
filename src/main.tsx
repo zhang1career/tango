@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './styles/global.css';
 import {GameIdProvider} from './context/GameIdContext';
 import {NotificationProvider} from './context/NotificationContext';
 import App from './App';

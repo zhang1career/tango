@@ -1,0 +1,130 @@
+/**
+ * 章节内场景引用辅助（池子、指纹、绑定）
+ */
+
+import type {FrameworkChapter, StoryFramework} from '../schema/story-framework';
+import type {SceneRuleBinding} from '../schema/story-rules-bundle';
+import {edgeIsBranch} from './branch-model';
+
+export interface ChapterSceneMeta {
+  compiledFingerprint?: string;
+  routingFingerprint?: string;
+  /** story.tw 合并正文指纹（汇编或手工编辑后更新） */
+  compiledTextFingerprint?: string;
+}
+
+export function chapterSceneKey(chapterIndex: number, sceneId: string): string {
+  return `${chapterIndex}::${sceneId}`;
+}
+
+export function getChapterAvailableSceneIds(ch: FrameworkChapter): string[] {
+  if (ch.availableSceneIds?.length) return ch.availableSceneIds;
+  const legacy = ch.sceneEntries ?? [];
+  return legacy.map((e) => e.sceneId);
+}
+
+/** 是否开放世界：勾选=是；narrativeGraph 为 true 表示否（叙事图） */
+export function isNarrativeGraph(ch: FrameworkChapter, sceneId: string): boolean {
+  if (ch.narrativeGraph?.[sceneId] === true) return true;
+  if (ch.openWorld && sceneId in ch.openWorld) return ch.openWorld[sceneId] !== true;
+  if (ch.narrativeRouting?.[sceneId] === true) return true;
+  if (ch.sceneModes?.[sceneId] === 'narrative') return true;
+  return false;
+}
+
+export function isNarrativeRouting(ch: FrameworkChapter, sceneId: string): boolean {
+  return isNarrativeGraph(ch, sceneId);
+}
+
+/**
+ * 推断章末场景：无叙事出边；或仅有支线出边（含叙事入口支线枢纽与主线末端仅挂支线）。
+ */
+export function inferChapterEndSceneIds(ch: FrameworkChapter): string[] {
+  const pool = getChapterAvailableSceneIds(ch);
+  const edges = ch.narrativeEdges ?? [];
+  const outgoingByScene = new Map<string, typeof edges>();
+  for (const e of edges) {
+    const list = outgoingByScene.get(e.fromSceneId) ?? [];
+    list.push(e);
+    outgoingByScene.set(e.fromSceneId, list);
+  }
+
+  const ends: string[] = [];
+  for (const sid of pool) {
+    const out = outgoingByScene.get(sid) ?? [];
+    if (out.length === 0) {
+      ends.push(sid);
+      continue;
+    }
+    const hasMainOut = out.some((e) => !edgeIsBranch(e));
+    if (!hasMainOut) ends.push(sid);
+  }
+  return ends;
+}
+
+/** 跨章过渡默认起跳场景：优先主线末端（有主线入边、无主线出边的章末场景） */
+export function pickDefaultChapterEndSceneId(ch: FrameworkChapter, endSceneIds: string[]): string {
+  if (endSceneIds.length === 0) return '';
+  if (endSceneIds.length === 1) return endSceneIds[0]!;
+  const pool = new Set(getChapterAvailableSceneIds(ch));
+  const mainIncoming = new Set<string>();
+  for (const e of ch.narrativeEdges ?? []) {
+    if (!edgeIsBranch(e) && pool.has(e.toSceneId)) mainIncoming.add(e.toSceneId);
+  }
+  const mainlineEnds = endSceneIds.filter((id) => mainIncoming.has(id));
+  if (mainlineEnds.length > 0) return mainlineEnds[mainlineEnds.length - 1]!;
+  return endSceneIds[endSceneIds.length - 1]!;
+}
+
+export function getSceneBindings(
+  bindings: SceneRuleBinding[] | undefined,
+  chapterId: string,
+  sceneId: string
+): string[] {
+  return bindings?.find((b) => b.chapterId === chapterId && b.sceneId === sceneId)?.ruleIds ?? [];
+}
+
+/** 场景所属章节标题（按 chapters 顺序；可能多章共用同一场景） */
+export function getChapterTitlesForScene(fw: StoryFramework, sceneId: string): string[] {
+  const titles: string[] = [];
+  for (const ch of fw.chapters ?? []) {
+    if (getChapterAvailableSceneIds(ch).includes(sceneId)) {
+      titles.push(ch.title || ch.id);
+    }
+  }
+  return titles;
+}
+
+export function findChapterSceneIndices(
+  fw: StoryFramework,
+  sceneId: string
+): Array<{chapterIndex: number; sceneId: string}> {
+  const out: Array<{chapterIndex: number; sceneId: string}> = [];
+  for (let ci = 0; ci < (fw.chapters ?? []).length; ci++) {
+    const ids = getChapterAvailableSceneIds(fw.chapters[ci]);
+    if (ids.includes(sceneId)) out.push({chapterIndex: ci, sceneId});
+  }
+  return out;
+}
+
+export function getChapterSceneMeta(
+  ch: FrameworkChapter,
+  sceneId: string
+): ChapterSceneMeta | undefined {
+  return ch.sceneMeta?.[sceneId];
+}
+
+export function patchChapterSceneMeta(
+  ch: FrameworkChapter,
+  sceneId: string,
+  patch: Partial<ChapterSceneMeta>
+): FrameworkChapter {
+  const prev = ch.sceneMeta?.[sceneId] ?? {};
+  return {
+    ...ch,
+    sceneMeta: {
+      ...(ch.sceneMeta ?? {}),
+      [sceneId]: {...prev, ...patch},
+    },
+  };
+}
