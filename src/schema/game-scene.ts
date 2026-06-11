@@ -56,6 +56,8 @@ export interface GameScene {
   conditions?: string;
   is_used?: boolean;
   openingAnimation?: string;
+  /** 过场动画创作参考（仅编辑器用，不进运行时 metadata） */
+  openingAnimationPrompt?: string;
   images?: string[];
   backgroundMusic?: string;
   synthesizedBgm?: string;

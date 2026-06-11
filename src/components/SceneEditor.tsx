@@ -1047,6 +1047,20 @@ function SceneFormContent({
         onChange={(v) => onUpdate?.((s) => ({...s, openingAnimation: v}))}
         editable={editable && !!onUpdate}
       />
+      <FieldRow
+        label="过场动画提示词"
+        value={scene.openingAnimationPrompt ?? ''}
+        editable={editable && !!onUpdate}
+      >
+        <textarea
+          value={scene.openingAnimationPrompt ?? ''}
+          onChange={(e) =>
+            onUpdate?.((s) => ({...s, openingAnimationPrompt: e.target.value || undefined}))
+          }
+          style={{...styles.input, minHeight: 64}}
+          placeholder="创作过场动画时的参考提示词（章节保存时由 AI 根据跨章过渡生成）"
+        />
+      </FieldRow>
       <MediaUrlField
         label="配图"
         value={scene.images?.[0] ?? ''}

@@ -56,6 +56,7 @@ function sceneDisplayName(scenes: GameScene[], sceneId: string): string {
 
 const kindLabel: Record<string, string> = {
   decompose_scene: '场景分析',
+  transition_prompt: '过场动画提示词',
   generate_block: '生成块',
   assemble_scene: '汇编场景',
   plan: '规划',

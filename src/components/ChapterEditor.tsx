@@ -55,6 +55,8 @@ import {useAuth} from '../context/AuthContext';
 import {ChapterGraphCanvas} from './ChapterGraphCanvas';
 import {DetailEditModal} from './ui/DetailEditModal';
 import {compileChapterScene} from '../services/chapter-scene-compile';
+import {saveStoryScenes} from '../services/story-scenes-persist';
+import {applyTransitionOpeningAnimationPrompts} from '../services/transition-opening-prompt';
 import {saveScenePassageManualEdit} from '../services/scene-passage-edit';
 import {collectStaleCompiledScenes} from '../utils/chapter-compile-helpers';
 import {
@@ -112,9 +114,11 @@ function DecomposeIcon({style, size = 18}: {style?: React.CSSProperties; size?: 
       style={{display: 'block', flexShrink: 0, ...style}}
       aria-hidden
     >
-      <circle cx="11" cy="11" r="7" />
-      <path d="m21 21-4.3-4.3" />
-      <path d="M11 8v6M8 11h6" />
+      <rect x="3" y="5" width="8" height="14" rx="1.5" />
+      <path d="M13 12h3" />
+      <rect x="16" y="4" width="5" height="4" rx="1" />
+      <rect x="16" y="10" width="5" height="4" rx="1" />
+      <rect x="16" y="16" width="5" height="4" rx="1" />
     </svg>
   );
 }
@@ -251,6 +255,7 @@ export function ChapterEditor({
   const [foreshadowing, setForeshadowing] = useState<StoryForeshadowing>(EMPTY_STORY_FORESHADOWING);
   const [canon, setCanon] = useState<StoryCanon>(EMPTY_STORY_CANON);
   const [analyzingTarget, setAnalyzingTarget] = useState<string | null>(null);
+  const [savingChapter, setSavingChapter] = useState(false);
   const {queue: queueFmPatch} = useDebouncedStoryFmPatch(gameId);
   const {revision: narrativeTruthRevision} = useNarrativeTruth();
 
@@ -311,6 +316,7 @@ export function ChapterEditor({
   };
 
   const handleSave = async () => {
+    setSavingChapter(true);
     try {
       let dataToSave = fw;
       const preValidation = validateFramework(dataToSave);
@@ -326,26 +332,56 @@ export function ChapterEditor({
         addNotification('info', '已自动将跨章过渡起跳场景修正为当前章末场景');
       }
 
+      const promptResult = await applyTransitionOpeningAnimationPrompts(gameId, dataToSave);
+      dataToSave = promptResult.fw;
+      updateFw(() => promptResult.fw);
+      for (const failure of promptResult.failures) {
+        addNotification(
+          'error',
+          `${failure.fromSceneName} → ${failure.targetChapterTitle}：AI 生成失败，过场动画提示词留空`
+        );
+      }
+
       const story = parsedStory ?? (await loadStoryFromGame(gameId));
       if (!story) {
         await saveFm(dataToSave);
-        addNotification('info', '章节已保存（无 story.tw，跳过路由同步）');
+        if (dataToSave.scenes?.length) {
+          const scenesResult = await saveStoryScenes(gameId, dataToSave.scenes);
+          if (!scenesResult.ok) throw new Error(scenesResult.error || '保存 story-scenes.json 失败');
+        }
+        const promptHint =
+          promptResult.generatedCount > 0
+            ? `；已生成 ${promptResult.generatedCount} 条过场动画提示词`
+            : '';
+        addNotification('info', `章节已保存（无 story.tw，跳过路由同步）${promptHint}`);
         return;
       }
       const syncResult = await persistFrameworkRoutingToStory(gameId, dataToSave, {story});
-      updateFw(() => syncResult.fw);
-      await saveFm(syncResult.fw);
+      const mergedFw = {
+        ...syncResult.fw,
+        scenes: dataToSave.scenes ?? syncResult.fw.scenes,
+      };
+      updateFw(() => mergedFw);
+      await saveFm(mergedFw);
+      if (mergedFw.scenes?.length) {
+        const scenesResult = await saveStoryScenes(gameId, mergedFw.scenes);
+        if (!scenesResult.ok) throw new Error(scenesResult.error || '保存 story-scenes.json 失败');
+      }
       setParsedStory(syncResult.story);
       const skippedHint =
         syncResult.skippedCount > 0 ? `（${syncResult.skippedCount} 个场景尚无 passage，已跳过）` : '';
+      const promptHint =
+        promptResult.generatedCount > 0 ? `；已生成 ${promptResult.generatedCount} 条过场动画提示词` : '';
       addNotification(
         'info',
         syncResult.syncedCount > 0
-          ? `章节已保存；已同步 ${syncResult.syncedCount} 个场景的路由链接${skippedHint}`
-          : `章节已保存${skippedHint || '；story.tw 路由已是最新'}`
+          ? `章节已保存；已同步 ${syncResult.syncedCount} 个场景的路由链接${skippedHint}${promptHint}`
+          : `章节已保存${skippedHint || '；story.tw 路由已是最新'}${promptHint}`
       );
     } catch (e) {
       addNotification('error', (e as Error).message);
+    } finally {
+      setSavingChapter(false);
     }
   };
 
@@ -569,6 +605,14 @@ export function ChapterEditor({
         <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
           <button
             type="button"
+            style={styles.btn}
+            onClick={() => checkAuthForSave(() => void handleSave())}
+            disabled={savingChapter || compilingTarget !== null}
+          >
+            {savingChapter ? '保存中…' : '保存'}
+          </button>
+          <button
+            type="button"
             style={{...styles.btn, display: 'inline-flex', alignItems: 'center', gap: 4}}
             title={staleScenes.length > 0 ? COMPILE_STALE_HINT : '全部场景汇编已是最新'}
             onClick={() => checkAuthForSave(() => void handleCompileAllStale())}
@@ -592,9 +636,6 @@ export function ChapterEditor({
                 <span style={styles.compileIconFresh}>汇编</span>
               </>
             )}
-          </button>
-          <button type="button" style={styles.btn} onClick={() => checkAuthForSave(() => void handleSave())}>
-            保存
           </button>
           <ListAddButton
             title="添加章节"

@@ -9,7 +9,8 @@ export type GenerationTraceKind =
   | 'generate_block'
   | 'assemble_scene'
   | 'canon_settle'
-  | 'decompose_scene';
+  | 'decompose_scene'
+  | 'transition_prompt';
 
 export interface GenerationTracePhase {
   name: string;
