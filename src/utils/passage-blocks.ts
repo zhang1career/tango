@@ -22,6 +22,15 @@ export function getScenePassageBlocks(scene: GameScene): ScenePassageBlock[] {
   return normalizePassageBlocks(scene.passageBlocks ?? []);
 }
 
+/** 汇编指纹用：不含 generatedText，结构/summary 变更才触发待汇编 */
+export function passageBlocksForCompileFingerprint(blocks: ScenePassageBlock[]): ScenePassageBlock[] {
+  return blocks.map((b) => {
+    if (b.type === 'raw') return b;
+    const {generatedText: _generatedText, ...spec} = b;
+    return spec;
+  });
+}
+
 export function getLeadingRawBlock(scene: GameScene): ScenePassageRawBlock | null {
   const blocks = getScenePassageBlocks(scene);
   const first = blocks[0];

@@ -7,7 +7,7 @@ import {toPassageId} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {getChapterAvailableSceneIds, getChapterSceneMeta, patchChapterSceneMeta} from './chapter-scene';
 import {getChapterSceneRoutingFingerprint} from './scene-routing-sync';
-import {getScenePassageBlocks} from './passage-blocks';
+import {getScenePassageBlocks, passageBlocksForCompileFingerprint} from './passage-blocks';
 import type {Story} from '@/types';
 import {hashScenePassageFullText, readScenePassageFullText} from './compiled-text-fingerprint';
 
@@ -46,7 +46,7 @@ export function getSceneCompileFingerprint(
       scene: {
         id: scene.id,
         name: scene.name,
-        passageBlocks: getScenePassageBlocks(scene),
+        passageBlocks: passageBlocksForCompileFingerprint(getScenePassageBlocks(scene)),
         mapNodeId: scene.mapNodeId ?? '',
         characterIds: scene.characterIds ?? [],
         counterpartCharacterIds: scene.counterpartCharacterIds ?? [],

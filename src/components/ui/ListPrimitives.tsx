@@ -64,8 +64,13 @@ function ClearIcon({size = 16, style}: {size?: number; style?: React.CSSProperti
       style={{display: 'block', flexShrink: 0, ...style}}
       aria-hidden
     >
-      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-      <path d="M3 3v5h5" />
+      <path d="M12 3v9" />
+      <path d="M7 12h10" />
+      <path d="M5 12l2 9" />
+      <path d="M9 12l1 9" />
+      <path d="M14 12l-1 9" />
+      <path d="M19 12l-2 9" />
+      <path d="M3 21h18" />
     </svg>
   );
 }

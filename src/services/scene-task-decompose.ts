@@ -149,6 +149,10 @@ export async function decomposeSceneTaskToAiBlocks(input: {
 规则：
 - 只输出 ai 块数组，不要 raw 块
 - summary 使用项目标注（定场/推进/收束/失败 等），块序符合叙事节奏
+- 若存在 leadingRawPreview：首块定场不得复述其中的时地、史料与描写，只规划 raw 未覆盖的新节拍（内心、对话、行动后果）
+- 多块时各块 summary 的叙事节拍须互斥递进：每块只写一个新节拍，anchors/意象/对白轮次不得跨块重复
+- 若 narrativeTask 或 counterpartCharacterIds 涉及多方立场/议场分歧，至少一块 summary 应含「一句关键问询或引语」节拍，并在该块 anchors 标注问询对象或关键引语（勿规划连续对白交锋；完整问答仍属 behaviorLibrary）
+- 推进/收束块不得重复定场块已规划的内容；若定场已写「父训回响」，推进应写具体回忆画面，收束应写决策动作
 - wordCount 在 160–220
 - 任务拆解为 1–4 个 ai 块
 只输出 JSON。`;
@@ -157,6 +161,14 @@ export async function decomposeSceneTaskToAiBlocks(input: {
     sceneId,
     sceneName: scene.name,
     narrativeTask: task,
+    sceneCharacterIds: (scene.characterIds ?? []).map((id) => ({
+      id,
+      name: fw.characters?.find((c) => c.id === id)?.name ?? id,
+    })),
+    counterpartCharacterIds: (scene.counterpartCharacterIds ?? []).map((id) => ({
+      id,
+      name: fw.characters?.find((c) => c.id === id)?.name ?? id,
+    })),
     chapter: {
       id: ch.id,
       title: ch.title,
@@ -179,10 +191,30 @@ export async function decomposeSceneTaskToAiBlocks(input: {
   );
 
   const parsed = parseJsonFromModel<{aiBlocks?: Record<string, unknown>[]}>(out);
-  const aiBlocks = (parsed?.aiBlocks ?? [])
+  let aiBlocks = (parsed?.aiBlocks ?? [])
     .map((b) => normalizeDecomposedBlock(b))
     .filter((b) => b.summary.trim());
   if (!aiBlocks.length) throw new Error('分析未返回有效 AI 块');
+
+  if (rawBlock?.text?.trim() || aiBlocks.length > 1) {
+    aiBlocks = aiBlocks.map((block, idx) => {
+      const forbidden = new Set(block.forbidden ?? []);
+      const constraintParts = block.constraints ? [block.constraints] : [];
+      if (idx === 0 && rawBlock?.text?.trim()) {
+        forbidden.add('勿复述 leading raw 中的时地、史料与描写');
+        constraintParts.push('承接 raw，只写 raw 未覆盖的新信息');
+      }
+      if (idx > 0) {
+        forbidden.add('勿重复前序 AI 块的时地定场与对白');
+        constraintParts.push('接续前块，只写本块 summary 的新节拍');
+      }
+      return {
+        ...block,
+        forbidden: forbidden.size ? [...forbidden] : undefined,
+        constraints: constraintParts.length ? constraintParts.join('；') : undefined,
+      };
+    });
+  }
 
   const leading = rawBlock ?? {type: 'raw' as const, text: ''};
   const passageBlocks: ScenePassageBlock[] = normalizePassageBlocks([leading, ...aiBlocks]);

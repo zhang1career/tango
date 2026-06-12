@@ -42,6 +42,7 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {IdNameSelect} from './ui/IdNameSelect';
 import {MultiSelectField} from './ui/MultiSelectField';
 import {buildIdNameDict, resolveIdName, type IdNameDict} from '@/utils/id-name-dict';
+import {SaveIcon} from './ui/SaveIcon';
 
 type Tab = 'foreshadowing' | 'canon';
 
@@ -338,21 +339,22 @@ export function NarrativeTruthEditors({
     </button>
   );
 
-  const saveLabel = saving ? '保存中…' : tab === 'foreshadowing' ? '保存伏笔池' : '保存 Canon';
-  const saveTitle = tab === 'foreshadowing'
-    ? '写入 story-foreshadowing.json'
-    : '写入 story-canon.json';
+  const saveTitle = saving
+    ? '保存中…'
+    : tab === 'foreshadowing'
+      ? '保存伏笔池（写入 story-foreshadowing.json）'
+      : '保存 Canon（写入 story-canon.json）';
 
   const saveBtn = (
     <button
       type="button"
-      style={{...styles.btn, opacity: saving ? 0.5 : 1}}
+      style={{...headerIconBtn, opacity: saving ? 0.5 : 1}}
       title={saveTitle}
       aria-label={saveTitle}
       onClick={() => void saveCurrent()}
       disabled={saving}
     >
-      {saveLabel}
+      <SaveIcon />
     </button>
   );
 

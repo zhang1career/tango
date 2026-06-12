@@ -1,17 +1,56 @@
 /**
- * 将 story.tw 合并正文按 passageBlocks 拆分为 RAW / AI 段，供章节页正文编辑展示与保存。
+ * 将 story.tw 合并正文供章节页「编辑正文」使用。
+ * 成稿正文与游戏展示一致（RAW + 汇编 AI 正文），不按 AI 块强行拆分。
  */
 
 import type {GameScene, ScenePassageBlock} from '../schema/game-scene';
-import {getScenePassageBlocks} from './passage-blocks';
+import {getLeadingRawBlock, getScenePassageBlocks, upsertLeadingRaw} from './passage-blocks';
 import {stripRawPassageQuoteMarkup, wrapRawPassageQuote} from './raw-passage-quote-markup';
 
+/** @deprecated 章节页手工编辑请用 PassageManualEditFields */
 export type PassageBlockSegment = {
   blockIndex: number;
   type: 'raw' | 'ai';
   label: string;
   text: string;
 };
+
+/** 章节页「编辑正文」：与 story.tw / 游戏展示一致的字段 */
+export type PassageManualEditFields = {
+  hasLeadingRaw: boolean;
+  rawText: string;
+  bodyText: string;
+};
+
+export function storyPassageToManualEditFields(fullText: string, scene: GameScene): PassageManualEditFields {
+  const leadingRaw = getLeadingRawBlock(scene);
+  const stripped = stripRawPassageQuoteMarkup(fullText).trim();
+  if (!leadingRaw?.text?.trim()) {
+    return {hasLeadingRaw: false, rawText: '', bodyText: stripped};
+  }
+  const raw = leadingRaw.text.trim();
+  const idx = stripped.indexOf(raw);
+  if (idx >= 0) {
+    const bodyText = stripped.slice(idx + raw.length).replace(/^[\s\n]+/, '');
+    return {hasLeadingRaw: true, rawText: raw, bodyText};
+  }
+  return {hasLeadingRaw: true, rawText: raw, bodyText: stripped};
+}
+
+export function renderManualEditFields(fields: PassageManualEditFields): string {
+  const parts: string[] = [];
+  if (fields.hasLeadingRaw && fields.rawText.trim()) {
+    parts.push(wrapRawPassageQuote(fields.rawText.trim()));
+  }
+  if (fields.bodyText.trim()) parts.push(fields.bodyText.trim());
+  return parts.join('\n\n');
+}
+
+/** 审校保存：若修改 RAW 则同步 leading raw；成稿正文只写入 story.tw，不回写 AI 块 generatedText */
+export function applyManualEditToScene(scene: GameScene, fields: PassageManualEditFields): GameScene {
+  if (!fields.hasLeadingRaw) return scene;
+  return upsertLeadingRaw(scene, fields.rawText);
+}
 
 function blockLabel(block: ScenePassageBlock, blockIndex: number, blocks: ScenePassageBlock[]): string {
   if (block.type === 'raw') {
@@ -90,7 +129,7 @@ function extractTextsPerBlock(stripped: string, blocks: ScenePassageBlock[]): st
   return texts;
 }
 
-/** 每个 passageBlock 对应一段，blockIndex 与 blocks 数组下标一致 */
+/** @deprecated 章节页请用 storyPassageToManualEditFields */
 export function passageBlocksToEditSegments(fullText: string, scene: GameScene): PassageBlockSegment[] {
   const blocks = getScenePassageBlocks(scene);
   const stripped = stripRawPassageQuoteMarkup(fullText).trim();

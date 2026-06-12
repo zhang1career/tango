@@ -49,33 +49,38 @@ export function collectPrecedingRawTexts(scene: GameScene, aiBlockIndex: number)
   return texts;
 }
 
-/** Remove prose duplicated from raw blocks that are already rendered before this AI block. */
-export function stripAiTextOverlappingRaw(aiText: string, rawTexts: string[]): string {
+/** Remove prose duplicated from prior passage segments (raw or earlier AI blocks). */
+export function stripAiTextOverlappingPriorTexts(aiText: string, priorTexts: string[]): string {
   let result = aiText.trim();
-  if (!result || rawTexts.length === 0) return result;
+  if (!result || priorTexts.length === 0) return result;
 
-  for (const raw of rawTexts) {
-    const rawTrim = raw.trim();
-    if (!rawTrim) continue;
+  for (const prior of priorTexts) {
+    const priorTrim = prior.trim();
+    if (!priorTrim) continue;
 
-    while (result.startsWith(rawTrim)) {
-      result = trimLeadingPunctuation(result.slice(rawTrim.length));
+    while (result.startsWith(priorTrim)) {
+      result = trimLeadingPunctuation(result.slice(priorTrim.length));
     }
 
-    if (rawTrim.length >= 10) {
-      const maxProbe = Math.min(rawTrim.length, result.length);
+    if (priorTrim.length >= 10) {
+      const maxProbe = Math.min(priorTrim.length, result.length);
       for (let len = maxProbe; len >= 10; len--) {
-        if (result.startsWith(rawTrim.slice(0, len))) {
+        if (result.startsWith(priorTrim.slice(0, len))) {
           result = trimLeadingPunctuation(result.slice(len));
           break;
         }
       }
     }
 
-    for (const sentence of splitChineseSentences(rawTrim)) {
+    for (const sentence of splitChineseSentences(priorTrim)) {
       result = removeSentenceOverlap(result, sentence);
     }
   }
 
   return result.replace(/\n{3,}/g, '\n\n').replace(/^[，。、；：…\s\n]+/, '').trim();
+}
+
+/** Remove prose duplicated from raw blocks that are already rendered before this AI block. */
+export function stripAiTextOverlappingRaw(aiText: string, rawTexts: string[]): string {
+  return stripAiTextOverlappingPriorTexts(aiText, rawTexts);
 }

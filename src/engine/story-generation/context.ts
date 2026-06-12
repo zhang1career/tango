@@ -6,13 +6,13 @@ import {
   formatAiBlockSpec,
   getAiBlocks,
   getScenePassageBlocks,
-  resolveAiBlockCharacterIds,
 } from '@/utils/passage-blocks';
 import {buildSceneRawContextForAiBlock} from './raw-context';
 import {buildRollingOutlineGenerationContext} from '@/utils/story-outline-fm';
 import {canonSceneForContext} from '@/schema/story-canon';
 import {foreshadowThreadsForSceneContext} from '@/schema/story-foreshadowing';
 import {buildPriorCanonInjection} from './prior-canon';
+import {resolveBlockDialogueContext} from './dialogue-rules';
 
 const BUDGET = {
   maxChapterEvents: 8,
@@ -77,11 +77,30 @@ export function buildGenerationContextPayload(
   });
 
   const blocks = getScenePassageBlocks(scene);
+  const allAiBlocks = getAiBlocks(scene);
+  let currentAiIndex = 0;
+  for (let i = 0; i < passageBlockIndex; i++) {
+    if (blocks[i].type === 'ai') currentAiIndex++;
+  }
+
   const priorGenerated: string[] = [];
   for (let i = 0; i < passageBlockIndex; i++) {
     const b = blocks[i];
-    if (b.type === 'ai' && b.generatedText?.trim()) priorGenerated.push(truncate(b.generatedText, 200));
+    if (b.type === 'ai' && b.generatedText?.trim()) priorGenerated.push(b.generatedText.trim());
   }
+
+  const sceneBlockPlan =
+    allAiBlocks.length > 1
+      ? allAiBlocks.map((b, idx) => ({
+          block: idx + 1,
+          total: allAiBlocks.length,
+          phase: idx === currentAiIndex ? 'current' : idx < currentAiIndex ? 'completed' : 'upcoming',
+          summary: b.summary,
+          ...(idx < currentAiIndex && b.generatedText?.trim()
+            ? {alreadyWritten: truncate(b.generatedText, 400)}
+            : {}),
+        }))
+      : undefined;
 
   const rollingOutline = buildRollingOutlineGenerationContext(fw, outline, chapter.chapterId);
   const openThreads = foreshadowThreadsForSceneContext(foreshadowing.threads, scene.id);
@@ -104,7 +123,8 @@ export function buildGenerationContextPayload(
     for (const id of s?.characterIds ?? []) chapterCharIds.add(id);
   }
   const sceneCharIds = new Set((scene.characterIds ?? []).filter(Boolean));
-  const blockCharIds = resolveAiBlockCharacterIds(aiBlock, scene);
+  const dialogueCtx = resolveBlockDialogueContext({aiBlock, scene, fw});
+  const {blockCharIds, speakerNames: dialogueSpeakers, policy: dialoguePolicy} = dialogueCtx;
   const blockCharIdSet = new Set(blockCharIds);
   const characterPreview = (fw.characters ?? [])
     .filter((c) => blockCharIdSet.has(c.id) || chapterCharIds.has(c.id))
@@ -116,9 +136,12 @@ export function buildGenerationContextPayload(
       maySpeakInBlock: blockCharIdSet.has(c.id),
       description: c.description ? truncate(c.description, 200) : undefined,
     }));
-  const dialogueSpeakers = blockCharIds
-    .map((id) => fw.characters?.find((c) => c.id === id)?.name ?? id)
-    .filter(Boolean);
+  const counterpartCharacters = (scene.counterpartCharacterIds ?? [])
+    .map((id) => {
+      const c = fw.characters?.find((x) => x.id === id);
+      return c ? {id: c.id, name: c.name} : {id, name: id};
+    })
+    .filter((c) => c.id);
 
   const mapNode = scene.mapNodeId
     ? (fw.maps ?? []).flatMap((m) => m.nodes ?? []).find((n) => n.id === scene.mapNodeId)
@@ -131,8 +154,16 @@ export function buildGenerationContextPayload(
     chapterEvents,
     characterPreview,
     dialogueSpeakers: dialogueSpeakers.length ? dialogueSpeakers : ['（本块无具名对白角色）'],
-    dialogueSpeakerSource:
-      aiBlock.characterIds !== undefined ? 'aiBlock.characterIds' : 'scene.characterIds（继承）',
+    dialogueSpeakerSource: dialogueCtx.explicitBlockCharacterIds
+      ? 'aiBlock.characterIds（本块显式指定）'
+      : 'scene.characterIds（继承）',
+    ...(counterpartCharacters.length
+      ? {
+          counterpartCharacters,
+          counterpartNote:
+            '本场议题涉及的对戏/立场人物；若本块含问询节拍，优先让这些人物之一发言（须在 block dialogueCharacters 白名单内）。',
+        }
+      : {}),
     mapNode: mapNodeLabel,
     itemsInScene: scene.stateActions?.give
       ? Array.isArray(scene.stateActions.give)
@@ -143,23 +174,37 @@ export function buildGenerationContextPayload(
     openForeshadowing: openThreads.length ? openThreads : undefined,
     canonForScene,
     priorCanon,
-    priorGeneratedInScene: priorGenerated.length ? priorGenerated : undefined,
-    priorGeneratedWarning:
-      priorGenerated.length < passageBlockIndex - 1
-        ? '前序 AI 块部分尚未生成，连贯性可能不足'
-        : undefined,
   };
 
+  const multiBlockScene = allAiBlocks.length > 1;
   const constraint = {
     writingRules: fw.rules ?? [],
     chapterTitle: chapter.chapterTitle,
     chapterTheme: chapter.chapterTheme,
     previousSceneSummaries: prevSummaries,
     blockSpec: formatAiBlockSpec(aiBlock, scene),
-    dialogueRule:
-      blockCharIds.length > 0
-        ? `对白仅允许以下角色发言：${dialogueSpeakers.join('、')}；问一句一行、答一句一行。`
-        : '本块宜纯旁白与描写，不写具名角色对白。',
+    currentBlockMission: aiBlock.summary,
+    dialoguePolicy,
+    impliesInquiry: dialogueCtx.impliesInquiry,
+    summaryOnlyRule: dialogueCtx.summaryOnlyRule,
+    dialogueRule: dialogueCtx.dialogueRule,
+    ...(multiBlockScene
+      ? {
+          sceneBlockPlan,
+          continuityRule:
+            '同场多块须语义连贯、节拍递进：已完成块与 raw 已展示的内容（时地、环境、对白、人物问询）不得在本块复述或同义改写；本块只写 blockSpec 中的新节拍并自然接续上文。',
+        }
+      : {}),
+    ...(priorGenerated.length
+      ? {
+          priorGeneratedInScene: priorGenerated.map((text, idx) => ({
+            block: idx + 1,
+            excerpt: truncate(text, 400),
+          })),
+          noRepeatPriorBlocks:
+            '严禁重复 priorGeneratedInScene 中已写过的句子、对白轮次或场景定场；从已完成处往下推进。',
+        }
+      : {}),
     ...buildSceneRawContextForAiBlock(scene, passageBlockIndex),
   };
 

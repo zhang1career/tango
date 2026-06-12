@@ -6,9 +6,9 @@ import {buildGenerationContextPayload} from './context';
 import {getGenerationAuditMode, getGenerationAuditRetries} from '@/config';
 import {chatCompletion, previewText, requireAigcConfig} from './llm';
 import type {GenerateBlockInput, GenerateBlockResult, StoryGenerationBundle} from './types';
-import {collectPrecedingRawTextsAtBlockIndex} from './raw-context';
+import {collectPrecedingAiGeneratedTextsAtBlockIndex, collectPrecedingRawTextsAtBlockIndex} from './raw-context';
 import {resolveAiBlockCharacterIds} from '@/utils/passage-blocks';
-import {stripAiTextOverlappingRaw} from '@/utils/strip-ai-raw-overlap';
+import {stripAiTextOverlappingPriorTexts, stripAiTextOverlappingRaw} from '@/utils/strip-ai-raw-overlap';
 
 function buildCanonCharacterIdGuide(input: GenerateBlockInput): string {
   const nameById = new Map(
@@ -30,12 +30,49 @@ function buildCanonCharacterIdGuide(input: GenerateBlockInput): string {
 }
 
 const WRITE_SYSTEM_BASE = `你是文字冒险游戏编剧。遵守块级规格与真相层约束，完成有限演义扩写。
+- 用户消息开头的「本块唯一任务」来自 summary，正文必须且只能覆盖该 summary 的节拍，不得写 summary/anchors 未要求的内容。
 - behaviorLibrary 是对话互动素材，不要嵌入 passage 正文。
 - raw 块已单独展示，严禁复述 raw 中的对白与史料。
+- 同场若有多块：只写本块任务的新节拍，严禁重复 sceneBlockPlan 中已完成块或 priorGeneratedInScene 的内容（含时地定场、对白轮次、父训回忆等）。
 - 必须体现 anchors；遵守 forbidden。
-- 对白仅允许 constraint 中列出的角色发言；无列名角色时写纯旁白。
+- 遵守 constraint.dialoguePolicy 与 dialogueRule：forbidden 时不写具名对白；required_weak/required_strong 时须写出不超过 1 轮白名单对白；optional 时无问询节拍则宜纯旁白。
+- summary/anchors 已暗示问询（impliesInquiry）时，须按 dialogueRule 写出对白，不得因 summaryOnly 而省略。
 - 正文须为多行：叙述段 2–3 句后换行；每一句对白单独成行（问一行、答一行），不要把多轮对话挤在同一段。
 输出纯正文，无 markdown，无 [[链接]]。`;
+
+function buildWriteUserPrompt(
+  input: GenerateBlockInput,
+  planJson: string,
+  possibility: Record<string, unknown>,
+  constraint: Record<string, unknown>,
+  suffix = ''
+): string {
+  return `【本块唯一任务 — 必须严格实现】
+${input.aiBlock.summary}
+
+【规划】
+${planJson}
+
+【可能性】
+${JSON.stringify(possibility, null, 2)}
+
+【约束】
+${JSON.stringify(constraint, null, 2)}${suffix}
+
+请只写本块任务要求的正文：`;
+}
+
+function stripGeneratedDraftOverlap(
+  scene: GenerateBlockInput['scene'],
+  passageBlockIndex: number,
+  aiText: string
+): string {
+  const precedingRaw = collectPrecedingRawTextsAtBlockIndex(scene, passageBlockIndex);
+  const precedingAi = collectPrecedingAiGeneratedTextsAtBlockIndex(scene, passageBlockIndex);
+  let result = stripAiTextOverlappingRaw(aiText, precedingRaw);
+  result = stripAiTextOverlappingPriorTexts(result, precedingAi);
+  return result;
+}
 
 function parseJsonFromModel<T>(text: string): T | null {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -57,6 +94,8 @@ async function runPlanPhase(input: GenerateBlockInput): Promise<{plan: string; p
   );
   const system = `你是叙事引擎的「规划师」。根据真相层与块级规格，输出 JSON：
 {"beats":["本块要完成的 2-4 个微观步骤"],"mustHonor":["必须遵守的约束摘要"],"risks":["可能违背的 continuity 风险"]}
+规则：beats 必须全部来自 currentBlockMission（summary），不得包含其他块的节拍；若 sceneBlockPlan 存在，不得重规划已完成块。
+若 dialoguePolicy 为 required_weak 或 required_strong，beats 须包含「写出 1 轮白名单对白」步骤，且发言者须在 dialogueRule 白名单内。
 只输出 JSON。`;
   const user = `场景 ${input.scene.id} / 块 ${input.aiBlockIndex + 1}
 
@@ -89,18 +128,8 @@ async function runWritePhase(
     input.aiBlock,
     input.passageBlockIndex
   );
-  const precedingRaw = collectPrecedingRawTextsAtBlockIndex(input.scene, input.passageBlockIndex);
   const system = WRITE_SYSTEM_BASE;
-  const user = `【规划】
-${planJson}
-
-【可能性】
-${JSON.stringify(possibility, null, 2)}
-
-【约束】
-${JSON.stringify(constraint, null, 2)}
-
-请生成本块正文：`;
+  const user = buildWriteUserPrompt(input, planJson, possibility, constraint);
   const raw = await chatCompletion(
     [
       {role: 'system', content: system},
@@ -108,8 +137,8 @@ ${JSON.stringify(constraint, null, 2)}
     ],
     {temperature: 0.35}
   );
-  const deduped = stripAiTextOverlappingRaw(raw, precedingRaw);
-  if (!deduped) throw new Error('生成正文与 raw 高度重复');
+  const deduped = stripGeneratedDraftOverlap(input.scene, input.passageBlockIndex, raw);
+  if (!deduped) throw new Error('生成正文与已有内容高度重复');
   return {text: deduped, phase: {name: 'write', outputPreview: previewText(deduped)}};
 }
 
@@ -124,7 +153,9 @@ async function runAuditPhase(
     input.aiBlock,
     input.passageBlockIndex
   );
-  const system = `你是叙事审校。检查草稿是否违背约束、遗漏 anchors、复述 raw、引入 forbidden 内容。
+  const system = `你是叙事审校。检查草稿是否：严格实现 currentBlockMission（summary）；违背其他约束；遗漏 anchors；复述 raw 或同场前序 AI 块；引入 forbidden 内容；提前写了后续块的节拍。
+若 dialoguePolicy 为 required_weak 或 required_strong，须检查是否已用白名单角色写出不超过 1 轮对白（问一行、答一行）；若缺失则判 fail。
+若 dialoguePolicy 为 forbidden，须检查是否误写具名对白；若有则判 fail。
 输出 JSON：{"pass":true|false,"issues":["…"],"fixHint":"若不通过，给写手的修订方向"}`;
   const user = `【约束】
 ${JSON.stringify(constraint, null, 2)}
@@ -223,7 +254,7 @@ export async function generatePassageBlock(input: GenerateBlockInput): Promise<G
       input.passageBlockIndex
     );
     const system = `${WRITE_SYSTEM_BASE}${writeUserSuffix ? '\n根据审校意见修订上一稿。' : ''}`;
-    const user = `【规划】${plan}\n【可能性】${JSON.stringify(possibility)}\n【约束】${JSON.stringify(constraint)}\n${writeUserSuffix}\n请生成本块正文：`;
+    const user = buildWriteUserPrompt(input, plan, possibility, constraint, writeUserSuffix);
     const raw = await chatCompletion(
       [
         {role: 'system', content: system},
@@ -231,9 +262,8 @@ export async function generatePassageBlock(input: GenerateBlockInput): Promise<G
       ],
       {temperature: attempt > 0 ? 0.25 : 0.35}
     );
-    const precedingRaw = collectPrecedingRawTextsAtBlockIndex(input.scene, input.passageBlockIndex);
-    draft = stripAiTextOverlappingRaw(raw, precedingRaw);
-    if (!draft) throw new Error('生成正文与 raw 高度重复');
+    draft = stripGeneratedDraftOverlap(input.scene, input.passageBlockIndex, raw);
+    if (!draft) throw new Error('生成正文与已有内容高度重复');
     phases.push({name: attempt === 0 ? 'write' : `write_retry_${attempt}`, outputPreview: previewText(draft)});
 
     if (auditMode === 'skip') {

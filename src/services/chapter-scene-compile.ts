@@ -38,7 +38,7 @@ export async function compileChapterScene(
   const ch = fw.chapters[chapterIndex];
   if (!scene || !ch) throw new Error(`未找到场景 ${sceneId}`);
 
-  const ensured = await ensureSceneAiBlocksGenerated(gameId, fw, scene);
+  const ensured = await ensureSceneAiBlocksGenerated(gameId, fw, scene, {regenerateAll: true});
   const pid = scenePassagePid(ensured.fw, chapterIndex, sceneId);
   const {passageText} = await runAssembleScene(gameId, ensured.scene, ch.id);
   const fullStory = frameworkToStory(ensured.fw);
@@ -74,12 +74,10 @@ export async function compileChapterScene(
     story,
     lookupKeys
   );
-  if (ensured.generatedCount > 0) {
-    const scenes = nextFw.scenes;
-    if (!scenes?.length) throw new Error('场景列表为空，无法保存 generatedText');
-    const saved = await saveStoryScenes(gameId, scenes);
-    if (!saved.ok) throw new Error(saved.error || '保存 story-scenes.json 失败');
-  }
+  const scenes = nextFw.scenes;
+  if (!scenes?.length) throw new Error('场景列表为空，无法保存 story-scenes');
+  const saved = await saveStoryScenes(gameId, scenes);
+  if (!saved.ok) throw new Error(saved.error || '保存 story-scenes.json 失败');
   return {fw: nextFw, story, generatedCount: ensured.generatedCount};
 }
 

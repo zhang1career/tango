@@ -22,51 +22,13 @@ import {DetailEditModal} from './ui/DetailEditModal';
 import {MediaUrlField} from './ui/MediaFields';
 import {EntityFlatList} from './ui/EntityFlatList';
 import {ListAddButton, ListDeleteButton, ListOpsCell, ListSectionHead} from './ui/ListPrimitives';
+import {CollapsibleSection} from './ui/CollapsibleSection';
 import {editorStyles as baseEditorStyles} from '@/styles/editorStyles';
 
 const styles: Record<string, React.CSSProperties> = {
   ...baseEditorStyles,
-  collapsible: {marginBottom: 12},
-  collapsibleHead: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '6px 0',
-    cursor: 'pointer',
-    fontSize: 12,
-    color: '#9ca3af',
-  },
-  collapsibleBody: {padding: '8px 0 0 0'},
   dialogueItem: {marginBottom: 16, padding: 12, backgroundColor: '#1e1e32', borderRadius: 8, border: '1px solid #333'},
 };
-
-function CollapsibleSection({
-                              title,
-                              expanded,
-                              onToggle,
-                              rightAction,
-                              children,
-                            }: {
-  title: string;
-  expanded: boolean;
-  onToggle: () => void;
-  rightAction?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={styles.collapsible}>
-      <div style={styles.collapsibleHead} onClick={onToggle} role="button" tabIndex={0}
-           onKeyDown={(e) => e.key === 'Enter' && onToggle()}>
-        <span>{title}</span>
-        <span style={{display: 'flex', alignItems: 'center', gap: 8}}>
-          {rightAction && <span onClick={(e) => e.stopPropagation()}>{rightAction}</span>}
-          <span>{expanded ? '▼' : '▶'}</span>
-        </span>
-      </div>
-      {expanded && <div style={styles.collapsibleBody}>{children}</div>}
-    </div>
-  );
-}
 
 /** 保存人物到预设路径 assets/games/{gameId}/story-characters.json */
 async function saveCharactersToPreset(characters: unknown, gameId: string): Promise<{ ok: boolean; error?: string }> {
@@ -629,7 +591,7 @@ function CharacterFormContent({
         title="行为库"
         expanded={expanded.has('dialogueLib')}
         onToggle={() => toggle('dialogueLib')}
-        rightAction={
+        headActions={
           editable && onUpdate ? (
             <button
               type="button"

@@ -34,7 +34,7 @@ import {InlineSpinner} from './ui/InlineSpinner';
 import {RuleIdsSelector} from './ui/RuleIdsSelector';
 import {editorStyles as styles} from '../styles/editorStyles';
 import {EntityFlatList} from './ui/EntityFlatList';
-import {ListAddButton, ListDeleteButton, ListOpsCell} from './ui/ListPrimitives';
+import {ListAddButton, ListDeleteButton} from './ui/ListPrimitives';
 import {listBtnIcon} from '../styles/listStyles';
 import type {GameRule} from '../schema/game-rule';
 import {normalizeGameRule, normalizeGameRules} from '../utils/normalize-game-rules';
@@ -65,22 +65,9 @@ import {
   type StoryForeshadowing,
 } from '@/schema/story-foreshadowing';
 import {SceneNarrativePanel} from './SceneNarrativePanel';
-
-const collapsibleStyles: Record<string, React.CSSProperties> = {
-  section: {marginBottom: 12, padding: 10, border: '1px solid #444', borderRadius: 6},
-  head: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-    cursor: 'pointer',
-    fontSize: 12,
-    color: '#9ca3af',
-    userSelect: 'none',
-  },
-  title: {flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'},
-  body: {paddingTop: 8},
-};
+import {CollapsibleSection, CollapsibleSectionHead, StickyCollapsiblePinnedStack} from './ui/CollapsibleSection';
+import {useStickyCollapsibleSections} from '../hooks/useStickyCollapsibleSections';
+import {APP_COLORS} from '../styles/appTheme';
 
 function SaveIcon({size = 16, style}: {size?: number; style?: React.CSSProperties}) {
   return (
@@ -121,50 +108,6 @@ function GenerateHammerIcon({size = 16, style}: {size?: number; style?: React.CS
       <path d="m18 15 4-4" />
       <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756l-.455.453" />
     </svg>
-  );
-}
-
-function CollapsibleSection({
-  title,
-  expanded,
-  onToggle,
-  headActions,
-  children,
-}: {
-  title: string;
-  expanded: boolean;
-  onToggle: () => void;
-  headActions?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={collapsibleStyles.section}>
-      <div
-        style={collapsibleStyles.head}
-        onClick={onToggle}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
-      >
-        <span style={{display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0}}>
-          <span style={{flexShrink: 0}}>{expanded ? '▼' : '▶'}</span>
-          <span style={collapsibleStyles.title}>{title}</span>
-        </span>
-        {headActions ? (
-          <ListOpsCell>
-            <span onClick={(e) => e.stopPropagation()} style={{display: 'contents'}}>
-              {headActions}
-            </span>
-          </ListOpsCell>
-        ) : null}
-      </div>
-      {expanded && <div style={collapsibleStyles.body}>{children}</div>}
-    </div>
   );
 }
 
@@ -357,7 +300,7 @@ function AiBlockFields({
         pool.length > 0 ? (
           <MultiSelectField
             label="本块可发言人物"
-            hint="仅限场景「出场人物」；不自定义时与出场人物一致，可缩小本块可发言范围。"
+            hint="仅限场景「出场人物」。不自定义时继承；缩小名单可限定发言者；清空表示本块纯旁白。显式指定且 summary/anchors 含问询时将强制写出对白。"
             options={pool}
             value={selectedIds}
             addPlaceholder="添加可发言人物…"
@@ -467,6 +410,14 @@ function SceneFormContent({
   const effectiveSceneBgm = resolveSceneBackgroundMusic(scene, fw?.features);
   const [generatingAiIndex, setGeneratingAiIndex] = useState<number | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
+  const leadingRaw = getLeadingRawBlock(scene);
+  const aiBlocks = getAiBlocks(scene);
+  const aiBlocksSticky = useStickyCollapsibleSections({
+    count: aiBlocks.length,
+    defaultAllExpanded: collapsibleDefaultExpanded,
+    resetScrollPinKey: scene.id,
+    autoExpandLastOnCountIncrease: true,
+  });
 
   const handleGenerateBlock = async (aiIndex: number) => {
     const block = aiBlocks[aiIndex];
@@ -489,7 +440,7 @@ function SceneFormContent({
     }
     const passageIdx = aiIndexToPassageBlockIndex(scene, aiIndex);
     if (passageIdx == null) return;
-    setExpandedAiBlocks((prev) => new Set([...prev, aiIndex]));
+    aiBlocksSticky.expand(aiIndex);
     setGeneratingAiIndex(aiIndex);
     setGenError(null);
     try {
@@ -501,28 +452,45 @@ function SceneFormContent({
       setGeneratingAiIndex(null);
     }
   };
-  const leadingRaw = getLeadingRawBlock(scene);
-  const aiBlocks = getAiBlocks(scene);
-  const [expandedAiBlocks, setExpandedAiBlocks] = useState<Set<number>>(() =>
-    collapsibleDefaultExpanded ? new Set(aiBlocks.map((_, i) => i)) : new Set()
-  );
-  const prevAiBlockCount = useRef(aiBlocks.length);
 
-  useEffect(() => {
-    if (aiBlocks.length > prevAiBlockCount.current) {
-      setExpandedAiBlocks((prev) => new Set([...prev, aiBlocks.length - 1]));
-    }
-    prevAiBlockCount.current = aiBlocks.length;
-  }, [aiBlocks.length]);
+  const renderAiBlockHeadActions = (aiIndex: number, block: ScenePassageAiBlock) =>
+    editable && onUpdate ? (
+      <>
+        <button
+          type="button"
+          style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+          disabled={generatingAiIndex === aiIndex || !block.summary?.trim()}
+          title={
+            generatingAiIndex === aiIndex
+              ? '生成中…'
+              : !block.summary?.trim()
+                ? '请先填写 summary'
+                : '生成内容'
+          }
+          onClick={() => void handleGenerateBlock(aiIndex)}
+        >
+          {generatingAiIndex === aiIndex ? <InlineSpinner /> : <GenerateHammerIcon />}
+        </button>
+        {onSaveScene ? (
+          <button
+            type="button"
+            style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
+            title="保存场景"
+            onClick={() => void onSaveScene()}
+          >
+            <SaveIcon />
+          </button>
+        ) : null}
+        <ListDeleteButton
+          title="删除此 AI 块"
+          confirmMessage={`确认删除「${aiBlockCollapseTitle(block, aiIndex)}」？`}
+          disabled={aiBlocks.length <= 1}
+          stopPropagation
+          onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
+        />
+      </>
+    ) : undefined;
 
-  const toggleAiBlock = (aiIndex: number) => {
-    setExpandedAiBlocks((prev) => {
-      const next = new Set(prev);
-      if (next.has(aiIndex)) next.delete(aiIndex);
-      else next.add(aiIndex);
-      return next;
-    });
-  };
   const overrideMap = scene.characterOverrides ?? {};
   const overrideCharacterIds = Object.keys(overrideMap);
   const toBehaviorId = (charId: string) =>
@@ -588,50 +556,37 @@ function SceneFormContent({
       )}
 
       {genError && <p style={{color: '#f88', fontSize: 13}}>{genError}</p>}
+      <div ref={aiBlocksSticky.regionRef}>
+        {aiBlocksSticky.sortedPinnedIndices.length > 0 && (
+          <StickyCollapsiblePinnedStack>
+            {aiBlocksSticky.sortedPinnedIndices.map((aiIndex, stackIdx, arr) => {
+              const block = aiBlocks[aiIndex]!;
+              const itemProps = aiBlocksSticky.getItemProps(aiIndex);
+              return (
+                <CollapsibleSectionHead
+                  key={`pinned-ai-${aiIndex}`}
+                  title={aiBlockCollapseTitle(block, aiIndex)}
+                  showExpanded={false}
+                  onToggle={itemProps.onToggle}
+                  headRef={itemProps.headRef}
+                  headActions={renderAiBlockHeadActions(aiIndex, block)}
+                  style={{
+                    padding: '8px 10px',
+                    backgroundColor: APP_COLORS.surface,
+                    borderBottom:
+                      stackIdx < arr.length - 1 ? `1px solid ${APP_COLORS.border}` : undefined,
+                  }}
+                />
+              );
+            })}
+          </StickyCollapsiblePinnedStack>
+        )}
       {aiBlocks.map((block, aiIndex) => (
         <CollapsibleSection
           key={`ai-${aiIndex}`}
           title={aiBlockCollapseTitle(block, aiIndex)}
-          expanded={expandedAiBlocks.has(aiIndex)}
-          onToggle={() => toggleAiBlock(aiIndex)}
-          headActions={
-            editable && onUpdate ? (
-              <>
-                <button
-                  type="button"
-                  style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
-                  disabled={generatingAiIndex === aiIndex || !block.summary?.trim()}
-                  title={
-                    generatingAiIndex === aiIndex
-                      ? '生成中…'
-                      : !block.summary?.trim()
-                        ? '请先填写 summary'
-                        : '生成内容'
-                  }
-                  onClick={() => void handleGenerateBlock(aiIndex)}
-                >
-                  {generatingAiIndex === aiIndex ? <InlineSpinner /> : <GenerateHammerIcon />}
-                </button>
-                {onSaveScene ? (
-                  <button
-                    type="button"
-                    style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
-                    title="保存场景"
-                    onClick={() => void onSaveScene()}
-                  >
-                    <SaveIcon />
-                  </button>
-                ) : null}
-                <ListDeleteButton
-                  title="删除此 AI 块"
-                  confirmMessage={`确认删除「${aiBlockCollapseTitle(block, aiIndex)}」？`}
-                  disabled={aiBlocks.length <= 1}
-                  stopPropagation
-                  onClick={() => onUpdate((s) => removeAiBlock(s, aiIndex))}
-                />
-              </>
-            ) : undefined
-          }
+          {...aiBlocksSticky.getItemProps(aiIndex)}
+          headActions={renderAiBlockHeadActions(aiIndex, block)}
         >
           <AiBlockFields
             block={block}
@@ -648,6 +603,7 @@ function SceneFormContent({
           + 添加 AI 块
         </button>
       )}
+      </div>
 
       <SingleSelectField
         label="关联地图节点"

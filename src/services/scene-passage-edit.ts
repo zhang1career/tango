@@ -4,9 +4,9 @@ import type {StoryFramework} from '../schema/story-framework';
 import type {GameScene} from '../schema/game-scene';
 import {patchCompiledAndRoutingFingerprints, scenePassagePid} from '../utils/chapter-compile-helpers';
 import {
-  applySegmentsToScenePassageBlocks,
-  renderPassageBlockSegments,
-  type PassageBlockSegment,
+  applyManualEditToScene,
+  renderManualEditFields,
+  type PassageManualEditFields,
 } from '../utils/passage-block-segments';
 import {applyScenePassageFullText} from '../utils/scene-passage-text';
 import {lookupKeysForSceneEntry} from './scene-routing-sync-service';
@@ -29,18 +29,19 @@ function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Recor
   return m;
 }
 
+/** 汇编后人工审校：写入 story.tw 成稿；若改 RAW 则同步 leading raw，不改 AI 块 generatedText */
 export function saveScenePassageManualEdit(
   fw: StoryFramework,
   story: ReturnType<typeof parseTwee>,
   chapterIndex: number,
   sceneId: string,
-  segments: PassageBlockSegment[]
+  fields: PassageManualEditFields
 ): {fw: StoryFramework; story: ReturnType<typeof parseTwee>} {
   const scene = (fw.scenes ?? []).find((s) => s.id === sceneId);
   const ch = fw.chapters[chapterIndex];
   if (!scene || !ch) throw new Error(`未找到场景 ${sceneId}`);
 
-  const patchedScene = applySegmentsToScenePassageBlocks(scene, segments);
+  const patchedScene = applyManualEditToScene(scene, fields);
   const pid = scenePassagePid(fw, chapterIndex, sceneId);
   const fwWithScene = {
     ...fw,
@@ -52,7 +53,7 @@ export function saveScenePassageManualEdit(
 
   const meta = {...sceneAuthoritativeMetadata(patchedScene, fwWithScene), ...(template.metadata ?? {})};
   const lookupKeys = lookupKeysForSceneEntry(fwWithScene, chapterIndex, sceneId);
-  const storedText = renderPassageBlockSegments(segments);
+  const storedText = renderManualEditFields(fields);
   applyScenePassageFullText(story, {
     sceneId,
     paginationBaseId: pid,

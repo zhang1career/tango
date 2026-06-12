@@ -18,7 +18,7 @@ import {repairFrameworkTransitions, validateFramework} from '../schema/story-fra
 import {useGameId} from '../context/GameIdContext';
 import {useNarrativeTruth} from '../context/NarrativeTruthContext';
 import {useNotification} from '../context/NotificationContext';
-import {getScenesFetchUrl, getStoryFmFetchUrl} from '@/config';
+import {getStoryFmFetchUrl} from '@/config';
 import {fromPersistedFramework, migrateFramework, toPersistedFramework} from '../schema/story-framework';
 import {formatJsonCompact} from '../utils/json-format';
 import type {StoryOutline} from '../schema/story-outline';
@@ -65,7 +65,7 @@ import {
   readScenePassageFullText,
 } from '../utils/compiled-text-fingerprint';
 import {getChapterSceneMeta} from '../utils/chapter-scene';
-import {passageBlocksToEditSegments, type PassageBlockSegment} from '../utils/passage-block-segments';
+import {storyPassageToManualEditFields, type PassageManualEditFields} from '../utils/passage-block-segments';
 import {semanticColors} from '../theme/semantic-colors';
 import {listBtnIcon, listGrids, listStyles} from '../styles/listStyles';
 import {
@@ -78,7 +78,7 @@ import {
 } from './ui/ListPrimitives';
 import {InlineSpinner} from './ui/InlineSpinner';
 
-const COMPILE_STALE_HINT = '正文待汇编：场景 passageBlocks 已变更，尚未写入 story.tw';
+const COMPILE_STALE_HINT = '待汇编：passageBlocks 结构已变更，点击汇编将重新生成 AI 块正文并写入 story.tw';
 
 function EditPassageIcon({style, size = 18}: {style?: React.CSSProperties; size?: number}) {
   return (
@@ -249,7 +249,7 @@ export function ChapterEditor({
   const [passageEdit, setPassageEdit] = useState<{
     chapterIndex: number;
     sceneId: string;
-    segments: PassageBlockSegment[];
+    fields: PassageManualEditFields;
   } | null>(null);
   const [outline, setOutline] = useState<StoryOutline>(EMPTY_STORY_OUTLINE);
   const [foreshadowing, setForeshadowing] = useState<StoryForeshadowing>(EMPTY_STORY_FORESHADOWING);
@@ -408,7 +408,7 @@ export function ChapterEditor({
       addNotification(
         'info',
         result.generatedCount > 0
-          ? `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}（已自动生成 ${result.generatedCount} 个 AI 块正文）`
+          ? `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}（已重新生成 ${result.generatedCount} 个 AI 块正文）`
           : `已汇编 ${sceneMap.get(sceneId)?.name ?? sceneId}`
       );
     } catch (e) {
@@ -524,7 +524,7 @@ export function ChapterEditor({
 
   const sceneMap = new Map((fw.scenes ?? []).map((s) => [s.id, s]));
 
-  const canEditScenePassage = (chapterIndex: number, sceneId: string): boolean => {
+  const canReviewScenePassage = (chapterIndex: number, sceneId: string): boolean => {
     const ch = fw.chapters[chapterIndex];
     if (!ch) return false;
     if (getChapterSceneMeta(ch, sceneId)?.compiledTextFingerprint) return true;
@@ -537,7 +537,7 @@ export function ChapterEditor({
     ).trim();
   };
 
-  const openPassageEdit = async (chapterIndex: number, sceneId: string) => {
+  const openPassageReview = async (chapterIndex: number, sceneId: string) => {
     const story = parsedStory ?? (await loadStoryFromGame(gameId));
     if (!story) {
       addNotification('error', '无法读取 story.tw');
@@ -557,11 +557,11 @@ export function ChapterEditor({
     setPassageEdit({
       chapterIndex,
       sceneId,
-      segments: passageBlocksToEditSegments(fullText, scene),
+      fields: storyPassageToManualEditFields(fullText, scene),
     });
   };
 
-  const handleSavePassageEdit = async () => {
+  const handleSavePassageReview = async () => {
     if (!passageEdit) return;
     const story = parsedStory ?? (await loadStoryFromGame(gameId));
     if (!story) {
@@ -574,25 +574,18 @@ export function ChapterEditor({
         story,
         passageEdit.chapterIndex,
         passageEdit.sceneId,
-        passageEdit.segments
+        passageEdit.fields
       );
       updateFw(() => result.fw);
       await saveStoryTw(gameId, result.story);
       await saveFm(result.fw);
       if (result.fw.scenes?.length) {
-        const scenesRes = await fetch(getScenesFetchUrl(gameId), {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: formatJsonCompact(result.fw.scenes),
-        });
-        const scenesBody = (await scenesRes.json()) as {ok?: boolean; error?: string};
-        if (!scenesRes.ok || !scenesBody.ok) {
-          throw new Error(scenesBody.error || '保存 story-scenes.json 失败');
-        }
+        const saved = await saveStoryScenes(gameId, result.fw.scenes);
+        if (!saved.ok) throw new Error(saved.error || '保存 story-scenes.json 失败');
       }
       setParsedStory(result.story);
       setPassageEdit(null);
-      addNotification('info', `已保存 ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId} 正文`);
+      addNotification('info', `已保存审校 ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId}`);
     } catch (e) {
       addNotification('error', (e as Error).message);
     }
@@ -674,8 +667,7 @@ export function ChapterEditor({
       )}
 
       <p style={styles.hint}>
-        工作流：填写场景「任务」→ 分析（拆解 AI 块）→ 锤子（生成正文并汇编到 story.tw）。章级 theme / narrativeGoal
-        参与分析与生成；场景任务仅用于分析，不参与正文生成。双击叙事图节点可跳转「场景」页高级编辑。
+        工作流：填写场景「任务」→ 分析 → 汇编 → 编辑（审校 story.tw 成稿）。块级生成与结构调整请至「场景」页。
       </p>
 
       <div
@@ -727,58 +719,78 @@ export function ChapterEditor({
       </div>
 
       <p style={styles.hint}>
-        叙事态：在叙事图中拖拽节点、拖线连边。保存写入 story.tw 路由；汇编将 passageBlocks 写入 story.tw。
+        叙事态：在叙事图中拖拽节点、拖线连边。汇编由 passageBlocks 生成 story.tw；审校直接改 story.tw，再次汇编将覆盖审校结果。
       </p>
 
       {passageEdit && (
         <DetailEditModal
-          title={`编辑正文 · ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId}`}
+          title={`审校正文 · ${sceneMap.get(passageEdit.sceneId)?.name ?? passageEdit.sceneId}`}
           open
           onClose={() => setPassageEdit(null)}
           editable
-          onSave={() => checkAuthForSave(() => void handleSavePassageEdit())}
+          onSave={() => checkAuthForSave(() => void handleSavePassageReview())}
         >
           <p style={{fontSize: 12, color: '#888', margin: '0 0 8px'}}>
-            按 passageBlocks 分段展示：RAW 为史料/定调，AI 为生成正文。保存后将按配置重新分页写入 story.tw。
+            汇编后的成稿审校（与游戏展示一致）。保存写入 story.tw；不改 AI 块 generatedText。再次汇编将重新生成并覆盖审校内容。
           </p>
-          {passageEdit.segments.map((seg, segIndex) => (
-            <div key={`${seg.blockIndex}-${seg.type}-${segIndex}`} style={{marginBottom: 12}}>
+          {passageEdit.fields.hasLeadingRaw && (
+            <div style={{marginBottom: 12}}>
               <label
                 style={{
                   display: 'block',
                   fontSize: 12,
                   fontWeight: 600,
                   marginBottom: 4,
-                  color: seg.type === 'raw' ? '#d4a574' : '#90caf9',
+                  color: '#d4a574',
                 }}
               >
-                {seg.label}
+                RAW · 史料/定调
               </label>
               <textarea
                 style={{
                   ...styles.input,
                   ...styles.textarea,
-                  ...(seg.type === 'raw'
-                    ? {borderLeft: '3px solid #d4a574', backgroundColor: 'rgba(212, 165, 116, 0.06)'}
-                    : {borderLeft: '3px solid #90caf9', backgroundColor: 'rgba(144, 202, 249, 0.06)'}),
+                  borderLeft: '3px solid #d4a574',
+                  backgroundColor: 'rgba(212, 165, 116, 0.06)',
                 }}
-                value={seg.text}
+                value={passageEdit.fields.rawText}
                 onChange={(e) =>
                   setPassageEdit((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          segments: prev.segments.map((s, i) =>
-                            i === segIndex ? {...s, text: e.target.value} : s
-                          ),
-                        }
-                      : prev
+                    prev ? {...prev, fields: {...prev.fields, rawText: e.target.value}} : prev
                   )
                 }
-                rows={seg.type === 'raw' ? 5 : 8}
+                rows={5}
               />
             </div>
-          ))}
+          )}
+          <div style={{marginBottom: 12}}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 4,
+                color: '#90caf9',
+              }}
+            >
+              成稿正文
+            </label>
+            <textarea
+              style={{
+                ...styles.input,
+                ...styles.textarea,
+                borderLeft: '3px solid #90caf9',
+                backgroundColor: 'rgba(144, 202, 249, 0.06)',
+              }}
+              value={passageEdit.fields.bodyText}
+              onChange={(e) =>
+                setPassageEdit((prev) =>
+                  prev ? {...prev, fields: {...prev.fields, bodyText: e.target.value}} : prev
+                )
+              }
+              rows={16}
+            />
+          </div>
         </DetailEditModal>
       )}
 
@@ -895,9 +907,9 @@ export function ChapterEditor({
                   analyzingTarget={analyzingTarget}
                   archived={archived}
                   updateChapter={updateChapter}
-                  canEditPassage={(sid) => canEditScenePassage(chi, sid)}
+                  canReviewPassage={(sid) => canReviewScenePassage(chi, sid)}
                   onCompileScene={(sid) => checkAuthForSave(() => void handleCompileScene(chi, sid))}
-                  onEditPassage={(sid) => checkAuthForSave(() => void openPassageEdit(chi, sid))}
+                  onReviewPassage={(sid) => checkAuthForSave(() => void openPassageReview(chi, sid))}
                   onAnalyzeScene={(sid) => checkAuthForSave(() => void handleAnalyzeScene(chi, sid))}
                   onTaskBlur={(sid, task) =>
                     queueFmPatch([
@@ -962,9 +974,9 @@ function ChapterSceneList({
   analyzingTarget,
   archived,
   updateChapter,
-  canEditPassage,
+  canReviewPassage,
   onCompileScene,
-  onEditPassage,
+  onReviewPassage,
   onAnalyzeScene,
   onTaskBlur,
 }: {
@@ -978,9 +990,9 @@ function ChapterSceneList({
   analyzingTarget: string | null;
   archived: boolean;
   updateChapter: (chi: number, fn: (c: FrameworkChapter) => FrameworkChapter) => void;
-  canEditPassage: (sceneId: string) => boolean;
+  canReviewPassage: (sceneId: string) => boolean;
   onCompileScene: (sceneId: string) => void;
-  onEditPassage: (sceneId: string) => void;
+  onReviewPassage: (sceneId: string) => void;
   onAnalyzeScene: (sceneId: string) => void;
   onTaskBlur: (sceneId: string, task: string) => void;
 }) {
@@ -1125,8 +1137,8 @@ function ChapterSceneList({
                         : isStale
                           ? COMPILE_STALE_HINT
                           : hasCompiled
-                            ? '汇编：将 passageBlocks 写入 story.tw'
-                            : '汇编：首次将 passageBlocks 写入 story.tw'
+                            ? '汇编：按顺序重新生成各 AI 块正文并写入 story.tw'
+                            : '汇编：首次生成 AI 块正文并写入 story.tw'
                     }
                   >
                     {compilingTarget === sid ? (
@@ -1143,12 +1155,12 @@ function ChapterSceneList({
                   <button
                     type="button"
                     style={{...listBtnIcon, display: 'flex', alignItems: 'center'}}
-                    disabled={compilingTarget !== null || !canEditPassage(sid)}
-                    onClick={() => onEditPassage(sid)}
+                    disabled={compilingTarget !== null || !canReviewPassage(sid)}
+                    onClick={() => onReviewPassage(sid)}
                     title={
-                      canEditPassage(sid)
-                        ? '编辑 story.tw 成稿正文'
-                        : '请先汇编，或确保 story.tw 中已有该场景正文'
+                      canReviewPassage(sid)
+                        ? '审校：编辑 story.tw 成稿正文'
+                        : '请先汇编后再审校'
                     }
                   >
                     <EditPassageIcon style={styles.compileIconFresh} />

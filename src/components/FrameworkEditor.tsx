@@ -51,6 +51,8 @@ import {
   syncPassageLinksInStory,
 } from '../utils/scene-routing-sync';
 import {NarrativeTruthEditors} from './NarrativeTruthEditors';
+import {SaveIcon} from './ui/SaveIcon';
+import {editorStyles} from '../styles/editorStyles';
 
 type FrameworkTab = 'meta' | 'foreshadowing' | 'canon';
 
@@ -137,34 +139,14 @@ function sceneAuthoritativeMetadata(scene: GameScene, fw: StoryFramework): Recor
   return m;
 }
 
-function truncatePathForDisplay(name: string, maxLen = 28): string {
-  if (!name) return '';
-  if (name.length <= maxLen) return name;
-  return '…' + name.slice(-maxLen + 1);
-}
-
-function FileHandleButton({
-                            label,
-                            fileHandle,
-                            onClick,
-                            baseStyle = styles.btn,
-                            title,
-                          }: {
-  label: string;
-  fileHandle: FileSystemFileHandle | null;
-  onClick: () => void;
-  baseStyle?: React.CSSProperties;
-  title?: string;
-}) {
-  return (
-    <button type="button" style={{...baseStyle, ...styles.fileHandleBtn}} onClick={onClick} title={title} aria-label={title ?? label}>
-      <span>{label}</span>
-      {fileHandle && (
-        <span style={styles.fileHandleBtnPath}>{truncatePathForDisplay(fileHandle.name)}</span>
-      )}
-    </button>
-  );
-}
+const headerIconBtn: React.CSSProperties = {
+  ...editorStyles.btnIcon,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 6,
+  borderRadius: 6,
+};
 
 async function saveFrameworkToStorage(gameId: string, fw: StoryFramework): Promise<void> {
   const res = await fetch(getStoryFmFetchUrl(gameId), {
@@ -249,8 +231,8 @@ export function FrameworkEditor({
   editingSceneTextRef.current = editingSceneText;
   const [loadingSceneTextKey, setLoadingSceneTextKey] = useState<string | null>(null);
   const [savingSceneTextKey, setSavingSceneTextKey] = useState<string | null>(null);
-  const [frameworkFileHandle] = useState<FileSystemFileHandle | null>(null);
   const [frameworkTab, setFrameworkTab] = useState<FrameworkTab>('meta');
+  const [savingFramework, setSavingFramework] = useState(false);
 
   useEffect(() => {
     preloadFrameworkListData(updateFw, gameId);
@@ -333,6 +315,7 @@ export function FrameworkEditor({
   }, [fw, gameId, addNotification]);
 
   const handleSave = useCallback(async () => {
+    setSavingFramework(true);
     try {
       await saveFrameworkToStorage(gameId, fw);
       await persistStoryTitleToTw(gameId, fw);
@@ -340,6 +323,8 @@ export function FrameworkEditor({
       setJsonError(null);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setJsonError((e as Error).message);
+    } finally {
+      setSavingFramework(false);
     }
   }, [fw, gameId, addNotification]);
 
@@ -566,14 +551,6 @@ export function FrameworkEditor({
           <button type="button" style={styles.btn} onClick={handleNew}>
             新建
           </button>
-          {frameworkTab === 'meta' && (
-            <FileHandleButton
-              label="保存框架"
-              fileHandle={frameworkFileHandle}
-              title="保存 story-fm.json（章节、场景等框架数据，不含伏笔池与 Canon）"
-              onClick={() => checkAuthForSave(handleSave)}
-            />
-          )}
           <button type="button" style={styles.btn} onClick={handleImportClick}>
             导入
           </button>
@@ -685,6 +662,18 @@ export function FrameworkEditor({
 
       {frameworkTab === 'meta' && (
         <>
+      <div style={{display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end'}}>
+        <button
+          type="button"
+          style={{...headerIconBtn, opacity: savingFramework ? 0.5 : 1}}
+          title="保存框架（玩家角色、故事标题、背景设定、写作规则）"
+          aria-label={savingFramework ? '保存中…' : '保存框架（玩家角色、故事标题、背景设定、写作规则）'}
+          onClick={() => checkAuthForSave(handleSave)}
+          disabled={savingFramework}
+        >
+          <SaveIcon />
+        </button>
+      </div>
       <section style={styles.section}>
         <label style={styles.label}>当前玩家角色</label>
         <select
@@ -837,20 +826,6 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
   },
   modalActions: {display: 'flex', gap: 10, marginTop: 16},
-  fileHandleBtn: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 2,
-  },
-  fileHandleBtnPath: {
-    fontSize: 10,
-    color: '#888',
-    maxWidth: 140,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  },
   sectionHead: {display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10},
   label: {display: 'block', marginBottom: 6, fontSize: 13, color: '#a78bfa'},
   input: {
